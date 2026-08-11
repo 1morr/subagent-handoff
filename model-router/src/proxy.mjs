@@ -129,10 +129,13 @@ export function createProxyServer(getConfig, log) {
     let headers
     let outBody = raw
     let changes = []
+    // 實際送出去的 effort。被 dropFields 拿掉時會是 null，跟 ctx.effort 一比就知道降級了
+    let sentEffort = ctx.effort
 
     if (route.kind === 'provider') {
       const rewritten = rewriteBodyForProvider(payload, route.provider)
       changes = rewritten.changes
+      sentEffort = rewritten.body?.output_config?.effort ?? null
       outBody = Buffer.from(JSON.stringify(rewritten.body))
       headers = buildProviderHeaders(req.headers, route.provider)
       target = route.provider.baseUrl + req.url
@@ -149,6 +152,9 @@ export function createProxyServer(getConfig, log) {
       requestedModel: ctx.model,
       target: route.kind === 'provider' ? route.provider.label : 'passthrough (訂閱)',
       sentModel: route.kind === 'provider' ? route.provider.model || ctx.model : ctx.model,
+      effort: ctx.effort,
+      sentEffort,
+      thinking: ctx.thinking,
       changes,
       status: null,
       ms: null,

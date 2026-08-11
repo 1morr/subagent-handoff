@@ -46,7 +46,7 @@ npm start
 | `providers[].baseUrl` | 必須是 Anthropic Messages 格式的端點，router 會往 `{baseUrl}/v1/messages` 送 |
 | `providers[].model` | 送出前把 `model` 改寫成這個值。留空 = 不改寫 |
 | `providers[].authStyle` | `bearer`（`Authorization: Bearer`）或 `x-api-key` |
-| `providers[].dropFields` | 送出前刪掉的 body 欄位，預設 `thinking` / `context_management` / `output_config` |
+| `providers[].dropFields` | 送出前刪掉的 body 欄位。**預設空**，只在上游回 `400 unknown field` 時才照錯誤訊息填 |
 | `providers[].dropBeta` | 移除 `anthropic-beta` header，預設 true |
 | `providers[].maxOutputTokens` | `max_tokens` 上限，超過就夾住。留空 = 不夾 |
 | `providers[].extraHeaders` | 額外 header |
@@ -66,6 +66,36 @@ npm start
 
 實測也確認 Workflow 的 agent 拿到的工具集裡沒有 `Agent` 與 `Workflow`，所以它們不會再往下開一層 —— 純 ultracode 場景下 `nested` 永遠不觸發。`nested` 只在你手動叫一個 general-purpose subagent、而它自己又去 spawn 別人時才出現。
 
+### 思考檔位（effort）會不會跟著過去
+
+會，但前提是 `dropFields` 不能把它刪掉。
+
+`/effort` 與 `--effort` 在 wire 上走的是 **`output_config.effort`**，不是 `thinking`。實測 v2.1.227 送出的 body：
+
+```jsonc
+{
+  "thinking": { "type": "adaptive", "display": "omitted" },   // 只有型態，不帶檔位
+  "output_config": { "effort": "xhigh" },                     // ← 檔位在這
+  "context_management": { "edits": [{ "type": "clear_thinking_20251015", "keep": "all" }] }
+}
+```
+
+換 `--effort low` / `max` 時只有 `output_config.effort` 的值變，其餘不動。
+
+所以 **`dropFields` 一旦包含 `output_config`，`/effort` 就完全失效** —— 而且請求照樣回 200，只是模型變笨，不會有任何錯誤提示。這就是預設改成不刪任何欄位的原因：換來一個看得見的 400，比靜默降級好。
+
+實測 cliproxyapi（→ Kimi K3）確實會讀這個欄位並映射到思考檔位，同一道多步推理題各採樣 4 次的 thinking 長度：
+
+| 送出的 effort | thinking 長度（中位數） |
+| --- | --- |
+| 不帶 `output_config` | ~19800 字元 |
+| `low` | ~1500 字元 |
+| `xhigh` | ~7100 字元 |
+
+單次波動不小（LLM 本來就隨機），但 `low` 與 `xhigh` 差 4～5 倍是穩定訊號。cliproxyapi 官方另外支援 model 名後綴語法（`kimi-k3(low)` / `kimi-k3(high)`），實測也有效，可以填在 `providers[].model` 當固定檔位用 —— 但那會蓋掉 `/effort`，一般不需要。
+
+流量記錄的**思考**欄會顯示每一筆的 effort，被剝掉時標成 `xhigh → 已移除`，不用猜。
+
 ### 內建的三項測試
 
 GUI 上每個 provider 都能一鍵測，對應 Claude Code 實際會用到、也最常在相容層上壞掉的能力：
@@ -81,7 +111,8 @@ GUI 上每個 provider 都能一鍵測，對應 Claude Code 實際會用到、�
 - Anthropic 官方文檔明說「doesn't support routing Claude Code to non-Claude models through any gateway」。不是禁止，是壞了自己修。
 - Claude Code v2.1.196 起，`ANTHROPIC_BASE_URL` 指向非 Anthropic host 時 **Remote Control 會停用**。
 - `/fast` 的可用性檢查與 WebFetch 網域安全檢查直連 `api.anthropic.com`，不經過 router。
-- Claude Code 每次升級都可能新增 body 欄位，第三方收到會回 `400`。照錯誤訊息把欄位名加進該 provider 的 `dropFields` 即可。
+- Claude Code 每次升級都可能新增 body 欄位，寬容度低的第三方收到會回 `400`。照錯誤訊息把欄位名加進該 provider 的 `dropFields` 即可 —— 一次只加一個，別整組刪掉，否則會連帶關掉 `/effort`。
+- `dropFields` 只作用在被規則命中、要送去 provider 的請求。passthrough（訂閱）那條線是原始 bytes 原樣轉發，連 JSON 都不重新序列化，主對話的思考檔位不受任何影響。
 - `/v1/messages/count_tokens` 若 provider 不支援會回 404，Claude Code 會自動退回用推論端點估算，不影響運作。
 - 建議一併設 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`。Claude Code 會在 system prompt 前面加一段 attribution block，只有 `api.anthropic.com` 會自動剝除，第三方 provider 會把它當 prompt 收下去。
 

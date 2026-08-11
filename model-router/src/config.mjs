@@ -14,7 +14,13 @@ export const KEEP_SECRET = '__keep__'
 
 export const MATCH_KINDS = ['any', 'main', 'subagent', 'nested']
 
-/** Claude Code 會送給 Anthropic 端點、但多數第三方相容層不接受的欄位。 */
+/**
+ * 遇到 400 時最可能是元凶的欄位，給 GUI 當「一鍵填入」的候選清單用，**不是預設值**。
+ *
+ * 預設不移除任何欄位。移除是靜默降級：拿掉 `output_config` 會讓 `/effort` 完全失效，
+ * 但請求照樣成功，只是模型變笨，很難察覺。留著頂多換來一個看得見的 400。
+ * 實測 cliproxyapi 與 Moonshot 官方 Anthropic 端點三個欄位全收。
+ */
 export const COMMON_DROP_FIELDS = ['thinking', 'context_management', 'output_config']
 
 export function newId(prefix) {
@@ -31,7 +37,7 @@ export function defaultProvider(over = {}) {
     model: '',
     /** bearer → Authorization: Bearer；x-api-key → x-api-key。 */
     authStyle: 'bearer',
-    dropFields: [...COMMON_DROP_FIELDS],
+    dropFields: [],
     /** anthropic-beta 帶的是 Anthropic 專屬 capability，多數第三方會拒收。 */
     dropBeta: true,
     /** 上游 max_tokens 上限，超過就夾住。null = 不夾。 */
@@ -105,7 +111,7 @@ export function normalizeConfig(raw) {
           authStyle: p.authStyle === 'x-api-key' ? 'x-api-key' : 'bearer',
           dropFields: Array.isArray(p.dropFields)
             ? [...new Set(p.dropFields.filter((f) => typeof f === 'string' && f.trim()).map((f) => f.trim()))]
-            : [...COMMON_DROP_FIELDS],
+            : [],
           dropBeta: p.dropBeta !== false,
           maxOutputTokens: Number.isInteger(p.maxOutputTokens) && p.maxOutputTokens > 0 ? p.maxOutputTokens : null,
           extraHeaders: normalizeHeaders(p.extraHeaders),

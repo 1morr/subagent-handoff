@@ -99,7 +99,7 @@
 
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; white-space: nowrap; }
   td.mono { font-family: var(--mono); font-size: 12px; }
   .scroll { overflow-x: auto; }
 
@@ -235,9 +235,12 @@ function providerCard(p) {
       <label class="field">max_tokens 上限（留空＝不夾）
         <input type="number" min="1" data-f="maxOutputTokens" value="${p.maxOutputTokens ?? ''}">
       </label>
-      <label class="field wide">移除的 body 欄位（逗號分隔）
-        <input type="text" class="mono" data-f="dropFields" value="${esc((p.dropFields || []).join(', '))}">
-        <span class="hint">Claude Code 只對 Anthropic 端點送這些欄位，多數相容層收到會回 400。</span>
+      <label class="field wide">移除的 body 欄位（逗號分隔，建議留空）
+        <input type="text" class="mono" data-f="dropFields" value="${esc((p.dropFields || []).join(', '))}"
+               placeholder="留空＝原樣轉發">
+        <span class="hint">只在上游回 <code>400 unknown field</code> 時才照錯誤訊息填。
+          刪 <code>output_config</code> 會讓 <code>/effort</code> 靜默失效，
+          刪 <code>thinking</code> 會讓 <code>kimi-k2.7-code</code> 直接拒收。</span>
       </label>
       <label class="field wide">額外 header（每行一組 Name: Value）
         <textarea class="mono" data-f="extraHeaders" placeholder="X-Tenant: acme">${esc(formatHeaders(p.extraHeaders))}</textarea>
@@ -361,6 +364,14 @@ function renderRules() {
 }
 
 // ── 流量記錄 ───────────────────────────────────────────────────────
+
+/** effort 被 dropFields 吃掉時要看得出來 —— 請求照樣 200，只是模型變笨。 */
+function effortCell(e) {
+  if (!e.effort) return '<span class="status-muted">–</span>'
+  if (e.sentEffort === e.effort) return `<span class="status-ok">${esc(e.effort)}</span>`
+  return `<span class="status-bad">${esc(e.effort)} → 已移除</span>`
+}
+
 function renderLogs() {
   const rows = S.logs.map((e) => `
     <tr>
@@ -370,6 +381,7 @@ function renderLogs() {
       <td class="mono">${esc(e.requestedModel ?? '–')}</td>
       <td>${esc(e.target)}</td>
       <td class="mono">${esc(e.sentModel ?? '–')}</td>
+      <td class="mono">${effortCell(e)}</td>
       <td class="mono ${e.error ? 'status-bad' : e.status >= 400 ? 'status-bad' : e.status ? 'status-ok' : 'status-muted'}">
         ${e.error ? esc(e.error) : (e.status ?? '…')}</td>
       <td class="mono">${e.ms != null ? e.ms + 'ms' : '…'}</td>
@@ -384,8 +396,8 @@ function renderLogs() {
         <button class="btn tiny" data-act="clear-logs">清空</button></div>
       <div class="scroll">
         <table>
-          <thead><tr><th>時間</th><th>來源</th><th>路徑</th><th>要求 model</th><th>導向</th><th>實送 model</th><th>狀態</th><th>耗時</th><th>改寫</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="9" class="empty">還沒有流量。</td></tr>'}</tbody>
+          <thead><tr><th>時間</th><th>來源</th><th>路徑</th><th>要求 model</th><th>導向</th><th>實送 model</th><th>思考</th><th>狀態</th><th>耗時</th><th>改寫</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="10" class="empty">還沒有流量。</td></tr>'}</tbody>
         </table>
       </div>
     </section>`
@@ -507,7 +519,7 @@ document.addEventListener('click', async (ev) => {
       S.config.providers.push({
         id: 'p-' + Math.random().toString(36).slice(2, 10),
         label: '新 Provider', baseUrl: '', apiKey: '', model: '', authStyle: 'bearer',
-        dropFields: ['thinking', 'context_management', 'output_config'],
+        dropFields: [],
         dropBeta: true, maxOutputTokens: null, extraHeaders: {},
       })
       markDirty(); render()

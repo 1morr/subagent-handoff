@@ -27,6 +27,9 @@ export function describeRequest(headers, body) {
     parentAgentId,
     sessionId: headers['x-claude-code-session-id'] || null,
     model: typeof body?.model === 'string' ? body.model : null,
+    /** `/effort` 與 `--effort` 走 output_config.effort；thinking 只帶 type，不帶檔位。 */
+    effort: typeof body?.output_config?.effort === 'string' ? body.output_config.effort : null,
+    thinking: typeof body?.thinking?.type === 'string' ? body.thinking.type : null,
     kind: parentAgentId ? 'nested' : agentId ? 'subagent' : 'main',
   }
 }

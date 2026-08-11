@@ -46,6 +46,10 @@ before(async () => {
     providers: [
       defaultProvider({ id: 'kimi', label: 'Kimi', baseUrl: upstreamUrl, apiKey: 'sk-moonshot', model: 'kimi-k3' }),
       defaultProvider({ id: 'other', label: 'Other', baseUrl: upstreamUrl, apiKey: 'sk-other', model: 'glm-5', authStyle: 'x-api-key', dropBeta: false }),
+      defaultProvider({
+        id: 'strict', label: 'Strict', baseUrl: upstreamUrl, apiKey: 'sk-strict', model: 'picky-1',
+        dropFields: ['thinking', 'context_management', 'output_config'],
+      }),
     ],
     rules: [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })],
   })
@@ -97,7 +101,7 @@ test('主對話原樣轉發，訂閱憑證與 anthropic-beta 完整保留', asyn
   assert.deepEqual(hit.body, BASE_BODY, '主對話的 body 一個字都不能動')
 })
 
-test('子 agent 改導向 provider，並改寫 model 與剝除不相容欄位', async () => {
+test('子 agent 改導向 provider 並改寫 model，但預設不動任何 body 欄位', async () => {
   const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'agent-1' }, BASE_BODY)
   assert.equal(res.status, 200)
   await res.text()
@@ -106,10 +110,24 @@ test('子 agent 改導向 provider，並改寫 model 與剝除不相容欄位', 
   assert.equal(hit.body.model, 'kimi-k3')
   assert.equal(hit.headers.authorization, 'Bearer sk-moonshot', '要換成 provider 自己的 key')
   assert.equal(hit.headers['anthropic-beta'], undefined, 'dropBeta 開著就不該帶過去')
+  // 剝掉 output_config 會讓 /effort 靜默失效，請求照樣 200 —— 預設絕不能這樣做
+  assert.deepEqual(hit.body.output_config, { effort: 'high' }, 'effort 必須原封不動送到 provider')
+  assert.deepEqual(hit.body.thinking, { type: 'adaptive' })
+  assert.deepEqual(hit.body.context_management, { edits: [] })
+  assert.deepEqual(hit.body.messages, BASE_BODY.messages, 'messages 不能動')
+})
+
+test('明確設定 dropFields 的 provider 才剝除欄位', async () => {
+  config.rules = [defaultRule({ match: 'subagent', providerId: 'strict' })]
+  const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'agent-1' }, BASE_BODY)
+  await res.text()
+
+  const [hit] = received
+  assert.equal(hit.body.model, 'picky-1')
   for (const field of ['thinking', 'context_management', 'output_config']) {
     assert.ok(!(field in hit.body), `${field} 應該被剝除`)
   }
-  assert.deepEqual(hit.body.messages, BASE_BODY.messages, 'messages 不能動')
+  config.rules = [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })]
 })
 
 test('x-api-key 認證與保留 anthropic-beta 的 provider', async () => {
@@ -182,6 +200,23 @@ test('describeRequest 依 header 判定來源', () => {
   )
 })
 
+test('describeRequest 抽出 effort 與 thinking 型態', () => {
+  // 實測 Claude Code v2.1.227：--effort xhigh 送的是 output_config.effort，thinking 只帶 type
+  const ctx = describeRequest({}, {
+    model: 'claude-opus-5',
+    thinking: { type: 'adaptive', display: 'omitted' },
+    output_config: { effort: 'xhigh' },
+  })
+  assert.equal(ctx.effort, 'xhigh')
+  assert.equal(ctx.thinking, 'adaptive')
+  assert.equal(describeRequest({}, { model: 'x' }).effort, null)
+})
+
+test('預設 provider 不剝除任何欄位', () => {
+  assert.deepEqual(defaultProvider().dropFields, [], '預設剝除會讓 /effort 靜默失效')
+  assert.deepEqual(normalizeConfig({ providers: [{ id: 'p', baseUrl: 'https://x' }] }).providers[0].dropFields, [])
+})
+
 test('subagent 規則涵蓋巢狀，nested 規則不涵蓋第一層', () => {
   const cfg = normalizeConfig({
     providers: [defaultProvider({ id: 'k', baseUrl: 'https://x', model: 'm' })],
@@ -200,7 +235,10 @@ test('subagent 規則涵蓋巢狀，nested 規則不涵蓋第一層', () => {
 test('rewriteBodyForProvider 不改動原物件', () => {
   const original = { model: 'claude-opus-5', max_tokens: 9999, thinking: {} }
   const snapshot = structuredClone(original)
-  const { body, changes } = rewriteBodyForProvider(original, defaultProvider({ model: 'kimi-k3', maxOutputTokens: 8192 }))
+  const { body, changes } = rewriteBodyForProvider(
+    original,
+    defaultProvider({ model: 'kimi-k3', maxOutputTokens: 8192, dropFields: ['thinking'] }),
+  )
   assert.deepEqual(original, snapshot, '輸入必須維持不變')
   assert.equal(body.model, 'kimi-k3')
   assert.equal(body.max_tokens, 8192)
