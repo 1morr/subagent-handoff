@@ -2,8 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { after, before } from 'node:test'
-import { createProxyServer, TrafficLog, rewriteBodyForProvider } from '../src/proxy.mjs'
-import { globMatch, describeRequest, resolveRoute } from '../src/routing.mjs'
+import { createProxyServer, TrafficLog, SessionCwd, rewriteBodyForProvider } from '../src/proxy.mjs'
+import { globMatch, describeRequest, resolveRoute, extractCwd } from '../src/routing.mjs'
 import { normalizeConfig, defaultProvider, defaultRule, toClientConfig, fromClientConfig, KEEP_SECRET } from '../src/config.mjs'
 
 // ── 假上游：記下收到什麼，並能吐 SSE ────────────────────────────────
@@ -13,6 +13,7 @@ let upstreamUrl
 let proxy
 let proxyUrl
 let config
+let logStore
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)))
@@ -54,7 +55,8 @@ before(async () => {
     rules: [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })],
   })
 
-  proxy = createProxyServer(() => config, new TrafficLog())
+  logStore = new TrafficLog()
+  proxy = createProxyServer(() => config, logStore)
   proxyUrl = await listen(proxy)
 })
 
@@ -115,6 +117,58 @@ test('子 agent 改導向 provider 並改寫 model，但預設不動任何 body 
   assert.deepEqual(hit.body.thinking, { type: 'adaptive' })
   assert.deepEqual(hit.body.context_management, { edits: [] })
   assert.deepEqual(hit.body.messages, BASE_BODY.messages, 'messages 不能動')
+})
+
+test('流量記錄帶上 cwd 與 effort，但不留 prompt 內容', async () => {
+  const body = {
+    ...BASE_BODY,
+    system: [{ type: 'text', text: '# Environment\n - Primary working directory: /srv/app\n' }],
+  }
+  await (await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, body)).text()
+
+  const entry = logStore.list()[0]
+  assert.equal(entry.cwd, '/srv/app')
+  assert.equal(entry.effort, 'high')
+  assert.equal(entry.sentEffort, 'high')
+  assert.ok(!JSON.stringify(entry).includes('Environment'), 'system prompt 不能被記進流量記錄')
+})
+
+test('子 agent 沒有 cwd，靠同一個 session id 從主對話繼承', async () => {
+  const withEnv = {
+    ...BASE_BODY,
+    system: [{ type: 'text', text: '# Environment\n - Primary working directory: /srv/inherited\n' }],
+  }
+  // 主對話先跑一趟把 cwd 記下來
+  await (await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-session-id': 'sess-A' }, withEnv)).text()
+  // 子 agent 的 system prompt 不含 Environment 區段（實測 v2.1.227）
+  await (await post(
+    { ...SUBSCRIPTION_HEADERS, 'x-claude-code-session-id': 'sess-A', 'x-claude-code-agent-id': 'a1' },
+    BASE_BODY,
+  )).text()
+
+  assert.equal(logStore.list()[0].kind, 'subagent')
+  assert.equal(logStore.list()[0].cwd, '/srv/inherited', '子 agent 應該繼承到主對話的 cwd')
+
+  // 不同 session 不能互相污染
+  await (await post(
+    { ...SUBSCRIPTION_HEADERS, 'x-claude-code-session-id': 'sess-B', 'x-claude-code-agent-id': 'a2' },
+    BASE_BODY,
+  )).text()
+  assert.equal(logStore.list()[0].cwd, null, '別的 session 不該撿到不屬於它的 cwd')
+})
+
+test('SessionCwd 到達上限時丟掉最久沒用到的', () => {
+  const s = new SessionCwd(2)
+  s.remember('a', '/a')
+  s.remember('b', '/b')
+  s.lookup('a')            // a 變成最近使用
+  s.remember('c', '/c')    // 該被淘汰的是 b
+  assert.equal(s.lookup('a'), '/a')
+  assert.equal(s.lookup('b'), null)
+  assert.equal(s.lookup('c'), '/c')
+  s.remember('d', null)
+  s.remember(null, '/x')
+  assert.equal(s.lookup(null), null)
 })
 
 test('明確設定 dropFields 的 provider 才剝除欄位', async () => {
@@ -198,6 +252,25 @@ test('describeRequest 依 header 判定來源', () => {
     describeRequest({ 'x-claude-code-agent-id': 'a', 'x-claude-code-parent-agent-id': 'p' }, {}).kind,
     'nested',
   )
+})
+
+test('extractCwd 從 system prompt 的 Environment 區段挖出 cwd', () => {
+  // 實測 v2.1.227：cwd 只在最後一塊 system 裡，header 完全沒有這項
+  const system = [
+    { type: 'text', text: 'You are Claude Code, Anthropic official CLI.' },
+    { type: 'text', text: 'some other block mentioning directory: nope' },
+    {
+      type: 'text',
+      text: '# Environment\nYou have been invoked in the following environment:\n'
+        + ' - Primary working directory: C:\\Users\\Roxy\\orca\\projects\\bridge\n'
+        + ' - Is a git repository: true\n - Platform: win32\n',
+    },
+  ]
+  assert.equal(extractCwd({ system }), 'C:\\Users\\Roxy\\orca\\projects\\bridge')
+  assert.equal(extractCwd({ system: '- Primary working directory: /home/x/proj' }), '/home/x/proj')
+  assert.equal(extractCwd({ system: [{ type: 'text', text: '沒有環境區段' }] }), null)
+  assert.equal(extractCwd({}), null)
+  assert.equal(extractCwd(null), null)
 })
 
 test('describeRequest 抽出 effort 與 thinking 型態', () => {

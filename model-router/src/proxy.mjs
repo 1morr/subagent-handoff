@@ -16,6 +16,34 @@ const HOP_BY_HOP = new Set([
   'trailer',
 ])
 
+/**
+ * subagent 的 system prompt 不含 cwd（實測 v2.1.227），但它與主對話共用 session id，
+ * 所以讓主對話的請求把 cwd 記下來，子 agent 再回查。只存路徑字串，不碰 prompt。
+ */
+export class SessionCwd {
+  constructor(limit = 200) {
+    this.limit = limit
+    this.map = new Map()
+  }
+
+  remember(sessionId, cwd) {
+    if (!sessionId || !cwd) return
+    // 重新插入以維持 Map 的插入順序＝LRU，滿了先丟最久沒用到的
+    this.map.delete(sessionId)
+    this.map.set(sessionId, cwd)
+    if (this.map.size > this.limit) this.map.delete(this.map.keys().next().value)
+  }
+
+  lookup(sessionId) {
+    if (!sessionId) return null
+    const cwd = this.map.get(sessionId)
+    if (cwd === undefined) return null
+    this.map.delete(sessionId)
+    this.map.set(sessionId, cwd)
+    return cwd
+  }
+}
+
 export class TrafficLog {
   constructor(limit = 300) {
     this.limit = limit
@@ -100,6 +128,8 @@ async function readBody(req) {
  * @param {() => object} getConfig 每次請求都重新取，所以 GUI 改完設定即時生效（改 port 除外）
  */
 export function createProxyServer(getConfig, log) {
+  const sessionCwd = new SessionCwd()
+
   return http.createServer(async (req, res) => {
     // Claude Code 的連線預熱探針，回什麼都行
     if (req.method === 'HEAD' && req.url.startsWith('/api/hello')) {
@@ -121,6 +151,8 @@ export function createProxyServer(getConfig, log) {
     }
 
     const ctx = describeRequest(req.headers, payload)
+    sessionCwd.remember(ctx.sessionId, ctx.cwd)
+    const cwd = ctx.cwd ?? sessionCwd.lookup(ctx.sessionId)
     // 只有 messages 類請求值得改寫；其餘（/v1/models 等）一律原樣過去
     const routable = req.url.startsWith('/v1/messages') && payload !== null
     const route = routable ? resolveRoute(config, ctx) : { kind: 'passthrough' }
@@ -149,6 +181,7 @@ export function createProxyServer(getConfig, log) {
       path: req.url.split('?')[0],
       kind: ctx.kind,
       agentId: ctx.agentId,
+      cwd,
       requestedModel: ctx.model,
       target: route.kind === 'provider' ? route.provider.label : 'passthrough (訂閱)',
       sentModel: route.kind === 'provider' ? route.provider.model || ctx.model : ctx.model,

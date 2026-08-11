@@ -365,6 +365,13 @@ function renderRules() {
 
 // ── 流量記錄 ───────────────────────────────────────────────────────
 
+/** 只顯示目錄名，完整路徑放 title —— 路徑太長會把表格撐爛。 */
+function cwdCell(e) {
+  if (!e.cwd) return '<span class="status-muted">–</span>'
+  const short = e.cwd.split(/[\\/]/).filter(Boolean).at(-1) || e.cwd
+  return `<span title="${esc(e.cwd)}">${esc(short)}</span>`
+}
+
 /** effort 被 dropFields 吃掉時要看得出來 —— 請求照樣 200，只是模型變笨。 */
 function effortCell(e) {
   if (!e.effort) return '<span class="status-muted">–</span>'
@@ -377,6 +384,7 @@ function renderLogs() {
     <tr>
       <td class="mono">${esc(e.ts.slice(11, 19))}</td>
       <td class="mono">${esc(e.kind)}</td>
+      <td class="mono">${cwdCell(e)}</td>
       <td class="mono">${esc(e.path)}</td>
       <td class="mono">${esc(e.requestedModel ?? '–')}</td>
       <td>${esc(e.target)}</td>
@@ -396,8 +404,8 @@ function renderLogs() {
         <button class="btn tiny" data-act="clear-logs">清空</button></div>
       <div class="scroll">
         <table>
-          <thead><tr><th>時間</th><th>來源</th><th>路徑</th><th>要求 model</th><th>導向</th><th>實送 model</th><th>思考</th><th>狀態</th><th>耗時</th><th>改寫</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="10" class="empty">還沒有流量。</td></tr>'}</tbody>
+          <thead><tr><th>時間</th><th>來源</th><th>目錄</th><th>路徑</th><th>要求 model</th><th>導向</th><th>實送 model</th><th>思考</th><th>狀態</th><th>耗時</th><th>改寫</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="11" class="empty">還沒有流量。</td></tr>'}</tbody>
         </table>
       </div>
     </section>`

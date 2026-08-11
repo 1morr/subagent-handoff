@@ -66,6 +66,26 @@ npm start
 
 實測也確認 Workflow 的 agent 拿到的工具集裡沒有 `Agent` 與 `Workflow`，所以它們不會再往下開一層 —— 純 ultracode 場景下 `nested` 永遠不觸發。`nested` 只在你手動叫一個 general-purpose subagent、而它自己又去 spawn 別人時才出現。
 
+### 流量記錄的「目錄」欄是怎麼來的
+
+同時開好幾個專案時，用來分辨哪一筆流量出自哪個 session。
+
+header 裡**沒有** cwd（實測 v2.1.227 的 21 個 header 全查過），唯一的來源是 system prompt 最後一塊的 Environment 區段：
+
+```
+# Environment
+You have been invoked in the following environment:
+ - Primary working directory: C:\Users\Roxy\orca\projects\bridge
+```
+
+router 只用一條 regex 挖出這行路徑，system prompt 的其他內容一概不留 —— 測試裡有一條斷言守著這件事。
+
+麻煩的是**子 agent 的 system prompt 沒有這個區段**，而子 agent 正是分流的主要對象。所幸實測子 agent 與主對話共用同一個 `x-claude-code-session-id`，所以由主對話的請求把 cwd 記進一張 `sessionId → cwd` 的表（LRU，上限 200 筆），子 agent 再回查。
+
+因此有一個已知空窗：**router 啟動後，某個 session 的主對話還沒發過任何請求，就先冒出子 agent 流量**，那幾筆的目錄欄會是 `–`。實務上主對話一定先講話，很難碰到。
+
+表格只顯示目錄名，滑鼠移上去看完整路徑。
+
 ### 思考檔位（effort）會不會跟著過去
 
 會，但前提是 `dropFields` 不能把它刪掉。
