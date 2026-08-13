@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CONFIG_PATH, KEEP_SECRET, fromClientConfig, toClientConfig } from './config.mjs'
-import { describeRequest, resolveRoute } from './routing.mjs'
+import { describeRequest, resolveModel, resolveRoute } from './routing.mjs'
 import { runProbes } from './probe.mjs'
 
 const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'ui')
@@ -79,10 +79,11 @@ export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
         const decision = resolveRoute(effective, ctx)
         send(res, 200, {
           kind: ctx.kind,
+          requestedModel: model,
           target: decision.kind === 'provider' ? decision.provider.label : 'passthrough（訂閱）',
           providerId: decision.kind === 'provider' ? decision.provider.id : null,
           ruleId: decision.rule?.id ?? null,
-          sentModel: decision.kind === 'provider' ? decision.provider.model || model : model,
+          sentModel: resolveModel(decision, model),
         })
         return
       }

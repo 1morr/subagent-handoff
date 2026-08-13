@@ -81,8 +81,8 @@ function kindMatches(match, ctx) {
  * 由上而下取第一條命中的規則；都沒命中就走 passthrough（= 訂閱）。
  * 指向不存在 provider 的規則會被跳過，而不是讓請求整個失敗。
  *
- * 命中 passthrough 規則與完全沒命中的去向一樣，差別只在 `rule` —— 流量記錄靠它分辨
- * 「規則真的把我切回訂閱了」與「根本沒命中掉下來的」。
+ * 命中 passthrough 規則與完全沒命中的差別只在 `rule`：前者可以帶 modelOverride 改寫模型，
+ * 後者是純粹的原樣轉發。
  */
 export function resolveRoute(config, ctx) {
   for (const rule of config.rules) {
@@ -96,4 +96,16 @@ export function resolveRoute(config, ctx) {
     return { kind: 'provider', provider, rule }
   }
   return { kind: 'passthrough', rule: null }
+}
+
+/**
+ * 實際要送出的 model 名：規則的 modelOverride 優先，其次是 provider 自己的預設，
+ * 兩者都空就原樣沿用 Claude Code 要的那個。
+ *
+ * 指向 passthrough 的規則一樣吃 modelOverride —— Workflow 的 `agent()` 只認
+ * `sonnet | opus | haiku | fable` 四個 alias，且未指定時一律沿用主對話的模型，
+ * 主對話開 fable 時整批 workflow 也會是 fable。在這裡改寫是唯一能拆開兩者的地方。
+ */
+export function resolveModel(route, requestedModel) {
+  return route.rule?.modelOverride || route.provider?.model || requestedModel || null
 }

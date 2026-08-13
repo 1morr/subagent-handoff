@@ -2,8 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { after, before } from 'node:test'
-import { createProxyServer, TrafficLog, SessionCwd, rewriteBodyForProvider } from '../src/proxy.mjs'
-import { globMatch, describeRequest, resolveRoute, extractCwd, PASSTHROUGH_ID } from '../src/routing.mjs'
+import { createProxyServer, TrafficLog, SessionCwd, rewriteBodyForProvider, rewriteModel } from '../src/proxy.mjs'
+import { globMatch, describeRequest, resolveRoute, resolveModel, extractCwd, PASSTHROUGH_ID } from '../src/routing.mjs'
 import { normalizeConfig, defaultProvider, defaultRule, toClientConfig, fromClientConfig, KEEP_SECRET } from '../src/config.mjs'
 
 // ── 假上游：記下收到什麼，並能吐 SSE ────────────────────────────────
@@ -204,6 +204,7 @@ test('modelGlob 沒命中就落回訂閱', async () => {
   config.rules = [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })]
 })
 
+// ── 指向 passthrough 的規則 ────────────────────────────────────────
 test('規則指向 passthrough 時走訂閱線，不帶 provider 憑證', async () => {
   // 第三方配額快用完，把子 agent 整批切回訂閱的情境
   config.rules = [defaultRule({ id: 'back', match: 'subagent', providerId: PASSTHROUGH_ID })]
@@ -214,8 +215,48 @@ test('規則指向 passthrough 時走訂閱線，不帶 provider 憑證', async 
   const [hit] = received
   assert.equal(hit.headers.authorization, 'Bearer sk-ant-oat-fake', '訂閱 OAuth token 必須原樣送達')
   assert.equal(hit.headers['anthropic-beta'], SUBSCRIPTION_HEADERS['anthropic-beta'], 'passthrough 不受 dropBeta 影響')
-  assert.deepEqual(hit.body, BASE_BODY, '走訂閱就一個字都不能動')
+  assert.deepEqual(hit.body, BASE_BODY, '沒設 modelOverride 就一個字都不能動')
   assert.equal(logStore.list()[0].ruleId, 'back', '要看得出是規則命中，不是沒命中掉下來的')
+  config.rules = [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })]
+})
+
+test('passthrough + modelOverride 只換 model，其餘 body 欄位原封不動', async () => {
+  // 主對話開 fable 時 Workflow 的子 agent 也會是 fable，用這條規則拉回 opus
+  config.rules = [defaultRule({ match: 'subagent', providerId: PASSTHROUGH_ID, modelOverride: 'claude-opus-5' })]
+  const res = await post(
+    { ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' },
+    { ...BASE_BODY, model: 'claude-fable-5' },
+  )
+  assert.equal(res.status, 200)
+  await res.text()
+
+  const [hit] = received
+  assert.equal(hit.body.model, 'claude-opus-5')
+  assert.equal(hit.headers.authorization, 'Bearer sk-ant-oat-fake', '改 model 不代表要換憑證')
+  assert.deepEqual(hit.body.output_config, { effort: 'high' }, '訂閱線的 effort 絕不能被順手改掉')
+  assert.deepEqual(hit.body.thinking, BASE_BODY.thinking)
+  assert.deepEqual(hit.body.context_management, BASE_BODY.context_management)
+  assert.deepEqual(hit.body.messages, BASE_BODY.messages)
+
+  const entry = logStore.list()[0]
+  assert.equal(entry.sentModel, 'claude-opus-5')
+  assert.equal(entry.sentEffort, 'high', '沒有靜默降級')
+  assert.deepEqual(entry.changes, ['model claude-fable-5 → claude-opus-5'])
+  config.rules = [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })]
+})
+
+test('主對話不受指向 passthrough 的子 agent 規則影響', async () => {
+  config.rules = [defaultRule({ match: 'subagent', providerId: PASSTHROUGH_ID, modelOverride: 'claude-opus-5' })]
+  await (await post(SUBSCRIPTION_HEADERS, BASE_BODY)).text()
+  assert.deepEqual(received[0].body, BASE_BODY, '主對話還是你在對話框裡選的那個模型')
+  config.rules = [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })]
+})
+
+test('規則的 modelOverride 蓋過 provider 自己的 model', async () => {
+  config.rules = [defaultRule({ match: 'subagent', providerId: 'kimi', modelOverride: 'kimi-k3(high)' })]
+  await (await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY)).text()
+  assert.equal(received[0].body.model, 'kimi-k3(high)')
+  assert.equal(received[0].headers.authorization, 'Bearer sk-moonshot', 'provider 的其他設定照舊')
   config.rules = [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })]
 })
 
@@ -325,15 +366,47 @@ test('resolveRoute 認得指向 passthrough 的規則，並和「沒命中」區
     providers: [defaultProvider({ id: 'k', baseUrl: 'https://x', model: 'm' })],
     rules: [defaultRule({ id: 'back', match: 'subagent', providerId: PASSTHROUGH_ID })],
   })
-  const hit = resolveRoute(cfg, describeRequest({ 'x-claude-code-agent-id': 'a' }, { model: 'claude-opus-5' }))
+  const sub = describeRequest({ 'x-claude-code-agent-id': 'a' }, { model: 'claude-opus-5' })
+
+  const hit = resolveRoute(cfg, sub)
   assert.equal(hit.kind, 'passthrough')
   assert.equal(hit.rule?.id, 'back')
   assert.equal(resolveRoute(cfg, describeRequest({}, {})).rule, null, '沒命中就沒有 rule')
 })
 
+test('resolveModel 的優先序：規則 > provider > 原樣', () => {
+  const provider = defaultProvider({ id: 'k', baseUrl: 'https://x', model: 'kimi-k3' })
+  const rule = defaultRule({ providerId: 'k' })
+  assert.equal(resolveModel({ kind: 'provider', provider, rule }, 'claude-opus-5'), 'kimi-k3')
+  assert.equal(
+    resolveModel({ kind: 'provider', provider, rule: { ...rule, modelOverride: 'glm-5' } }, 'claude-opus-5'),
+    'glm-5',
+  )
+  // 指向訂閱時沒有 provider 可以退，改寫全靠規則
+  assert.equal(resolveModel({ kind: 'passthrough', rule: null }, 'claude-fable-5'), 'claude-fable-5')
+  assert.equal(
+    resolveModel({ kind: 'passthrough', rule: { modelOverride: 'claude-opus-5' } }, 'claude-fable-5'),
+    'claude-opus-5',
+  )
+  assert.equal(resolveModel({ kind: 'passthrough', rule: null }, null), null)
+})
+
 test('provider 不能佔用 passthrough 這個保留 id', () => {
   const cfg = normalizeConfig({ providers: [{ id: PASSTHROUGH_ID, baseUrl: 'https://x' }] })
   assert.notEqual(cfg.providers[0].id, PASSTHROUGH_ID, '否則規則就沒辦法指回訂閱了')
+})
+
+test('rewriteModel 不改動原物件，也不會無故重建 body', () => {
+  const original = { model: 'claude-fable-5', messages: [] }
+  const changed = rewriteModel(original, 'claude-opus-5')
+  assert.equal(original.model, 'claude-fable-5', '輸入必須維持不變')
+  assert.equal(changed.body.model, 'claude-opus-5')
+  assert.deepEqual(changed.changes, ['model claude-fable-5 → claude-opus-5'])
+
+  // 同名或沒指定時回傳原物件，proxy 就知道不必重新序列化訂閱流量
+  assert.equal(rewriteModel(original, 'claude-fable-5').body, original)
+  assert.deepEqual(rewriteModel(original, null).changes, [])
+  assert.deepEqual(rewriteModel(null, 'x'), { body: null, changes: [] })
 })
 
 test('rewriteBodyForProvider 不改動原物件', () => {

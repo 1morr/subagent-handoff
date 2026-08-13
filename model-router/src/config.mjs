@@ -57,6 +57,8 @@ export function defaultRule(over = {}) {
     modelGlob: '*',
     /** provider 的 id，或 PASSTHROUGH_ID＝導回訂閱。 */
     providerId: '',
+    /** 空字串 = 不改寫。有值時蓋過 provider 自己的 model；指向 passthrough 時也照樣生效。 */
+    modelOverride: '',
     ...over,
   }
 }
@@ -131,6 +133,7 @@ export function normalizeConfig(raw) {
           match: MATCH_KINDS.includes(r.match) ? r.match : 'subagent',
           modelGlob: String(r.modelGlob ?? '*').trim() || '*',
           providerId: String(r.providerId ?? '').trim(),
+          modelOverride: String(r.modelOverride ?? '').trim(),
         }),
       )
     : base.rules

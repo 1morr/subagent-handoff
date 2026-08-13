@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { once } from 'node:events'
-import { describeRequest, resolveRoute } from './routing.mjs'
+import { describeRequest, resolveModel, resolveRoute } from './routing.mjs'
 
 /** fetch 會自動解壓，所以 content-encoding 一定要拿掉，否則 client 會二次解壓。 */
 const HOP_BY_HOP = new Set([
@@ -96,15 +96,24 @@ function buildProviderHeaders(incoming, provider) {
   return headers
 }
 
-/** 把 Anthropic 格式的 body 調整成第三方相容層吃得下的樣子。 */
-export function rewriteBodyForProvider(payload, provider) {
-  const body = { ...payload }
-  const changes = []
+/**
+ * 只換 model、其餘一個字不動。走訂閱那條線時就只用得到這一步 ——
+ * 換掉整包 body 的風險太高，主對話的 effort、context_management 都靠原樣轉發活著。
+ */
+export function rewriteModel(payload, model) {
+  if (!payload || !model || payload.model === model) return { body: payload, changes: [] }
+  return { body: { ...payload, model }, changes: [`model ${payload.model} → ${model}`] }
+}
 
-  if (provider.model && body.model !== provider.model) {
-    changes.push(`model ${body.model} → ${provider.model}`)
-    body.model = provider.model
-  }
+/**
+ * 把 Anthropic 格式的 body 調整成第三方相容層吃得下的樣子。
+ * @param {string} [model] 規則算出來的最終 model 名；省略時退回 provider 自己的設定
+ */
+export function rewriteBodyForProvider(payload, provider, model) {
+  const renamed = rewriteModel(payload, model || provider.model)
+  const body = { ...renamed.body }
+  const changes = [...renamed.changes]
+
   for (const field of provider.dropFields ?? []) {
     if (field in body) {
       delete body[field]
@@ -156,6 +165,7 @@ export function createProxyServer(getConfig, log) {
     // 只有 messages 類請求值得改寫；其餘（/v1/models 等）一律原樣過去
     const routable = req.url.startsWith('/v1/messages') && payload !== null
     const route = routable ? resolveRoute(config, ctx) : { kind: 'passthrough', rule: null }
+    const sentModel = routable ? resolveModel(route, ctx.model) : ctx.model
 
     let target
     let headers
@@ -165,13 +175,17 @@ export function createProxyServer(getConfig, log) {
     let sentEffort = ctx.effort
 
     if (route.kind === 'provider') {
-      const rewritten = rewriteBodyForProvider(payload, route.provider)
+      const rewritten = rewriteBodyForProvider(payload, route.provider, sentModel)
       changes = rewritten.changes
       sentEffort = rewritten.body?.output_config?.effort ?? null
       outBody = Buffer.from(JSON.stringify(rewritten.body))
       headers = buildProviderHeaders(req.headers, route.provider)
       target = route.provider.baseUrl + req.url
     } else {
+      // 訂閱這條線預設連 JSON 都不重新序列化，只有規則指名要換 model 時才動 body
+      const rewritten = rewriteModel(payload, sentModel)
+      changes = rewritten.changes
+      if (changes.length) outBody = Buffer.from(JSON.stringify(rewritten.body))
       headers = buildPassthroughHeaders(req.headers)
       target = config.passthrough.baseUrl + req.url
     }
@@ -185,7 +199,7 @@ export function createProxyServer(getConfig, log) {
       requestedModel: ctx.model,
       target: route.kind === 'provider' ? route.provider.label : 'passthrough（訂閱）',
       ruleId: route.rule?.id ?? null,
-      sentModel: route.kind === 'provider' ? route.provider.model || ctx.model : ctx.model,
+      sentModel,
       effort: ctx.effort,
       sentEffort,
       thinking: ctx.thinking,

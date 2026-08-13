@@ -103,7 +103,8 @@
   td.mono { font-family: var(--mono); font-size: 12px; }
   .scroll { overflow-x: auto; }
 
-  .rule-row { display: grid; grid-template-columns: 30px 1fr 1fr 1.4fr auto; gap: 9px; align-items: center; margin-bottom: 9px; }
+  .rule-row { display: grid; grid-template-columns: 28px 1.1fr 0.8fr 1.3fr 1fr auto; gap: 8px; align-items: center; margin-bottom: 9px; }
+  .rule-row > select, .rule-row > input[type=text] { min-width: 0; }
   .empty { color: var(--muted); padding: 22px; text-align: center; }
   .note {
     background: var(--panel-2); border-left: 3px solid var(--accent);
@@ -147,7 +148,11 @@
 
 <script type="module">
 const KEEP = '__keep__'
-const S = { config: null, runtime: null, dirty: false, tab: 'providers', tests: {}, busy: {}, logs: [], preview: null }
+const S = {
+  config: null, runtime: null, dirty: false, tab: 'providers', tests: {}, busy: {}, logs: [],
+  // 預覽的輸入也放 state，否則每次預覽完重繪都會被模板的預設值蓋回去
+  preview: null, pvKind: 'subagent', pvModel: 'claude-opus-5',
+}
 let logTimer = null
 
 const $ = (sel) => document.querySelector(sel)
@@ -308,6 +313,8 @@ function renderRules() {
         .map(([k, v]) => `<option value="${k}" ${r.match === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <input type="text" class="mono" data-f="modelGlob" value="${esc(r.modelGlob)}" title="model 名比對，支援 *">
       <select data-f="providerId">${targetOpts(r.providerId)}</select>
+      <input type="text" class="mono" data-f="modelOverride" list="model-hints" value="${esc(r.modelOverride ?? '')}"
+             placeholder="不改寫" title="改寫送出的 model 名，留空＝不改寫">
       <span>
         <button class="btn tiny" data-act="up" ${i === 0 ? 'disabled' : ''}>↑</button>
         <button class="btn tiny" data-act="down" ${i === S.config.rules.length - 1 ? 'disabled' : ''}>↓</button>
@@ -334,21 +341,36 @@ function renderRules() {
       比「停用規則」好的地方是排序還在：多條規則疊著時，停用會讓流量掉到<strong>下一條</strong>規則去，
       而不是掉回訂閱。明確指向 passthrough 才是真的擋在那裡。
       流量記錄的「導向」欄滑鼠移上去會顯示命中的規則 id，可以確認是哪一條在作用。
+      <br><br>
+      <strong>「改寫 model」把送出去的 model 名換掉</strong>，留空＝不改寫。
+      指向 provider 時它蓋過該 provider 自己的 Model 欄位；指向訂閱時，它就是讓子 agent 跑跟主對話不同模型的唯一辦法 ——
+      Workflow 的 <code>agent()</code> 沒指定模型時一律沿用主對話的，主對話開 <code>fable</code> 整批 workflow 也會是 fable。
+      填一條「所有子 agent → passthrough（訂閱）→ <code>claude-opus-5</code>」就能拉回來。
+      <br><br>
+      名字要填上游看得懂的完整 model 名。不確定的話，把主對話切到那個模型送一句話，
+      再去<strong>流量記錄</strong>分頁的「要求 model」欄複製實際送出的字串最保險。
     </div>
+
+    <datalist id="model-hints">
+      <option value="claude-opus-5"></option>
+      <option value="claude-sonnet-5"></option>
+      <option value="claude-haiku-4-5-20251001"></option>
+      <option value="claude-fable-5"></option>
+    </datalist>
 
     <section class="card">
       <div class="card-head"><h3>預設去向（passthrough）</h3></div>
       <label class="field">Base URL
         <input type="text" class="mono" id="pt-base" value="${esc(S.config.passthrough.baseUrl)}">
       </label>
-      <span class="hint">所有規則都沒命中、以及規則明確指向 passthrough 時的去向。憑證與 header 原樣轉發、body 一個字不動 —— 這條線就是你的訂閱。除非另外架了 Anthropic 前置，否則不要改。</span>
+      <span class="hint">所有規則都沒命中、以及規則明確指向 passthrough 時的去向。憑證與 header 原樣轉發，body 除了規則指定的 model 改寫之外一個字不動 —— 這條線就是你的訂閱。除非另外架了 Anthropic 前置，否則不要改。</span>
     </section>
 
     <section class="card">
       <div class="card-head"><h3>規則</h3><span class="spacer"></span>
         <button class="btn tiny" data-act="add-rule">＋ 新增規則</button></div>
       <div class="rule-row" style="color:var(--muted);font-size:12px">
-        <span>啟用</span><span>條件</span><span>model 比對</span><span>導向</span><span></span>
+        <span>啟用</span><span>條件</span><span>model 比對</span><span>導向</span><span>改寫 model</span><span></span>
       </div>
       ${rows || '<div class="empty">沒有規則，所有流量都走訂閱。</div>'}
     </section>
@@ -357,21 +379,22 @@ function renderRules() {
       <div class="card-head"><h3>規則預覽</h3></div>
       <div class="tests-row">
         <label class="field">請求來源
-          <select id="pv-kind">
-            <option value="main">主對話</option>
-            <option value="subagent" selected>子 agent</option>
-            <option value="nested">巢狀子 agent</option>
-          </select>
+          <select id="pv-kind">${[['main', '主對話'], ['subagent', '子 agent'], ['nested', '巢狀子 agent']]
+            .map(([k, v]) => `<option value="${k}" ${S.pvKind === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
         </label>
         <label class="field" style="flex:1;min-width:180px">請求的 model
-          <input type="text" class="mono" id="pv-model" value="claude-opus-5">
+          <input type="text" class="mono" id="pv-model" list="model-hints" value="${esc(S.pvModel)}">
         </label>
         <button class="btn" data-act="preview">預覽</button>
       </div>
       ${pv ? `<div style="margin-top:12px" class="mono">
         判定為 <strong>${esc(pv.kind)}</strong> →
         導向 <strong class="${pv.providerId ? 'status-ok' : 'status-muted'}">${esc(pv.target)}</strong>
-        ・實送 model <strong>${esc(pv.sentModel)}</strong>
+        ・實送 model <strong>${
+          pv.requestedModel === pv.sentModel
+            ? esc(pv.sentModel)
+            : `${esc(pv.requestedModel)} → ${esc(pv.sentModel)}`
+        }</strong>
         ${pv.ruleId ? `・命中規則 ${esc(pv.ruleId)}` : '・無規則命中'}
       </div>` : ''}
     </section>`
@@ -551,7 +574,8 @@ document.addEventListener('click', async (ev) => {
     } else if (act === 'add-rule') {
       S.config.rules.push({
         id: 'r-' + Math.random().toString(36).slice(2, 10),
-        enabled: true, match: 'subagent', modelGlob: '*', providerId: S.config.providers[0]?.id ?? 'passthrough',
+        enabled: true, match: 'subagent', modelGlob: '*',
+        providerId: S.config.providers[0]?.id ?? 'passthrough', modelOverride: '',
       })
       markDirty(); render()
     } else if (act === 'del-rule') {
@@ -576,9 +600,9 @@ document.addEventListener('click', async (ev) => {
         S.busy[pid] = false; render()
       }
     } else if (act === 'preview') {
-      S.preview = await api('POST', '/api/routing/preview', {
-        kind: $('#pv-kind').value, model: $('#pv-model').value, config: S.config,
-      })
+      S.pvKind = $('#pv-kind').value
+      S.pvModel = $('#pv-model').value
+      S.preview = await api('POST', '/api/routing/preview', { kind: S.pvKind, model: S.pvModel, config: S.config })
       render()
     } else if (act === 'clear-logs') {
       await api('POST', '/api/logs/clear'); S.logs = []; render()

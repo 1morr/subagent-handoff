@@ -52,6 +52,7 @@ npm start
 | `providers[].extraHeaders` | 額外 header |
 | `rules[]` | 由上而下取第一條命中者。條件為 `any` / `main` / `subagent` / `nested`，另可用 `modelGlob`（支援 `*`）再篩 |
 | `rules[].providerId` | 導向哪個 provider。填保留值 `passthrough` = 明確導回訂閱 |
+| `rules[].modelOverride` | 送出前把 `model` 改寫成這個值，蓋過 `providers[].model`。留空 = 不改寫。指向 `passthrough` 時一樣生效 |
 
 ### 三種來源分別是什麼
 
@@ -76,6 +77,30 @@ npm start
 比「把規則停用」好的地方是規則排序還在：多條規則疊著時，停用會讓流量掉到下一條規則去，而不是掉回訂閱。明確指向 passthrough 才是真的擋在那裡。
 
 流量記錄的「導向」欄滑鼠移上去會顯示命中的規則 id，可以確認切過去的是哪一條，還是根本沒命中掉下來的。
+
+### 讓子 agent 跑跟主對話不同的模型
+
+規則的 `modelOverride` 會把送出去的 `model` 名換掉，指向訂閱時也生效。
+
+用途是 **Workflow / ultracode 的 `agent()` 沒指定模型時一律沿用主對話的模型** —— 主對話開 `fable`，整批 workflow agent 也會是 fable。想讓主對話留在 fable、子 agent 換成 opus，在 Claude Code 那頭做不到（`agent()` 的 `model` 參數要寫死在 workflow script 裡），只能在 router 這層改：
+
+```jsonc
+{
+  "match": "subagent",
+  "modelGlob": "*",
+  "providerId": "passthrough",        // 還是走訂閱付帳
+  "modelOverride": "claude-opus-5"    // 但送出去的 model 換掉
+}
+```
+
+優先序是 `rules[].modelOverride` > `providers[].model` > 原樣沿用。所以同一個 provider 可以被多條規則以不同 model 使用，不必為了換 model 複製一份 provider。
+
+model 名要填**上游看得懂的完整字串**，不是 `opus` / `sonnet` 這種 alias。不確定就把主對話切到那個模型送一句話，再去流量記錄的「要求 model」欄複製實際送出的值 —— GUI 的輸入框有幾個常見值的建議清單，但以流量記錄看到的為準。
+
+兩個要知道的副作用：
+
+- Claude Code 的 UI 仍然顯示你在對話框裡選的模型，實際跑的是改寫後的。要對照就看流量記錄的「要求 model」與「實送 model」兩欄。
+- `max_tokens` 是 Claude Code 依原模型算的。改寫成上限較低的模型時可能被上游退件，這種情況只能調 `modelOverride` 或改回去。
 
 ### 流量記錄的「目錄」欄是怎麼來的
 
@@ -143,7 +168,7 @@ GUI 上每個 provider 都能一鍵測，對應 Claude Code 實際會用到、�
 - Claude Code v2.1.196 起，`ANTHROPIC_BASE_URL` 指向非 Anthropic host 時 **Remote Control 會停用**。
 - `/fast` 的可用性檢查與 WebFetch 網域安全檢查直連 `api.anthropic.com`，不經過 router。
 - Claude Code 每次升級都可能新增 body 欄位，寬容度低的第三方收到會回 `400`。照錯誤訊息把欄位名加進該 provider 的 `dropFields` 即可 —— 一次只加一個，別整組刪掉，否則會連帶關掉 `/effort`。
-- `dropFields` 只作用在被規則命中、要送去 provider 的請求。passthrough（訂閱）那條線是原始 bytes 原樣轉發，連 JSON 都不重新序列化，主對話的思考檔位不受任何影響。
+- `dropFields`、`maxOutputTokens`、`extraHeaders` 只作用在要送去 provider 的請求。passthrough（訂閱）那條線是原始 bytes 原樣轉發，連 JSON 都不重新序列化，主對話的思考檔位不受任何影響 —— 唯一的例外是規則設了 `modelOverride`，那筆會重新序列化，但也只換 `model` 一個欄位。
 - `/v1/messages/count_tokens` 若 provider 不支援會回 404，Claude Code 會自動退回用推論端點估算，不影響運作。
 - 建議一併設 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`。Claude Code 會在 system prompt 前面加一段 attribution block，只有 `api.anthropic.com` 會自動剝除，第三方 provider 會把它當 prompt 收下去。
 
