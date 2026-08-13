@@ -295,8 +295,11 @@ const MATCH_LABELS = {
 }
 
 function renderRules() {
-  const opts = (sel) => S.config.providers
-    .map((p) => `<option value="${esc(p.id)}" ${p.id === sel ? 'selected' : ''}>${esc(p.label)}</option>`).join('')
+  const targetOpts = (sel) => `
+    <option value="" ${sel ? '' : 'selected'}>— 選一個導向 —</option>
+    <option value="passthrough" ${sel === 'passthrough' ? 'selected' : ''}>passthrough（訂閱）</option>
+    ${S.config.providers
+      .map((p) => `<option value="${esc(p.id)}" ${p.id === sel ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}`
 
   const rows = S.config.rules.map((r, i) => `
     <div class="rule-row" data-rid="${esc(r.id)}">
@@ -304,7 +307,7 @@ function renderRules() {
       <select data-f="match">${Object.entries(MATCH_LABELS)
         .map(([k, v]) => `<option value="${k}" ${r.match === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <input type="text" class="mono" data-f="modelGlob" value="${esc(r.modelGlob)}" title="model 名比對，支援 *">
-      <select data-f="providerId"><option value="">— 選一個 provider —</option>${opts(r.providerId)}</select>
+      <select data-f="providerId">${targetOpts(r.providerId)}</select>
       <span>
         <button class="btn tiny" data-act="up" ${i === 0 ? 'disabled' : ''}>↑</button>
         <button class="btn tiny" data-act="down" ${i === S.config.rules.length - 1 ? 'disabled' : ''}>↓</button>
@@ -322,12 +325,23 @@ function renderRules() {
       <strong>Workflow / ultracode 的 <code>agent()</code> 算第一層子 agent，沒有 parent header</strong>，
       所以要涵蓋它們必須選「所有子 agent」；選「只有巢狀」會一個都分流不到。
     </div>
+
+    <div class="note">
+      <strong>導向可以直接選 <code>passthrough（訂閱）</code>。</strong>
+      第三方配額快用完時，把規則的導向從 provider 換成訂閱就好 —— 不用刪規則、不用清 API key，
+      正在跑的 agent 下一個請求就會改走訂閱，設定即時生效不必重啟。
+      <br><br>
+      比「停用規則」好的地方是排序還在：多條規則疊著時，停用會讓流量掉到<strong>下一條</strong>規則去，
+      而不是掉回訂閱。明確指向 passthrough 才是真的擋在那裡。
+      流量記錄的「導向」欄滑鼠移上去會顯示命中的規則 id，可以確認是哪一條在作用。
+    </div>
+
     <section class="card">
       <div class="card-head"><h3>預設去向（passthrough）</h3></div>
       <label class="field">Base URL
         <input type="text" class="mono" id="pt-base" value="${esc(S.config.passthrough.baseUrl)}">
       </label>
-      <span class="hint">所有規則都沒命中時的去向。憑證與 header 原樣轉發、body 一個字不動 —— 這條線就是你的訂閱。除非另外架了 Anthropic 前置，否則不要改。</span>
+      <span class="hint">所有規則都沒命中、以及規則明確指向 passthrough 時的去向。憑證與 header 原樣轉發、body 一個字不動 —— 這條線就是你的訂閱。除非另外架了 Anthropic 前置，否則不要改。</span>
     </section>
 
     <section class="card">
@@ -387,7 +401,7 @@ function renderLogs() {
       <td class="mono">${cwdCell(e)}</td>
       <td class="mono">${esc(e.path)}</td>
       <td class="mono">${esc(e.requestedModel ?? '–')}</td>
-      <td>${esc(e.target)}</td>
+      <td title="${e.ruleId ? '命中規則 ' + esc(e.ruleId) : '無規則命中'}">${esc(e.target)}</td>
       <td class="mono">${esc(e.sentModel ?? '–')}</td>
       <td class="mono">${effortCell(e)}</td>
       <td class="mono ${e.error ? 'status-bad' : e.status >= 400 ? 'status-bad' : e.status ? 'status-ok' : 'status-muted'}">
@@ -537,7 +551,7 @@ document.addEventListener('click', async (ev) => {
     } else if (act === 'add-rule') {
       S.config.rules.push({
         id: 'r-' + Math.random().toString(36).slice(2, 10),
-        enabled: true, match: 'subagent', modelGlob: '*', providerId: S.config.providers[0]?.id ?? '',
+        enabled: true, match: 'subagent', modelGlob: '*', providerId: S.config.providers[0]?.id ?? 'passthrough',
       })
       markDirty(); render()
     } else if (act === 'del-rule') {

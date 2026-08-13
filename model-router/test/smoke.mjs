@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { after, before } from 'node:test'
 import { createProxyServer, TrafficLog, SessionCwd, rewriteBodyForProvider } from '../src/proxy.mjs'
-import { globMatch, describeRequest, resolveRoute, extractCwd } from '../src/routing.mjs'
+import { globMatch, describeRequest, resolveRoute, extractCwd, PASSTHROUGH_ID } from '../src/routing.mjs'
 import { normalizeConfig, defaultProvider, defaultRule, toClientConfig, fromClientConfig, KEEP_SECRET } from '../src/config.mjs'
 
 // ── 假上游：記下收到什麼，並能吐 SSE ────────────────────────────────
@@ -204,6 +204,21 @@ test('modelGlob 沒命中就落回訂閱', async () => {
   config.rules = [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })]
 })
 
+test('規則指向 passthrough 時走訂閱線，不帶 provider 憑證', async () => {
+  // 第三方配額快用完，把子 agent 整批切回訂閱的情境
+  config.rules = [defaultRule({ id: 'back', match: 'subagent', providerId: PASSTHROUGH_ID })]
+  const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY)
+  assert.equal(res.status, 200)
+  await res.text()
+
+  const [hit] = received
+  assert.equal(hit.headers.authorization, 'Bearer sk-ant-oat-fake', '訂閱 OAuth token 必須原樣送達')
+  assert.equal(hit.headers['anthropic-beta'], SUBSCRIPTION_HEADERS['anthropic-beta'], 'passthrough 不受 dropBeta 影響')
+  assert.deepEqual(hit.body, BASE_BODY, '走訂閱就一個字都不能動')
+  assert.equal(logStore.list()[0].ruleId, 'back', '要看得出是規則命中，不是沒命中掉下來的')
+  config.rules = [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })]
+})
+
 test('指向不存在的 provider 時退回訂閱，而不是讓請求失敗', async () => {
   config.rules = [defaultRule({ match: 'subagent', providerId: 'gone' })]
   const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY)
@@ -303,6 +318,22 @@ test('subagent 規則涵蓋巢狀，nested 規則不涵蓋第一層', () => {
 
   cfg.rules = [defaultRule({ match: 'subagent', providerId: 'k' })]
   assert.equal(resolveRoute(cfg, describeRequest({ 'x-claude-code-agent-id': 'a' }, {})).kind, 'provider')
+})
+
+test('resolveRoute 認得指向 passthrough 的規則，並和「沒命中」區分開', () => {
+  const cfg = normalizeConfig({
+    providers: [defaultProvider({ id: 'k', baseUrl: 'https://x', model: 'm' })],
+    rules: [defaultRule({ id: 'back', match: 'subagent', providerId: PASSTHROUGH_ID })],
+  })
+  const hit = resolveRoute(cfg, describeRequest({ 'x-claude-code-agent-id': 'a' }, { model: 'claude-opus-5' }))
+  assert.equal(hit.kind, 'passthrough')
+  assert.equal(hit.rule?.id, 'back')
+  assert.equal(resolveRoute(cfg, describeRequest({}, {})).rule, null, '沒命中就沒有 rule')
+})
+
+test('provider 不能佔用 passthrough 這個保留 id', () => {
+  const cfg = normalizeConfig({ providers: [{ id: PASSTHROUGH_ID, baseUrl: 'https://x' }] })
+  assert.notEqual(cfg.providers[0].id, PASSTHROUGH_ID, '否則規則就沒辦法指回訂閱了')
 })
 
 test('rewriteBodyForProvider 不改動原物件', () => {

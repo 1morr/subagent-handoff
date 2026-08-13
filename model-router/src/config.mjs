@@ -2,6 +2,7 @@ import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { PASSTHROUGH_ID } from './routing.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -54,6 +55,7 @@ export function defaultRule(over = {}) {
     /** any | main | subagent | nested */
     match: 'subagent',
     modelGlob: '*',
+    /** provider 的 id，或 PASSTHROUGH_ID＝導回訂閱。 */
     providerId: '',
     ...over,
   }
@@ -103,7 +105,8 @@ export function normalizeConfig(raw) {
     ? cfg.providers.filter((p) => p && typeof p === 'object').map((p) =>
         defaultProvider({
           ...p,
-          id: typeof p.id === 'string' && p.id ? p.id : newId('p'),
+          // PASSTHROUGH_ID 是規則用來指回訂閱的保留值，不能讓 provider 佔走
+          id: typeof p.id === 'string' && p.id && p.id !== PASSTHROUGH_ID ? p.id : newId('p'),
           label: String(p.label ?? '').trim() || '未命名',
           baseUrl: trimSlash(p.baseUrl),
           apiKey: typeof p.apiKey === 'string' ? p.apiKey : '',

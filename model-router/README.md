@@ -51,6 +51,7 @@ npm start
 | `providers[].maxOutputTokens` | `max_tokens` 上限，超過就夾住。留空 = 不夾 |
 | `providers[].extraHeaders` | 額外 header |
 | `rules[]` | 由上而下取第一條命中者。條件為 `any` / `main` / `subagent` / `nested`，另可用 `modelGlob`（支援 `*`）再篩 |
+| `rules[].providerId` | 導向哪個 provider。填保留值 `passthrough` = 明確導回訂閱 |
 
 ### 三種來源分別是什麼
 
@@ -65,6 +66,16 @@ npm start
 **要涵蓋 ultracode，規則必須選 `subagent`。** Workflow 的 agent 沒有 parent header，選 `nested` 一個都分流不到。
 
 實測也確認 Workflow 的 agent 拿到的工具集裡沒有 `Agent` 與 `Workflow`，所以它們不會再往下開一層 —— 純 ultracode 場景下 `nested` 永遠不觸發。`nested` 只在你手動叫一個 general-purpose subagent、而它自己又去 spawn 別人時才出現。
+
+### 配額快用完時切回訂閱
+
+規則的「導向」可以直接選 `passthrough（訂閱）`，不是只有 provider 可選。
+
+第三方配額見底時，把那條規則的導向從 provider 換成訂閱、按儲存就結束了 —— 不用刪規則、不用清空 API key、也不用重啟 router。設定是每筆請求現查的，正在跑的 agent 下一個請求就會走訂閱，之後配額補回來再切回去。
+
+比「把規則停用」好的地方是規則排序還在：多條規則疊著時，停用會讓流量掉到下一條規則去，而不是掉回訂閱。明確指向 passthrough 才是真的擋在那裡。
+
+流量記錄的「導向」欄滑鼠移上去會顯示命中的規則 id，可以確認切過去的是哪一條，還是根本沒命中掉下來的。
 
 ### 流量記錄的「目錄」欄是怎麼來的
 

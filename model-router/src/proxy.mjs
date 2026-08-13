@@ -155,7 +155,7 @@ export function createProxyServer(getConfig, log) {
     const cwd = ctx.cwd ?? sessionCwd.lookup(ctx.sessionId)
     // 只有 messages 類請求值得改寫；其餘（/v1/models 等）一律原樣過去
     const routable = req.url.startsWith('/v1/messages') && payload !== null
-    const route = routable ? resolveRoute(config, ctx) : { kind: 'passthrough' }
+    const route = routable ? resolveRoute(config, ctx) : { kind: 'passthrough', rule: null }
 
     let target
     let headers
@@ -183,7 +183,8 @@ export function createProxyServer(getConfig, log) {
       agentId: ctx.agentId,
       cwd,
       requestedModel: ctx.model,
-      target: route.kind === 'provider' ? route.provider.label : 'passthrough (訂閱)',
+      target: route.kind === 'provider' ? route.provider.label : 'passthrough（訂閱）',
+      ruleId: route.rule?.id ?? null,
       sentModel: route.kind === 'provider' ? route.provider.model || ctx.model : ctx.model,
       effort: ctx.effort,
       sentEffort,

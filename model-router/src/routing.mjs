@@ -7,6 +7,12 @@
  * 主對話的請求兩者皆無，所以「有沒有 agent-id」就足以把主 session 和子 agent 分開。
  */
 
+/**
+ * 規則的 `providerId` 填這個保留值＝明確導向 passthrough（訂閱）。
+ * 有了它，第三方配額快用完時只要把規則的導向切回來就好，不用刪規則、也不用改 provider 設定。
+ */
+export const PASSTHROUGH_ID = 'passthrough'
+
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -74,16 +80,20 @@ function kindMatches(match, ctx) {
 /**
  * 由上而下取第一條命中的規則；都沒命中就走 passthrough（= 訂閱）。
  * 指向不存在 provider 的規則會被跳過，而不是讓請求整個失敗。
+ *
+ * 命中 passthrough 規則與完全沒命中的去向一樣，差別只在 `rule` —— 流量記錄靠它分辨
+ * 「規則真的把我切回訂閱了」與「根本沒命中掉下來的」。
  */
 export function resolveRoute(config, ctx) {
   for (const rule of config.rules) {
     if (!rule.enabled) continue
     if (!kindMatches(rule.match, ctx)) continue
     if (!globMatch(rule.modelGlob, ctx.model)) continue
+    if (rule.providerId === PASSTHROUGH_ID) return { kind: 'passthrough', rule }
     const provider = config.providers.find((p) => p.id === rule.providerId)
     if (!provider) continue
     if (!provider.baseUrl) continue
     return { kind: 'provider', provider, rule }
   }
-  return { kind: 'passthrough' }
+  return { kind: 'passthrough', rule: null }
 }
