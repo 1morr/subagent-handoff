@@ -275,7 +275,7 @@ function providerCard(p) {
                 ${r.error ? `<div class="err">${esc(r.error)}</div>` : ''}
               </span>
             </div>`).join('')
-          : '<span class="sub">尚未測試。三項分別驗基本推論、SSE 串流、工具呼叫 —— 這三樣任一不過，Claude Code 在這個 provider 上就跑不起來。</span>'
+          : '<span class="sub">尚未測試。前三項驗基本推論、SSE 串流、工具呼叫 —— 任一不過，Claude Code 在這個 provider 上就跑不起來。第四項驗 /effort 到不到得了模型，它壞掉不會報錯，只是模型變笨。</span>'
       }</div>
     </div>
   </section>`

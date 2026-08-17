@@ -5,6 +5,7 @@ import { after, before } from 'node:test'
 import { createProxyServer, TrafficLog, SessionCwd, rewriteBodyForProvider, rewriteModel } from '../src/proxy.mjs'
 import { globMatch, describeRequest, resolveRoute, resolveModel, extractCwd, PASSTHROUGH_ID } from '../src/routing.mjs'
 import { normalizeConfig, defaultProvider, defaultRule, toClientConfig, fromClientConfig, KEEP_SECRET } from '../src/config.mjs'
+import { runProbes } from '../src/probe.mjs'
 
 // ── 假上游：記下收到什麼，並能吐 SSE ────────────────────────────────
 let received = []
@@ -444,4 +445,108 @@ test('normalizeConfig 修掉壞資料而不是拋錯', () => {
   assert.ok(Array.isArray(cfg.providers))
   assert.equal(cfg.rules[0].match, 'subagent')
   assert.equal(cfg.passthrough.baseUrl, 'https://api.anthropic.com')
+})
+
+// ── 思考檔位測試 ──────────────────────────────────────────────────
+
+/** 起一個只服務這一項測試的假上游，handler 決定每一筆怎麼回，並記下收到的 body。 */
+async function withUpstream(handler, fn) {
+  const seen = []
+  const server = http.createServer(async (req, res) => {
+    const chunks = []
+    for await (const c of req) chunks.push(c)
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    seen.push(body)
+    handler(body, res)
+  })
+  const url = await listen(server)
+  try {
+    return await fn(url, seen)
+  } finally {
+    server.close()
+  }
+}
+
+function replyJson(res, payload) {
+  res.writeHead(200, { 'content-type': 'application/json' })
+  res.end(JSON.stringify(payload))
+}
+
+test('思考檔位：dropFields 含 output_config 時直接判失敗，不必打上游', async () => {
+  await withUpstream(
+    (_body, res) => replyJson(res, {}),
+    async (url, seen) => {
+      const provider = defaultProvider({ baseUrl: url, model: 'm', dropFields: ['output_config'] })
+      const [result] = (await runProbes(provider, { tests: ['effort'] })).results
+      assert.equal(result.ok, false)
+      assert.match(result.error, /output_config/)
+      assert.equal(seen.length, 0, '本地就能判定的事情不該浪費一次上游呼叫')
+    },
+  )
+})
+
+test('思考檔位：上游拒收任一檔位就判失敗，並把上游的錯誤訊息帶出來', async () => {
+  await withUpstream(
+    (body, res) => {
+      if (body.output_config?.effort === 'xhigh') {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { message: 'unknown variant `xhigh`' } }))
+        return
+      }
+      replyJson(res, { content: [{ type: 'text', text: 'ok' }] })
+    },
+    async (url) => {
+      const provider = defaultProvider({ baseUrl: url, model: 'm' })
+      const [result] = (await runProbes(provider, { tests: ['effort'] })).results
+      assert.equal(result.ok, false)
+      assert.match(result.error, /xhigh/, '錯誤訊息要指得出是哪個檔位、為什麼')
+      assert.match(result.detail, /4\/5/)
+    },
+  )
+})
+
+test('思考檔位：五檔全收時送出完整枚舉，並比出兩端的思考量', async () => {
+  await withUpstream(
+    (body, res) =>
+      replyJson(res, {
+        // 讓思考量隨檔位變化，比值才算得出來
+        content: [
+          { type: 'thinking', thinking: 'x'.repeat(body.output_config.effort === 'low' ? 100 : 500) },
+          { type: 'text', text: 'ok' },
+        ],
+        stop_reason: 'end_turn',
+      }),
+    async (url, seen) => {
+      const provider = defaultProvider({ baseUrl: url, model: 'm' })
+      const [result] = (await runProbes(provider, { tests: ['effort'] })).results
+      assert.equal(result.ok, true)
+      assert.deepEqual(
+        seen.slice(0, 5).map((b) => b.output_config.effort),
+        ['low', 'medium', 'high', 'xhigh', 'max'],
+        '要照 Claude Code 的枚舉逐一測，不能只挑兩端',
+      )
+      assert.equal(seen.length, 7, '五次探針加兩次量測')
+      // 探針要送真實的請求形狀，否則測不出上游對整包的寬容度
+      assert.equal(seen[0].thinking.type, 'adaptive')
+      assert.ok(seen[0].context_management, 'context_management 也要一起送')
+      assert.match(result.detail, /5\.00×/)
+    },
+  )
+})
+
+test('思考檔位：上游不吐 thinking block 時退回比 output_tokens，且不誤判成失敗', async () => {
+  await withUpstream(
+    (body, res) =>
+      replyJson(res, {
+        content: [{ type: 'text', text: 'ok' }],
+        stop_reason: 'end_turn',
+        usage: { output_tokens: body.output_config.effort === 'low' ? 10 : 90 },
+      }),
+    async (url) => {
+      const provider = defaultProvider({ baseUrl: url, model: 'm' })
+      const [result] = (await runProbes(provider, { tests: ['effort'] })).results
+      assert.equal(result.ok, true)
+      assert.match(result.detail, /tok/)
+    },
+  )
 })
