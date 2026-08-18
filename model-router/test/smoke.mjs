@@ -9,6 +9,7 @@ import {
 import { globMatch, describeRequest, resolveRoute, resolveModel, extractCwd, PASSTHROUGH_ID } from '../src/routing.mjs'
 import { normalizeConfig, defaultProvider, defaultRule, toClientConfig, fromClientConfig, KEEP_SECRET } from '../src/config.mjs'
 import { runProbes } from '../src/probe.mjs'
+import { createAdminServer } from '../src/admin.mjs'
 
 // ── 假上游：記下收到什麼，並能吐 SSE ────────────────────────────────
 let received = []
@@ -20,6 +21,8 @@ let proxy
 let proxyUrl
 let config
 let logStore
+let admin
+let adminUrl
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)))
@@ -112,12 +115,34 @@ before(async () => {
   logStore = new TrafficLog()
   proxy = createProxyServer(() => config, logStore)
   proxyUrl = await listen(proxy)
+
+  // setConfig 只改記憶體裡的那份 —— 測試絕不能寫到真的 config.json
+  admin = createAdminServer({
+    getConfig: () => config,
+    setConfig: async (next) => {
+      config = next
+      return config
+    },
+    log: logStore,
+    getRuntime: () => ({ boundProxyPort: 8787, boundAdminPort: 8788, restartRequired: false }),
+  })
+  adminUrl = await listen(admin)
 })
 
 after(() => {
   proxy?.close()
   upstream?.close()
+  admin?.close()
 })
+
+async function adminApi(method, path, body) {
+  const res = await fetch(adminUrl + path, {
+    method,
+    headers: body ? { 'content-type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  return { status: res.status, json: await res.json() }
+}
 
 async function post(headers, body, query = 'beta=true') {
   received = []
@@ -452,6 +477,77 @@ test('findStreamError 吃得下 fetch 吐出來的 Uint8Array', () => {
 test('連線預熱探針有回應', async () => {
   const res = await fetch(`${proxyUrl}/api/hello`, { method: 'HEAD' })
   assert.equal(res.status, 200)
+})
+
+// ── GUI 後端 ──────────────────────────────────────────────────────
+test('GET /api/state 給前端遮罩過的設定，真 key 不出門', async () => {
+  const { status, json } = await adminApi('GET', '/api/state')
+
+  assert.equal(status, 200)
+  const kimi = json.config.providers.find((p) => p.id === 'kimi')
+  assert.equal(kimi.apiKey, KEEP_SECRET, '真 key 不能離開 router')
+  assert.match(kimi.apiKeyHint, /^sk-m/)
+  assert.equal(json.runtime.restartRequired, false)
+  assert.ok(json.runtime.configPath, '前端要能顯示設定檔在哪')
+})
+
+test('PUT /api/config 存回遮罩值時保留原 key，換成新值時才覆蓋', async () => {
+  const restore = config
+  try {
+    const { json: state } = await adminApi('GET', '/api/state')
+    const incoming = structuredClone(state.config)
+    // 前端拿到的是遮罩，原封不動送回來＝使用者沒改這個欄位
+    incoming.providers.find((p) => p.id === 'kimi').label = '改過名字'
+    incoming.providers.find((p) => p.id === 'other').apiKey = 'sk-brand-new'
+
+    const { status } = await adminApi('PUT', '/api/config', incoming)
+    assert.equal(status, 200)
+
+    const kimi = config.providers.find((p) => p.id === 'kimi')
+    assert.equal(kimi.apiKey, 'sk-moonshot', '沒動到的 key 不能被遮罩字串蓋掉')
+    assert.equal(kimi.label, '改過名字')
+    assert.equal(config.providers.find((p) => p.id === 'other').apiKey, 'sk-brand-new')
+  } finally {
+    config = restore
+  }
+})
+
+test('POST /api/routing/preview 用前端當下的規則試算，不必先儲存', async () => {
+  const draft = structuredClone(toClientConfig(config))
+  draft.rules = [defaultRule({ id: 'draft', match: 'subagent', providerId: 'other', modelOverride: 'glm-5-air' })]
+
+  const { json } = await adminApi('POST', '/api/routing/preview', {
+    kind: 'subagent',
+    model: 'claude-opus-5',
+    config: draft,
+  })
+
+  assert.equal(json.kind, 'subagent')
+  assert.equal(json.providerId, 'other')
+  assert.equal(json.ruleId, 'draft')
+  assert.equal(json.sentModel, 'glm-5-air')
+  assert.deepEqual(config.rules.map((r) => r.id), ['r1'], '預覽不能真的把草稿存下去')
+})
+
+test('流量記錄的讀取與清空', async () => {
+  await (await post(SUBSCRIPTION_HEADERS, BASE_BODY)).text()
+  assert.ok((await adminApi('GET', '/api/logs')).json.entries.length > 0)
+
+  assert.equal((await adminApi('POST', '/api/logs/clear')).status, 200)
+  assert.deepEqual((await adminApi('GET', '/api/logs')).json.entries, [])
+})
+
+test('不認得的路徑回 404 而不是掛掉', async () => {
+  const { status, json } = await adminApi('GET', '/api/nope')
+  assert.equal(status, 404)
+  assert.ok(json.error)
+})
+
+test('GET / 吐得出 GUI 本體', async () => {
+  const res = await fetch(adminUrl + '/')
+  assert.equal(res.status, 200)
+  assert.ok(res.headers.get('content-type').includes('text/html'))
+  assert.match(await res.text(), /<title>/i)
 })
 
 // ── 純函數 ────────────────────────────────────────────────────────
