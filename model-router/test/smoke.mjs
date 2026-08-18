@@ -2,13 +2,18 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { after, before } from 'node:test'
-import { createProxyServer, TrafficLog, SessionCwd, rewriteBodyForProvider, rewriteModel } from '../src/proxy.mjs'
+import {
+  createProxyServer, TrafficLog, SessionCwd, rewriteBodyForProvider, rewriteModel,
+  summarizeUpstreamError, findStreamError, parseRetryAfter, retryDelay, sseError,
+} from '../src/proxy.mjs'
 import { globMatch, describeRequest, resolveRoute, resolveModel, extractCwd, PASSTHROUGH_ID } from '../src/routing.mjs'
 import { normalizeConfig, defaultProvider, defaultRule, toClientConfig, fromClientConfig, KEEP_SECRET } from '../src/config.mjs'
 import { runProbes } from '../src/probe.mjs'
 
 // ── 假上游：記下收到什麼，並能吐 SSE ────────────────────────────────
 let received = []
+/** 排給假上游的失敗劇本，每次請求消耗一筆。空的就正常回應。 */
+let failPlan = []
 let upstream
 let upstreamUrl
 let proxy
@@ -27,6 +32,52 @@ before(async () => {
     const raw = Buffer.concat(chunks).toString('utf8')
     const body = raw ? JSON.parse(raw) : null
     received.push({ url: req.url, headers: req.headers, body })
+
+    // 演出 Anthropic 被節流時的回應：帶 retry-after，body 是它自己的錯誤描述
+    if (req.url.includes('fail=429')) {
+      res.writeHead(429, {
+        'content-type': 'application/json',
+        'retry-after': '146',
+        'request-id': 'req_fake_1',
+      })
+      res.end(JSON.stringify({
+        type: 'error',
+        error: { type: 'rate_limit_error', message: 'Number of request tokens has exceeded your rate limit' },
+      }))
+      return
+    }
+
+    // 200 開頭、串流中途才吐 error 事件：上游過載時的真實行為
+    if (req.url.includes('fail=stream')) {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+      res.write('event: message_start\ndata: {}\n\n')
+      res.write('event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n')
+      res.end()
+      return
+    }
+
+    // 串流送到一半連線就斷，模擬被中間的東西掐掉
+    if (req.url.includes('fail=midstream')) {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+      res.write('event: message_start\ndata: {}\n\n')
+      setTimeout(() => res.destroy(), 50)
+      return
+    }
+
+    const planned = failPlan.shift()
+    if (planned) {
+      // 連回應都還沒開始就被切斷，模擬 VPN / 中間設備掐線
+      if (planned.hangup) {
+        req.socket.destroy()
+        return
+      }
+      res.writeHead(planned.status, {
+        'content-type': 'application/json',
+        ...(planned.retryAfter ? { 'retry-after': planned.retryAfter } : {}),
+      })
+      res.end(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }))
+      return
+    }
 
     if (body?.stream) {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
@@ -54,6 +105,8 @@ before(async () => {
       }),
     ],
     rules: [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })],
+    // 測試不需要真的等退避，只驗證重送的次數與時機
+    retry: { attempts: 2, baseDelayMs: 10, maxDelayMs: 20 },
   })
 
   logStore = new TrafficLog()
@@ -66,9 +119,9 @@ after(() => {
   upstream?.close()
 })
 
-async function post(headers, body) {
+async function post(headers, body, query = 'beta=true') {
   received = []
-  const res = await fetch(`${proxyUrl}/v1/messages?beta=true`, {
+  const res = await fetch(`${proxyUrl}/v1/messages?${query}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', ...headers },
     body: JSON.stringify(body),
@@ -128,6 +181,7 @@ test('流量記錄帶上 cwd 與 effort，但不留 prompt 內容', async () => 
   await (await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, body)).text()
 
   const entry = logStore.list()[0]
+  assert.equal(entry.sessionId, 'sess-1', 'cwd 認不出來時只剩 session id 能分辨來源')
   assert.equal(entry.cwd, '/srv/app')
   assert.equal(entry.effort, 'high')
   assert.equal(entry.sentEffort, 'high')
@@ -287,12 +341,159 @@ test('SSE 逐塊透傳，不緩衝整個回應', async () => {
   assert.match(arrivals.map((a) => a.text).join(''), /message_stop/)
 })
 
+test('上游被節流時原樣轉出，並把 retry-after 與上游的說法記進流量記錄', async () => {
+  const res = await post(SUBSCRIPTION_HEADERS, BASE_BODY, 'fail=429')
+
+  assert.equal(res.status, 429)
+  assert.equal(res.headers.get('retry-after'), '146', 'Claude Code 靠這個 header 決定隔多久重試，吃掉它就變成盲目重試')
+  assert.deepEqual(await res.json(), {
+    type: 'error',
+    error: { type: 'rate_limit_error', message: 'Number of request tokens has exceeded your rate limit' },
+  }, '錯誤 body 要一個字不差地送到 client')
+
+  const entry = logStore.list()[0]
+  assert.equal(entry.status, 429)
+  assert.equal(entry.retryAfter, '146')
+  assert.equal(entry.requestId, 'req_fake_1')
+  assert.match(entry.detail, /rate_limit_error/, '只記一個 429 等於查不出原因，上游的說法要留著')
+  assert.equal(entry.attempts, 1, 'retry-after 要等 146 秒，這種等待不該由 router 扛著不放')
+})
+
+test('流量記錄留下請求形狀，但一樣不留內容', async () => {
+  await (await post(SUBSCRIPTION_HEADERS, { ...BASE_BODY, stream: true, system: 'be a helpful pirate' })).text()
+
+  const entry = logStore.list()[0]
+  assert.deepEqual(entry.shape, { messages: 1, system: true, stream: true, maxTokens: 4096 })
+  assert.ok(!JSON.stringify(entry).includes('pirate'), 'system prompt 不能被形狀帶進流量記錄')
+})
+
+test('200 的串流裡夾著 error 事件時，流量記錄不能記成成功', async () => {
+  const res = await post(SUBSCRIPTION_HEADERS, { ...BASE_BODY, stream: true }, 'fail=stream')
+  assert.equal(res.status, 200)
+  assert.match(await res.text(), /overloaded_error/, '串流內容要原樣送到 client')
+
+  const entry = logStore.list()[0]
+  assert.equal(entry.status, 200)
+  assert.match(entry.detail, /overloaded_error: Overloaded/, '只記一個 200 的話，這種失敗在流量記錄上看不出來')
+})
+
+test('findStreamError 認得 error 事件，也不會把正常事件當成錯誤', () => {
+  const evt = Buffer.from('event: error\ndata: {"type":"error","error":{"type":"api_error","message":"boom"}}\n')
+  assert.equal(findStreamError(evt), 'api_error: boom')
+  assert.equal(findStreamError(Buffer.from('event: message_delta\ndata: {"type":"message_delta"}\n')), null)
+})
+
+test('上游暫時性失敗時 router 自己重送，client 完全不知道發生過', async () => {
+  failPlan = [{ status: 529 }, { status: 529 }]
+  const res = await post(SUBSCRIPTION_HEADERS, BASE_BODY)
+
+  assert.equal(res.status, 200, '重送成功就該是一次乾淨的 200，不該讓 Claude Code 看到 529')
+  await res.text()
+  assert.equal(failPlan.length, 0, '兩次失敗都要被消耗掉')
+
+  const entry = logStore.list()[0]
+  assert.equal(entry.attempts, 3, '一次原始 + 兩次重送')
+  assert.deepEqual(entry.retries, ['529', '529'], '重送過幾次、為什麼重送，記錄要留著')
+  assert.equal(entry.status, 200)
+})
+
+test('重送用完還是失敗，就把上游最後一次的回應原樣交回去', async () => {
+  failPlan = [{ status: 529 }, { status: 529 }, { status: 529 }]
+  const res = await post(SUBSCRIPTION_HEADERS, BASE_BODY)
+
+  assert.equal(res.status, 529, '扛不住就要交回去，不能自己編一個別的狀態')
+  assert.equal((await res.json()).error.type, 'overloaded_error', '上游的錯誤 body 要完整送到 client')
+  assert.equal(failPlan.length, 0)
+
+  const entry = logStore.list()[0]
+  assert.equal(entry.attempts, 3)
+  assert.match(entry.detail, /overloaded_error/)
+})
+
+test('連線層被切斷也會重送 —— VPN 掐線跟上游 5xx 一樣要扛', async () => {
+  failPlan = [{ hangup: true }]
+  const res = await post(SUBSCRIPTION_HEADERS, BASE_BODY)
+
+  assert.equal(res.status, 200)
+  await res.text()
+
+  const entry = logStore.list()[0]
+  assert.equal(entry.attempts, 2, '斷線一次、重送一次就該成功')
+  assert.equal(entry.retries.length, 1)
+  assert.ok(!/^\d+$/.test(entry.retries[0]), `連線層失敗記的是錯誤訊息不是狀態碼，實際 ${entry.retries[0]}`)
+})
+
+test('請求本身有問題的 4xx 不重送', async () => {
+  failPlan = [{ status: 400 }]
+  const res = await post(SUBSCRIPTION_HEADERS, BASE_BODY)
+
+  assert.equal(res.status, 400)
+  await res.text()
+  assert.equal(logStore.list()[0].attempts, 1, '400 重送幾次都一樣，浪費時間而已')
+})
+
+test('串流開到一半斷線時，補一個合法的 SSE error 事件收尾', async () => {
+  const res = await post(SUBSCRIPTION_HEADERS, { ...BASE_BODY, stream: true }, 'fail=midstream')
+  assert.equal(res.status, 200)
+
+  const text = await res.text()
+  assert.match(text, /message_start/, '已經送到 client 的部分要保留')
+  assert.match(text, /event: error/, '斷掉的串流要有收尾 —— 只是被切斷的話 client 連為什麼都拿不到')
+  assert.match(text, /model-router/)
+})
+
+test('findStreamError 吃得下 fetch 吐出來的 Uint8Array', () => {
+  const LF = String.fromCharCode(10)
+  const evt = `event: error${LF}data: {"type":"error","error":{"type":"api_error","message":"boom"}}${LF}`
+  // proxy 在串流迴圈裡拿到的每一塊是 Uint8Array，不是 Buffer；兩者的 indexOf 行為不一樣
+  assert.equal(findStreamError(new Uint8Array(Buffer.from(evt))), 'api_error: boom')
+})
+
 test('連線預熱探針有回應', async () => {
   const res = await fetch(`${proxyUrl}/api/hello`, { method: 'HEAD' })
   assert.equal(res.status, 200)
 })
 
 // ── 純函數 ────────────────────────────────────────────────────────
+test('summarizeUpstreamError 挖出 error.type 與訊息，非 JSON 退回原文並截斷', () => {
+  const anthropic = JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } })
+  assert.equal(summarizeUpstreamError(Buffer.from(anthropic)), 'overloaded_error: Overloaded')
+  assert.equal(summarizeUpstreamError(Buffer.from('<html>502 Bad Gateway</html>')), '<html>502 Bad Gateway</html>')
+  assert.equal(summarizeUpstreamError(Buffer.alloc(0)), null)
+  assert.equal(summarizeUpstreamError(Buffer.from('x'.repeat(600))).length, 401, '過長要截斷，不然流量記錄會被一頁 HTML 撐爛')
+})
+
+test('parseRetryAfter 認得秒數與 HTTP date', () => {
+  assert.equal(parseRetryAfter('30'), 30_000)
+  assert.equal(parseRetryAfter('0'), 0)
+  assert.equal(parseRetryAfter(null), null)
+  assert.equal(parseRetryAfter(''), null)
+  assert.equal(parseRetryAfter('nonsense'), null)
+  const future = parseRetryAfter(new Date(Date.now() + 20_000).toUTCString())
+  assert.ok(future > 10_000 && future <= 20_000, `HTTP date 要換算成毫秒，實際 ${future}`)
+})
+
+test('retryDelay 聽上游的 retry-after，太長就交回給 Claude Code', () => {
+  const policy = { attempts: 2, baseDelayMs: 100, maxDelayMs: 400, maxRetryAfterMs: 10_000 }
+  assert.equal(retryDelay('3', 1, policy), 3000, '上游有講就照它說的等')
+  assert.ok(retryDelay('0', 1, policy) > 0, 'retry-after: 0 不能變成零退避連送')
+  assert.equal(retryDelay('60', 1, policy), null, '要等 60 秒就不是 router 該扛的')
+  for (const attempt of [1, 2, 3, 4]) {
+    const wait = retryDelay(null, attempt, policy)
+    const ceiling = Math.min(policy.baseDelayMs * 2 ** (attempt - 1), policy.maxDelayMs)
+    assert.ok(wait > 0 && wait <= ceiling, `第 ${attempt} 次退避 ${wait} 應落在抖動範圍內`)
+  }
+})
+
+test('sseError 產生合法的 SSE 事件框', () => {
+  const frame = sseError('boom')
+  assert.ok(frame.startsWith('event: error'))
+  assert.ok(frame.endsWith(String.fromCharCode(10, 10)), 'SSE 事件要用空行收尾，少一個 client 就不會處理')
+  const payload = JSON.parse(frame.split(String.fromCharCode(10))[1].replace('data: ', ''))
+  assert.equal(payload.error.type, 'api_error')
+  assert.match(payload.error.message, /boom/)
+})
+
 test('globMatch', () => {
   assert.ok(globMatch('*', 'anything'))
   assert.ok(globMatch('', 'anything'))

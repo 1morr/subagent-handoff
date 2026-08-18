@@ -44,6 +44,20 @@ export function extractCwd(body) {
   return null
 }
 
+/**
+ * 請求的「形狀」：只有數量與有無，不含任何內容。
+ * 用途是在流量記錄裡認出背景請求 —— Claude Code 的壓縮、預熱那幾種請求沒有 Environment 區段，
+ * 光看 cwd 是空的分不出來，但看得出 messages 幾則、有沒有 system、是不是串流。
+ */
+export function describeShape(body) {
+  return {
+    messages: Array.isArray(body?.messages) ? body.messages.length : null,
+    system: body?.system != null,
+    stream: body?.stream === true,
+    maxTokens: Number.isFinite(body?.max_tokens) ? body.max_tokens : null,
+  }
+}
+
 /** 從請求 header 與 body 抽出路由需要的資訊。 */
 export function describeRequest(headers, body) {
   const agentId = headers['x-claude-code-agent-id'] || null
@@ -58,6 +72,7 @@ export function describeRequest(headers, body) {
     effort: typeof body?.output_config?.effort === 'string' ? body.output_config.effort : null,
     thinking: typeof body?.thinking?.type === 'string' ? body.thinking.type : null,
     kind: parentAgentId ? 'nested' : agentId ? 'subagent' : 'main',
+    shape: describeShape(body),
   }
 }
 

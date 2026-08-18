@@ -63,6 +63,24 @@ export function defaultRule(over = {}) {
   }
 }
 
+/**
+ * 上游暫時性失敗時，router 自己重送幾次再說。
+ *
+ * 重送只發生在「一個 byte 都還沒寫給 client」的階段：請求 body 完整留在記憶體，
+ * 重送是安全的。串流一旦開始就不能重來，那時候重送會讓 client 收到兩段接不起來的回應。
+ */
+export function defaultRetry(over = {}) {
+  return {
+    /** 最多額外重送幾次。0 = 關掉，所有錯誤原樣交回 Claude Code。 */
+    attempts: 2,
+    baseDelayMs: 600,
+    maxDelayMs: 5000,
+    /** 上游 retry-after 要求等超過這麼久就不自己扛 —— 交回去讓 Claude Code 顯示倒數，它才知道發生什麼事。 */
+    maxRetryAfterMs: 10000,
+    ...over,
+  }
+}
+
 export function defaultConfig() {
   const kimi = defaultProvider({
     id: 'kimi',
@@ -77,7 +95,27 @@ export function defaultConfig() {
     passthrough: { baseUrl: 'https://api.anthropic.com' },
     providers: [kimi],
     rules: [defaultRule({ id: 'r-subagent', match: 'subagent', providerId: 'kimi' })],
+    retry: defaultRetry(),
   }
+}
+
+function asMs(v, fallback, max = 120_000) {
+  const n = Number(v)
+  return Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), max) : fallback
+}
+
+export function normalizeRetry(raw) {
+  const base = defaultRetry()
+  const cfg = raw && typeof raw === 'object' ? raw : {}
+  const attempts = Number(cfg.attempts)
+  const baseDelayMs = asMs(cfg.baseDelayMs, base.baseDelayMs, 30_000)
+  return defaultRetry({
+    attempts: Number.isInteger(attempts) && attempts >= 0 ? Math.min(attempts, 10) : base.attempts,
+    baseDelayMs,
+    // 上限比起跳值還小是設定寫錯了，夾回去而不是讓退避變成不會增加
+    maxDelayMs: Math.max(baseDelayMs, asMs(cfg.maxDelayMs, base.maxDelayMs, 60_000)),
+    maxRetryAfterMs: asMs(cfg.maxRetryAfterMs, base.maxRetryAfterMs, 120_000),
+  })
 }
 
 function asPort(v, fallback) {
@@ -146,6 +184,7 @@ export function normalizeConfig(raw) {
     },
     providers,
     rules,
+    retry: normalizeRetry(cfg.retry),
   }
 }
 

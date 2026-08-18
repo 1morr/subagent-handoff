@@ -402,11 +402,15 @@ function renderRules() {
 
 // ── 流量記錄 ───────────────────────────────────────────────────────
 
-/** 只顯示目錄名，完整路徑放 title —— 路徑太長會把表格撐爛。 */
+/**
+ * 只顯示目錄名，完整路徑放 title —— 路徑太長會把表格撐爛。
+ * 認不出目錄時退而顯示 session id：沒有 session id 的請求根本不是 Claude Code 送的。
+ */
 function cwdCell(e) {
-  if (!e.cwd) return '<span class="status-muted">–</span>'
+  const sess = e.sessionId ? `session ${e.sessionId}` : '沒有 session id・不是 Claude Code 送來的'
+  if (!e.cwd) return `<span class="status-muted" title="${esc(sess)}">–</span>`
   const short = e.cwd.split(/[\\/]/).filter(Boolean).at(-1) || e.cwd
-  return `<span title="${esc(e.cwd)}">${esc(short)}</span>`
+  return `<span title="${esc(e.cwd)}・${esc(sess)}">${esc(short)}</span>`
 }
 
 /** effort 被 dropFields 吃掉時要看得出來 —— 請求照樣 200，只是模型變笨。 */
@@ -416,19 +420,52 @@ function effortCell(e) {
   return `<span class="status-bad">${esc(e.effort)} → 已移除</span>`
 }
 
+/** 沒有 cwd 的背景請求（壓縮、預熱那幾種）只能靠形狀認出來，但形狀不含任何內容。 */
+function shapeHint(e) {
+  if (!e.shape) return ''
+  const parts = [
+    e.shape.messages != null ? `${e.shape.messages} 則 messages` : null,
+    e.shape.system ? '有 system' : '無 system',
+    e.shape.stream ? '串流' : '非串流',
+    e.shape.maxTokens != null ? `max_tokens ${e.shape.maxTokens}` : null,
+  ].filter(Boolean)
+  return ` title="${esc(parts.join('・'))}"`
+}
+
+/**
+ * 上游為什麼失敗，答案在這一格。Claude Code 撞到 429 / 5xx 時畫面上只寫
+ * 「will retry in …」，那個秒數就是這裡的 retry-after。
+ */
+function statusCell(e) {
+  // 200 但串流裡夾著 error 事件的那種，看起來成功、其實沒有 —— 不能塗成綠的
+  const failed = e.error || e.status >= 400 || (e.status && e.detail)
+  const cls = failed ? 'status-bad' : e.status ? 'status-ok' : 'status-muted'
+  const hint = [
+    e.detail,
+    e.attempts > 1 ? `送出 ${e.attempts} 次，重送原因：${(e.retries || []).join(' → ')}` : null,
+    e.retryAfter ? `retry-after: ${e.retryAfter}` : null,
+    e.requestId ? `request-id: ${e.requestId}` : null,
+  ].filter(Boolean).join('\n')
+  const retry = e.retryAfter ? ` <span class="status-muted">·${esc(e.retryAfter)}s 後重試</span>` : ''
+  const flag = e.status && e.status < 400 && e.detail ? ' ⚠' : ''
+  // router 自己扛掉的重送：Claude Code 看到的是一次乾淨的成功，只有這裡看得出來扛了幾次
+  const tries = e.attempts > 1 ? ` <span class="status-muted">×${e.attempts}</span>` : ''
+  return `<td class="mono ${cls}"${hint ? ` title="${esc(hint)}"` : ''}>${
+    e.error ? esc(e.error) : (e.status ?? '…')}${flag}${tries}${retry}</td>`
+}
+
 function renderLogs() {
   const rows = S.logs.map((e) => `
     <tr>
       <td class="mono">${esc(e.ts.slice(11, 19))}</td>
       <td class="mono">${esc(e.kind)}</td>
       <td class="mono">${cwdCell(e)}</td>
-      <td class="mono">${esc(e.path)}</td>
+      <td class="mono"${shapeHint(e)}>${esc(e.path)}</td>
       <td class="mono">${esc(e.requestedModel ?? '–')}</td>
       <td title="${e.ruleId ? '命中規則 ' + esc(e.ruleId) : '無規則命中'}">${esc(e.target)}</td>
       <td class="mono">${esc(e.sentModel ?? '–')}</td>
       <td class="mono">${effortCell(e)}</td>
-      <td class="mono ${e.error ? 'status-bad' : e.status >= 400 ? 'status-bad' : e.status ? 'status-ok' : 'status-muted'}">
-        ${e.error ? esc(e.error) : (e.status ?? '…')}</td>
+      ${statusCell(e)}
       <td class="mono">${e.ms != null ? e.ms + 'ms' : '…'}</td>
       <td class="mono status-muted">${esc((e.changes || []).join(' '))}</td>
     </tr>`).join('')
@@ -436,7 +473,7 @@ function renderLogs() {
   return `
     <section class="card">
       <div class="card-head"><h3>最近的請求</h3>
-        <span class="sub">每 3 秒更新・只記中繼資料，不記 prompt 內容</span>
+        <span class="sub">每 3 秒更新・只記中繼資料，不記 prompt 內容・狀態與路徑欄移上去看細節</span>
         <span class="spacer"></span>
         <button class="btn tiny" data-act="clear-logs">清空</button></div>
       <div class="scroll">

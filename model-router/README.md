@@ -50,6 +50,9 @@ npm start
 | `providers[].dropBeta` | 移除 `anthropic-beta` header，預設 true |
 | `providers[].maxOutputTokens` | `max_tokens` 上限，超過就夾住。留空 = 不夾 |
 | `providers[].extraHeaders` | 額外 header |
+| `retry.attempts` | 上游回可重送的錯誤時，router 自己額外重送幾次。預設 2，填 0 = 關掉 |
+| `retry.baseDelayMs` / `retry.maxDelayMs` | 上游沒給 `retry-after` 時的指數退避起跳值與上限，實際等待會再加上抖動 |
+| `retry.maxRetryAfterMs` | 上游的 `retry-after` 超過這個值就不自己扛，把回應交回 Claude Code。預設 10000 |
 | `rules[]` | 由上而下取第一條命中者。條件為 `any` / `main` / `subagent` / `nested`，另可用 `modelGlob`（支援 `*`）再篩 |
 | `rules[].providerId` | 導向哪個 provider。填保留值 `passthrough` = 明確導回訂閱 |
 | `rules[].modelOverride` | 送出前把 `model` 改寫成這個值，蓋過 `providers[].model`。留空 = 不改寫。指向 `passthrough` 時一樣生效 |
@@ -121,6 +124,36 @@ router 只用一條 regex 挖出這行路徑，system prompt 的其他內容一�
 因此有一個已知空窗：**router 啟動後，某個 session 的主對話還沒發過任何請求，就先冒出子 agent 流量**，那幾筆的目錄欄會是 `–`。實務上主對話一定先講話，很難碰到。
 
 表格只顯示目錄名，滑鼠移上去看完整路徑。
+
+### 上游暫時性失敗時 router 自己重送
+
+Anthropic 的 429 / 529、第三方的 5xx、還有連線被中間的東西掐掉，都會讓 Claude Code 中斷對話並開始倒數（`attempt 9/10`）。這類失敗大多重送一次就過了，所以 router 先扛。
+
+**重送只發生在還沒寫出任何一個 byte 給 client 的階段**：請求 body 完整留在記憶體，這時候重送是安全的，而且 client 完全不知道發生過。串流一旦開始轉發就不能重來 —— 那時候重送會讓 client 收到兩段接不起來的回應。
+
+- 會重送：`408 409 429 500 502 503 504 529`，以及連線層的失敗（`fetch failed`、`terminated`）
+- 不重送：其餘 4xx。請求本身有問題，重送幾次都一樣
+- 上游有給 `retry-after` 就照它說的等；超過 `retry.maxRetryAfterMs` 就不自己扛，把回應交回去讓 Claude Code 顯示倒數 —— 使用者至少知道在等什麼，而不是對著一個沒反應的畫面等好幾分鐘
+- 扛不住時交回去的是**上游最後一次的原始回應**，狀態碼與 body 都不改寫
+
+流量記錄的狀態欄會顯示 `200 ×3`：送出去三次才成功，而 Claude Code 那頭只看到一次乾淨的 200。滑鼠移上去看每一次的失敗原因。
+
+串流轉發到一半才斷線沒辦法重送，但 router 會補一個合法的 SSE `error` 事件收尾，而不是把連線砍掉 —— 被砍斷的串流只會讓 Claude Code 說「回應可能不完整」，連原因都拿不到。
+
+### Claude Code 顯示「will retry in …」時該看哪裡
+
+畫面上那句 `Waiting for API response · will retry in 2m 26s · check your network` 只說了「在等」，沒說是誰擋的。答案在流量記錄的**狀態欄**：
+
+- 狀態是 `429` / `529` / `5xx` → **上游擋的**，router 只是照實轉發。滑鼠移上去看上游自己的說法（`rate_limit_error: …`、`overloaded_error: …`），以及 `retry-after` 與 `request-id`。
+- 狀態欄直接寫著 `fetch failed` / `terminated` 這類文字 → **router 連不上上游**，client 收到的是 router 合成的 502。
+- `client aborted` → 是 Claude Code 自己收手（按了 esc、subagent 被取消、上一輪結束）。這不是錯誤。
+- **完全沒有對應的那一筆** → 請求根本沒送到 router，問題在 Claude Code 到 127.0.0.1 之間。
+
+**畫面上倒數的秒數就是上游 `retry-after` 的值**，所以狀態欄顯示 `429 ·146s 後重試` 而畫面寫 `will retry in 2m 26s` 是同一件事，不是 router 卡住。
+
+目錄欄是 `–` 時滑鼠移上去會顯示 **session id**；連 session id 都沒有，代表那筆根本不是 Claude Code 送來的，是別的東西打到了 router 的埠。
+
+路徑欄滑鼠移上去是**請求的形狀**（messages 幾則、有沒有 system、是不是串流、`max_tokens`）。用來認出那些沒有目錄的背景請求 —— 例如上下文壓縮這種沒有 Environment 區段的請求，光看目錄欄是 `–` 分不出來，看形狀就一眼認得。形狀只有數量與有無，不含任何內容。
 
 ### 思考檔位（effort）會不會跟著過去
 

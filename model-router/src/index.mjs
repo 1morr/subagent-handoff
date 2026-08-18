@@ -42,6 +42,9 @@ function listen(server, port, label) {
 proxy.headersTimeout = 0
 proxy.requestTimeout = 0
 proxy.timeout = 0
+// Node 預設閒置 5 秒就砍掉 keep-alive 連線，並把 `Keep-Alive: timeout=5` 告訴 client。
+// 兩輪對話之間閒置遠不只 5 秒，砍掉只是逼 Claude Code 每次重連，多一次握手就多一次失敗機會。
+proxy.keepAliveTimeout = 5 * 60_000
 
 try {
   await listen(proxy, config.proxyPort, 'Proxy')
