@@ -50,6 +50,8 @@ npm start
 | `providers[].dropBeta` | 移除 `anthropic-beta` header，預設 true |
 | `providers[].maxOutputTokens` | `max_tokens` 上限，超過就夾住。留空 = 不夾 |
 | `providers[].extraHeaders` | 額外 header |
+| `trafficLog.file` | 流量記錄的落檔路徑，相對於 config.json 所在目錄。留空 = 不落檔。預設 `traffic.log` |
+| `trafficLog.maxBytes` | 超過就輪替成 `traffic.log.1`，只留一份舊的。預設 5000000 |
 | `retry.attempts` | 上游回可重送的錯誤時，router 自己額外重送幾次。預設 2，填 0 = 關掉 |
 | `retry.baseDelayMs` / `retry.maxDelayMs` | 上游沒給 `retry-after` 時的指數退避起跳值與上限，實際等待會再加上抖動 |
 | `retry.maxRetryAfterMs` | 上游的 `retry-after` 超過這個值就不自己扛，把回應交回 Claude Code。預設 10000 |
@@ -124,6 +126,19 @@ router 只用一條 regex 挖出這行路徑，system prompt 的其他內容一�
 因此有一個已知空窗：**router 啟動後，某個 session 的主對話還沒發過任何請求，就先冒出子 agent 流量**，那幾筆的目錄欄會是 `–`。實務上主對話一定先講話，很難碰到。
 
 表格只顯示目錄名，滑鼠移上去看完整路徑。
+
+### 流量記錄會留在磁碟上
+
+GUI 上那份只有最近 300 筆，而且**重啟就沒了** —— 偏偏要查的事情常常橫跨重啟（改完設定要重啟才生效，一重啟證據就跟著消失）。所以每一筆走完的請求會補寫成一行 NDJSON 到 `traffic.log`。
+
+內容跟 GUI 看到的完全一樣：只有中繼資料，沒有 prompt。但它含有專案目錄與 session id，所以預設已經進 `.gitignore`。
+
+```bash
+# 昨天所有非 200 的請求是誰擋的
+grep -v '"status":200' traffic.log | jq -r '[.ts, .target, .status, .detail] | @tsv'
+```
+
+超過 `trafficLog.maxBytes` 會輪替成 `traffic.log.1`，只留一份舊的，所以磁碟最多佔兩倍。`trafficLog.file` 留空就完全不落檔。
 
 ### 上游暫時性失敗時 router 自己重送
 

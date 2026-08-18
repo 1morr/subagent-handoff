@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { after, before } from 'node:test'
 import {
   createProxyServer, TrafficLog, SessionCwd, rewriteBodyForProvider, rewriteModel,
@@ -10,6 +13,7 @@ import { globMatch, describeRequest, resolveRoute, resolveModel, extractCwd, PAS
 import { normalizeConfig, defaultProvider, defaultRule, toClientConfig, fromClientConfig, KEEP_SECRET } from '../src/config.mjs'
 import { runProbes } from '../src/probe.mjs'
 import { createAdminServer } from '../src/admin.mjs'
+import { createFileSink } from '../src/logfile.mjs'
 
 // ── 假上游：記下收到什麼，並能吐 SSE ────────────────────────────────
 let received = []
@@ -23,6 +27,8 @@ let config
 let logStore
 let admin
 let adminUrl
+/** 走完的請求會被補進這裡，用來確認落檔拿到的是完整的 entry */
+let finished = []
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)))
@@ -112,7 +118,7 @@ before(async () => {
     retry: { attempts: 2, baseDelayMs: 10, maxDelayMs: 20 },
   })
 
-  logStore = new TrafficLog()
+  logStore = new TrafficLog(300, (entry) => finished.push(entry))
   proxy = createProxyServer(() => config, logStore)
   proxyUrl = await listen(proxy)
 
@@ -477,6 +483,41 @@ test('findStreamError 吃得下 fetch 吐出來的 Uint8Array', () => {
 test('連線預熱探針有回應', async () => {
   const res = await fetch(`${proxyUrl}/api/hello`, { method: 'HEAD' })
   assert.equal(res.status, 200)
+})
+
+// ── 落檔 ──────────────────────────────────────────────────────────
+test('請求走完才落檔，落下去的 entry 已經是完整的', async () => {
+  finished = []
+  await (await post(SUBSCRIPTION_HEADERS, BASE_BODY)).text()
+
+  assert.equal(finished.length, 1)
+  const entry = finished[0]
+  assert.equal(entry.status, 200)
+  assert.ok(entry.ms != null, '耗時是在 finally 才補的，太早落檔就會是 null')
+  assert.ok(entry.attempts >= 1)
+})
+
+test('落檔是一行一筆 NDJSON，超過上限就輪替並只留一份舊的', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'model-router-'))
+  const file = path.join(dir, 'traffic.log')
+  try {
+    const sink = createFileSink({ file, maxBytes: 200 })
+    sink({ id: 1, note: 'first' })
+    sink({ id: 2, note: 'x'.repeat(300) })
+
+    assert.deepEqual(
+      fs.readFileSync(file, 'utf8').trim().split(String.fromCharCode(10)).map((l) => JSON.parse(l).id),
+      [2],
+      '輪替後新檔只剩後來那筆',
+    )
+    assert.equal(JSON.parse(fs.readFileSync(`${file}.1`, 'utf8').trim()).id, 1, '舊的搬去 .1 而不是被刪掉')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('沒設檔名就不落檔', () => {
+  assert.equal(createFileSink({ file: '', maxBytes: 100 }), null)
 })
 
 // ── GUI 後端 ──────────────────────────────────────────────────────

@@ -1,2 +1,6 @@
 # 內含 API key，永遠不要提交
 config.json
+
+# 流量記錄的落檔，內含目錄與 session id
+traffic.log
+traffic.log.1

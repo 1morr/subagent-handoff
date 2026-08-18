@@ -45,8 +45,10 @@ export class SessionCwd {
 }
 
 export class TrafficLog {
-  constructor(limit = 300) {
+  /** @param {((entry: object) => void) | null} sink 落檔用；只在請求走完時收到完整的 entry */
+  constructor(limit = 300, sink = null) {
     this.limit = limit
+    this.sink = sink
     this.entries = []
     this.seq = 0
   }
@@ -56,6 +58,11 @@ export class TrafficLog {
     this.entries.unshift(entry)
     if (this.entries.length > this.limit) this.entries.length = this.limit
     return entry
+  }
+
+  /** entry 是邊跑邊補的，要等到這裡才算完整 —— 落檔只能在這個時間點做。 */
+  finish(entry) {
+    this.sink?.(entry)
   }
 
   list() {
@@ -438,6 +445,7 @@ export function createProxyServer(getConfig, log) {
       }
     } finally {
       entry.ms = Date.now() - started
+      log.finish(entry)
     }
   })
 }

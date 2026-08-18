@@ -1,11 +1,18 @@
+import path from 'node:path'
 import { loadConfig, saveConfig, CONFIG_PATH } from './config.mjs'
 import { createProxyServer, TrafficLog } from './proxy.mjs'
 import { createAdminServer } from './admin.mjs'
+import { createFileSink } from './logfile.mjs'
 
 const HOST = '127.0.0.1'
 
 let config = await loadConfig()
-const log = new TrafficLog()
+
+// 路徑相對於設定檔，而不是啟動時的工作目錄 —— 從哪裡 npm start 都寫到同一個地方
+const trafficLogPath = config.trafficLog.file
+  ? path.resolve(path.dirname(CONFIG_PATH), config.trafficLog.file)
+  : ''
+const log = new TrafficLog(300, createFileSink({ file: trafficLogPath, maxBytes: config.trafficLog.maxBytes }))
 
 const boundPorts = { proxy: config.proxyPort, admin: config.adminPort }
 
@@ -60,6 +67,7 @@ console.log(`
   Proxy   http://${HOST}:${config.proxyPort}
   GUI     http://${HOST}:${config.adminPort}
   設定檔  ${CONFIG_PATH}
+  流量記錄 ${trafficLogPath || '(不落檔)'}
 
   在 Claude Code 的 settings.json 裡設 ANTHROPIC_BASE_URL 指向上面的 Proxy，
   且不要設 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY，訂閱登入才會保留。

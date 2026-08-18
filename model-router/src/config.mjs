@@ -81,6 +81,20 @@ export function defaultRetry(over = {}) {
   }
 }
 
+/**
+ * 流量記錄的落檔設定。記憶體裡只留最近 300 筆且重啟就沒了，
+ * 但要查的問題常常橫跨重啟，所以預設寫一份到磁碟。只有中繼資料，沒有 prompt。
+ */
+export function defaultTrafficLog(over = {}) {
+  return {
+    /** 空字串 = 不落檔。相對路徑以 config.json 所在目錄為準。 */
+    file: 'traffic.log',
+    /** 超過就輪替成 <file>.1，只留一份舊的，所以磁碟最多佔兩倍。 */
+    maxBytes: 5_000_000,
+    ...over,
+  }
+}
+
 export function defaultConfig() {
   const kimi = defaultProvider({
     id: 'kimi',
@@ -96,7 +110,18 @@ export function defaultConfig() {
     providers: [kimi],
     rules: [defaultRule({ id: 'r-subagent', match: 'subagent', providerId: 'kimi' })],
     retry: defaultRetry(),
+    trafficLog: defaultTrafficLog(),
   }
+}
+
+export function normalizeTrafficLog(raw) {
+  const base = defaultTrafficLog()
+  const cfg = raw && typeof raw === 'object' ? raw : {}
+  return defaultTrafficLog({
+    file: typeof cfg.file === 'string' ? cfg.file.trim() : base.file,
+    // 太小的上限會讓每一筆都在輪替，等於只留最後一行
+    maxBytes: Math.max(10_000, asMs(cfg.maxBytes, base.maxBytes, 1_000_000_000)),
+  })
 }
 
 function asMs(v, fallback, max = 120_000) {
@@ -185,6 +210,7 @@ export function normalizeConfig(raw) {
     providers,
     rules,
     retry: normalizeRetry(cfg.retry),
+    trafficLog: normalizeTrafficLog(cfg.trafficLog),
   }
 }
 
