@@ -385,11 +385,11 @@ export function createProxyServer(getConfig, log) {
     }))
 
     const ac = new AbortController()
-    const abort = () => {
+    // client 斷線時 res 會 close 而此時還沒 end，這是唯一需要的訊號。
+    // req 的 'aborted' 在 Node 20+ 已 deprecated，而且講的是同一件事。
+    res.on('close', () => {
       if (!res.writableEnded) ac.abort()
-    }
-    req.on('aborted', abort)
-    res.on('close', abort)
+    })
 
     const policy = config.retry
     // 上游是不是串流：串流斷掉時的收尾方式跟一般回應不一樣
