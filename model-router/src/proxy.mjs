@@ -244,10 +244,48 @@ export function sseError(message) {
   return `event: error\ndata: ${payload}\n\n`
 }
 
-async function readBody(req) {
+async function readBody(req, limit) {
   const chunks = []
-  for await (const chunk of req) chunks.push(chunk)
+  let size = 0
+  for await (const chunk of req) {
+    size += chunk.length
+    // 超過就當場停手，不要先收完再抱怨 —— 那樣記憶體已經被吃掉了
+    if (size > limit) throw Object.assign(new Error(`request body 超過上限 ${limit} bytes`), { code: 'BODY_TOO_LARGE' })
+    chunks.push(chunk)
+  }
   return Buffer.concat(chunks)
+}
+
+/**
+ * 流量記錄的欄位表只該有一份。兩條路徑各寫一次，遲早會有一邊漏掉新加的欄位。
+ */
+function baseEntry(req, ctx, over) {
+  return {
+    method: req.method,
+    path: req.url.split('?')[0],
+    kind: ctx.kind,
+    agentId: ctx.agentId,
+    sessionId: ctx.sessionId,
+    cwd: null,
+    requestedModel: ctx.model,
+    target: null,
+    ruleId: null,
+    sentModel: null,
+    effort: ctx.effort,
+    sentEffort: ctx.effort,
+    thinking: ctx.thinking,
+    changes: [],
+    shape: ctx.shape,
+    status: null,
+    ms: null,
+    error: null,
+    retryAfter: null,
+    requestId: null,
+    detail: null,
+    attempts: 0,
+    retries: [],
+    ...over,
+  }
 }
 
 /**
@@ -265,7 +303,36 @@ export function createProxyServer(getConfig, log) {
 
     const config = getConfig()
     const started = Date.now()
-    const raw = await readBody(req).catch(() => Buffer.alloc(0))
+
+    let raw = Buffer.alloc(0)
+    let tooLarge = null
+    try {
+      raw = await readBody(req, config.maxRequestBytes)
+    } catch (err) {
+      // 其他讀取失敗沿用舊行為：當成空 body 繼續，讓上游去回它的 400
+      if (err.code === 'BODY_TOO_LARGE') tooLarge = err.message
+    }
+
+    if (tooLarge) {
+      const ctx = describeRequest(req.headers, null)
+      log.finish(log.start(baseEntry(req, ctx, {
+        cwd: sessionCwd.lookup(ctx.sessionId),
+        target: '未送出',
+        status: 413,
+        ms: Date.now() - started,
+        error: tooLarge,
+      })))
+      res.writeHead(413, { 'content-type': 'application/json' })
+      res.end(
+        JSON.stringify({
+          type: 'error',
+          error: { type: 'invalid_request_error', message: `model-router: ${tooLarge}` },
+        }),
+        // 剩下的 body 還在路上，回應 flush 完才切線 —— 早切會連 413 都送不到
+        () => req.destroy(),
+      )
+      return
+    }
 
     let payload = null
     if (raw.length) {
@@ -307,34 +374,15 @@ export function createProxyServer(getConfig, log) {
       target = config.passthrough.baseUrl + req.url
     }
 
-    const entry = log.start({
-      method: req.method,
-      path: req.url.split('?')[0],
-      kind: ctx.kind,
-      agentId: ctx.agentId,
-      // cwd 認不出來時，session id 是唯一還能分辨「這筆是誰送的」的線索
-      sessionId: ctx.sessionId,
+    // sessionId：cwd 認不出來時，它是唯一還能分辨「這筆是誰送的」的線索
+    const entry = log.start(baseEntry(req, ctx, {
       cwd,
-      requestedModel: ctx.model,
       target: route.kind === 'provider' ? route.provider.label : 'passthrough（訂閱）',
       ruleId: route.rule?.id ?? null,
       sentModel,
-      effort: ctx.effort,
       sentEffort,
-      thinking: ctx.thinking,
       changes,
-      shape: ctx.shape,
-      status: null,
-      ms: null,
-      error: null,
-      // 上游的節流訊號。Claude Code 照 retry-after 決定隔多久重試，對得上畫面上那句「will retry in …」
-      retryAfter: null,
-      requestId: null,
-      detail: null,
-      /** 總共送出去幾次（1 ＝ 一次就成，沒有重送過）。 */
-      attempts: 0,
-      retries: [],
-    })
+    }))
 
     const ac = new AbortController()
     const abort = () => {

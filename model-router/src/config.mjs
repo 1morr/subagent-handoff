@@ -105,6 +105,11 @@ export function defaultConfig() {
   return {
     proxyPort: 8787,
     adminPort: 8788,
+    /**
+     * 單一請求 body 的上限。router 為了能重送會把整包留在記憶體，沒有上限的話
+     * 一個壞掉的 client 就能把記憶體吃光。1M context 的請求實測十幾 MB，這是防呆不是限流。
+     */
+    maxRequestBytes: 64 * 1024 * 1024,
     /** 沒有規則命中時的去向。不帶憑證，原樣轉發 Claude Code 的訂閱 OAuth。 */
     passthrough: { baseUrl: 'https://api.anthropic.com' },
     providers: [kimi],
@@ -120,11 +125,11 @@ export function normalizeTrafficLog(raw) {
   return defaultTrafficLog({
     file: typeof cfg.file === 'string' ? cfg.file.trim() : base.file,
     // 太小的上限會讓每一筆都在輪替，等於只留最後一行
-    maxBytes: Math.max(10_000, asMs(cfg.maxBytes, base.maxBytes, 1_000_000_000)),
+    maxBytes: Math.max(10_000, asPositive(cfg.maxBytes, base.maxBytes, 1_000_000_000)),
   })
 }
 
-function asMs(v, fallback, max = 120_000) {
+function asPositive(v, fallback, max = 120_000) {
   const n = Number(v)
   return Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), max) : fallback
 }
@@ -133,13 +138,13 @@ export function normalizeRetry(raw) {
   const base = defaultRetry()
   const cfg = raw && typeof raw === 'object' ? raw : {}
   const attempts = Number(cfg.attempts)
-  const baseDelayMs = asMs(cfg.baseDelayMs, base.baseDelayMs, 30_000)
+  const baseDelayMs = asPositive(cfg.baseDelayMs, base.baseDelayMs, 30_000)
   return defaultRetry({
     attempts: Number.isInteger(attempts) && attempts >= 0 ? Math.min(attempts, 10) : base.attempts,
     baseDelayMs,
     // 上限比起跳值還小是設定寫錯了，夾回去而不是讓退避變成不會增加
-    maxDelayMs: Math.max(baseDelayMs, asMs(cfg.maxDelayMs, base.maxDelayMs, 60_000)),
-    maxRetryAfterMs: asMs(cfg.maxRetryAfterMs, base.maxRetryAfterMs, 120_000),
+    maxDelayMs: Math.max(baseDelayMs, asPositive(cfg.maxDelayMs, base.maxDelayMs, 60_000)),
+    maxRetryAfterMs: asPositive(cfg.maxRetryAfterMs, base.maxRetryAfterMs, 120_000),
   })
 }
 
@@ -204,6 +209,8 @@ export function normalizeConfig(raw) {
   return {
     proxyPort: asPort(cfg.proxyPort, base.proxyPort),
     adminPort: asPort(cfg.adminPort, base.adminPort),
+    // 下限抓 1MB：比這還小的上限只會把正常請求全部擋掉
+    maxRequestBytes: Math.max(1_000_000, asPositive(cfg.maxRequestBytes, base.maxRequestBytes, 1_000_000_000)),
     passthrough: {
       baseUrl: trimSlash(cfg.passthrough?.baseUrl) || base.passthrough.baseUrl,
     },

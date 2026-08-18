@@ -485,6 +485,29 @@ test('連線預熱探針有回應', async () => {
   assert.equal(res.status, 200)
 })
 
+test('body 超過上限時當場擋下來，一個 byte 都不往上游送', async () => {
+  const restore = config
+  try {
+    config = { ...config, maxRequestBytes: 2000 }
+    const res = await post(SUBSCRIPTION_HEADERS, {
+      ...BASE_BODY,
+      messages: [{ role: 'user', content: 'x'.repeat(8000) }],
+    })
+
+    assert.equal(res.status, 413)
+    assert.equal((await res.json()).error.type, 'invalid_request_error')
+    assert.equal(received.length, 0, '收不完的請求絕不能往上游送')
+
+    const entry = logStore.list()[0]
+    assert.equal(entry.status, 413)
+    assert.equal(entry.target, '未送出')
+    assert.match(entry.error, /超過上限/)
+    assert.equal(entry.kind, 'main', 'kind 只看 header，body 收不完也判得出來')
+  } finally {
+    config = restore
+  }
+})
+
 // ── 落檔 ──────────────────────────────────────────────────────────
 test('請求走完才落檔，落下去的 entry 已經是完整的', async () => {
   finished = []

@@ -42,6 +42,7 @@ npm start
 | 欄位 | 說明 |
 | --- | --- |
 | `proxyPort` / `adminPort` | 分別是 proxy 與 GUI 的埠。改了要重啟；其他設定即時生效 |
+| `maxRequestBytes` | 單一請求 body 的上限，超過直接回 413。router 為了能重送會把整包留在記憶體，這是防呆不是限流。預設 64MB，1M context 的請求實測十幾 MB |
 | `passthrough.baseUrl` | 沒有規則命中時的去向，預設 `https://api.anthropic.com`。憑證原樣轉發，不做任何改寫 |
 | `providers[].baseUrl` | 必須是 Anthropic Messages 格式的端點，router 會往 `{baseUrl}/v1/messages` 送 |
 | `providers[].model` | 送出前把 `model` 改寫成這個值。留空 = 不改寫 |
