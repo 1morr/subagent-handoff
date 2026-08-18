@@ -96,15 +96,21 @@ async function testStreaming(provider, model) {
   const decoder = new TextDecoder()
   let buffer = ''
 
+  const collect = (text) => {
+    for (const line of text.split('\n')) {
+      if (line.startsWith('event:')) events.add(line.slice(6).trim())
+    }
+  }
+
   for await (const chunk of response.body) {
     if (firstByteMs === null) firstByteMs = Date.now() - started
     bytes += chunk.length
     buffer += decoder.decode(chunk, { stream: true })
-    for (const line of buffer.split('\n')) {
-      if (line.startsWith('event:')) events.add(line.slice(6).trim())
-    }
+    collect(buffer)
     buffer = buffer.slice(buffer.lastIndexOf('\n') + 1)
   }
+  // 上游最後一行沒有換行收尾時，message_stop 就卡在 buffer 裡 —— 不收會誤判成串流不完整
+  collect(buffer + decoder.decode())
 
   const sawDelta = events.has('content_block_delta')
   const sawStop = events.has('message_stop')

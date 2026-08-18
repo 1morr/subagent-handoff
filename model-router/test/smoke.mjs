@@ -833,6 +833,24 @@ function replyJson(res, payload) {
   res.end(JSON.stringify(payload))
 }
 
+test('SSE 測試：上游最後一個事件沒有換行收尾也要算數', async () => {
+  const LF = String.fromCharCode(10)
+  await withUpstream(
+    (_body, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write(`event: content_block_delta${LF}data: {}${LF}${LF}`)
+      // 故意不以換行收尾：最後一行卡在 buffer 裡，漏收就會誤判成串流不完整
+      res.end(`event: message_stop${LF}data: {}`)
+    },
+    async (url) => {
+      const provider = defaultProvider({ baseUrl: url, model: 'm' })
+      const [result] = (await runProbes(provider, { tests: ['streaming'] })).results
+      assert.equal(result.ok, true, result.error)
+      assert.match(result.detail, /message_stop/)
+    },
+  )
+})
+
 test('思考檔位：dropFields 含 output_config 時直接判失敗，不必打上游', async () => {
   await withUpstream(
     (_body, res) => replyJson(res, {}),
