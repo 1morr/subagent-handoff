@@ -203,6 +203,24 @@ export function isRetryable(status, policy) {
   return status === 429 && policy.retryRateLimit === true
 }
 
+/**
+ * 上游的限流狀態。
+ *
+ * 實測那 21 筆訂閱線的 429 一個都沒帶 retry-after，所以只記那一個 header 等於
+ * 流量記錄答不出「什麼時候會恢復」。Anthropic 把額度與重置時間放在
+ * anthropic-ratelimit-* 這組上，這裡照前綴整組收下來 —— 不寫死名字，因為這組
+ * header 會隨 API 版本增減，寫死就會在下一次改名時靜靜漏掉。
+ */
+export function collectRateLimit(headers) {
+  const prefix = 'anthropic-ratelimit-'
+  const out = {}
+  headers.forEach((value, key) => {
+    const name = key.toLowerCase()
+    if (name.startsWith(prefix)) out[name.slice(prefix.length)] = value
+  })
+  return Object.keys(out).length ? out : null
+}
+
 export function parseRetryAfter(raw) {
   if (raw == null || raw === '') return null
   const seconds = Number(raw)
@@ -296,6 +314,7 @@ function baseEntry(req, ctx, over) {
     ms: null,
     error: null,
     retryAfter: null,
+    rateLimit: null,
     requestId: null,
     detail: null,
     attempts: 0,
@@ -465,6 +484,7 @@ export function createProxyServer(getConfig, log) {
 
       entry.status = upstream.status
       entry.retryAfter = upstream.headers.get('retry-after')
+      entry.rateLimit = collectRateLimit(upstream.headers)
       entry.requestId = upstream.headers.get('request-id') ?? upstream.headers.get('x-request-id')
 
       const outHeaders = {}
