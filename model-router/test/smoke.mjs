@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import { setTimeout as sleep } from 'node:timers/promises'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -8,6 +9,7 @@ import { after, before } from 'node:test'
 import {
   createProxyServer, TrafficLog, SessionCwd, rewriteBodyForProvider, rewriteModel,
   summarizeUpstreamError, findStreamError, parseRetryAfter, retryDelay, sseError, collectRateLimit,
+  createPinger,
 } from '../src/proxy.mjs'
 import { globMatch, describeRequest, resolveRoute, resolveModel, resolveRetryPolicy, extractCwd, PASSTHROUGH_ID } from '../src/routing.mjs'
 import { normalizeConfig, defaultProvider, defaultRule, toClientConfig, fromClientConfig, KEEP_SECRET } from '../src/config.mjs'
@@ -895,48 +897,23 @@ test('思考檔位：上游拒收任一檔位就判失敗，並把上游的錯�
   )
 })
 
-test('思考檔位：五檔全收時送出完整枚舉，並比出兩端的思考量', async () => {
+test('思考檔位：五檔全收時送出完整枚舉，而且只打五次', async () => {
   await withUpstream(
-    (body, res) =>
-      replyJson(res, {
-        // 讓思考量隨檔位變化，比值才算得出來
-        content: [
-          { type: 'thinking', thinking: 'x'.repeat(body.output_config.effort === 'low' ? 100 : 500) },
-          { type: 'text', text: 'ok' },
-        ],
-        stop_reason: 'end_turn',
-      }),
+    (body, res) => replyJson(res, { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' }),
     async (url, seen) => {
       const provider = defaultProvider({ baseUrl: url, model: 'm' })
       const [result] = (await runProbes(provider, { tests: ['effort'] })).results
+
       assert.equal(result.ok, true)
       assert.deepEqual(
-        seen.slice(0, 5).map((b) => b.output_config.effort),
+        seen.map((b) => b.output_config.effort),
         ['low', 'medium', 'high', 'xhigh', 'max'],
         '要照 Claude Code 的枚舉逐一測，不能只挑兩端',
       )
-      assert.equal(seen.length, 7, '五次探針加兩次量測')
+      assert.equal(seen.length, 5, '量測那兩次已經拿掉了，付費 provider 上不該白花')
       // 探針要送真實的請求形狀，否則測不出上游對整包的寬容度
       assert.equal(seen[0].thinking.type, 'adaptive')
       assert.ok(seen[0].context_management, 'context_management 也要一起送')
-      assert.match(result.detail, /5\.00×/)
-    },
-  )
-})
-
-test('思考檔位：上游不吐 thinking block 時退回比 output_tokens，且不誤判成失敗', async () => {
-  await withUpstream(
-    (body, res) =>
-      replyJson(res, {
-        content: [{ type: 'text', text: 'ok' }],
-        stop_reason: 'end_turn',
-        usage: { output_tokens: body.output_config.effort === 'low' ? 10 : 90 },
-      }),
-    async (url) => {
-      const provider = defaultProvider({ baseUrl: url, model: 'm' })
-      const [result] = (await runProbes(provider, { tests: ['effort'] })).results
-      assert.equal(result.ok, true)
-      assert.match(result.detail, /tok/)
     },
   )
 })
@@ -1193,4 +1170,78 @@ test('規則預覽吃得下 agentId', async () => {
   assert.equal(json.agentId, 'Explore-7')
   assert.equal(json.ruleId, 'r-x')
   assert.equal(json.target, 'Kimi')
+})
+
+// ── SSE keep-alive ping ───────────────────────────────────────────
+
+test('createPinger：上游靜默就補 ping，而且只在事件邊界上補', async () => {
+  const onBoundary = []
+  const midFrame = []
+  const stub = (sink) => ({ writableEnded: false, destroyed: false, write: (c) => sink.push(c) })
+
+  const a = createPinger(stub(onBoundary), 30)
+  const b = createPinger(stub(midFrame), 30)
+  // 上游的 chunk 不保證切在 frame 邊界上，插進半個事件中間會把整條串流弄壞
+  b.saw(Buffer.from('event: content_block_delta\ndata: {"partial"'))
+
+  await sleep(200)
+  assert.ok(a.stop() > 0, '靜默超過 idleMs 就該補')
+  assert.deepEqual(onBoundary[0], 'event: ping\ndata: {"type":"ping"}\n\n', 'ping 必須是一個完整合法的事件')
+  assert.equal(b.stop(), 0, '停在半個事件中間就不能插進去')
+})
+
+test('createPinger：收到上游資料就重置計時，res 收掉之後不再寫', async () => {
+  const written = []
+  const res = { writableEnded: false, destroyed: false, write: (c) => written.push(c) }
+  const pinger = createPinger(res, 120)
+
+  // 每 40ms 餵一塊完整事件，計時一直被重置，撐過 idleMs 也不該有 ping
+  for (let i = 0; i < 5; i++) {
+    pinger.saw(Buffer.from('event: ping\ndata: {}\n\n'))
+    await sleep(40)
+  }
+  assert.equal(written.length, 0, '上游還在吐東西就不需要代打')
+
+  res.writableEnded = true
+  await sleep(200)
+  assert.equal(pinger.stop(), 0, '回應已經收掉還寫就會炸在 stream 上')
+})
+
+test('訂閱線的串流一個合成 byte 都不加', async () => {
+  const res = await post(SUBSCRIPTION_HEADERS, { ...BASE_BODY, stream: true })
+  const text = await res.text()
+
+  assert.equal(
+    text,
+    'event: message_start\ndata: {}\n\nevent: message_stop\ndata: {}\n\n',
+    'passthrough 的價值就在原始 bytes 原樣轉發，ping 也不能摻進去',
+  )
+  assert.equal(logStore.list()[0].pings, 0)
+})
+
+test('讀 request body 途中斷線就收手，不拿空 body 往上游打', async () => {
+  received = []
+  await new Promise((resolve) => {
+    const u = new URL(proxyUrl)
+    const req = http.request({
+      hostname: u.hostname,
+      port: u.port,
+      path: '/v1/messages',
+      method: 'POST',
+      // 宣告 10000 bytes 卻只寫幾個就切線，proxy 那頭的 for await 會丟例外
+      headers: { 'content-type': 'application/json', 'content-length': '10000' },
+    })
+    req.on('error', () => {})
+    req.write('{"model":')
+    setTimeout(() => {
+      req.destroy()
+      resolve()
+    }, 50)
+  })
+  await sleep(120)
+
+  assert.equal(received.length, 0, '沒有人在等回應了，不該再浪費一次上游來回')
+  const entry = logStore.list()[0]
+  assert.equal(entry.target, '未送出')
+  assert.match(entry.error, /讀取 request body 失敗/)
 })

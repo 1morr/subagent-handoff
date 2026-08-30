@@ -164,6 +164,12 @@ export function summarizeUpstreamError(buf) {
 const SSE_ERROR_MARK = '"type":"error"'
 
 /**
+ * 掃描時每塊要帶上一塊多長的尾巴。只留標記長度是不夠的：標記跨塊時，
+ * 它所屬事件的開頭大括號會落在更前面，找不到就只能寫出一段截斷的亂碼。
+ */
+const CARRY_BYTES = 1024
+
+/**
  * 上游可以回 200，然後在串流裡夾一個 error 事件（overloaded 常常這樣來）。
  * 只看狀態碼會把這種請求記成成功，於是流量記錄顯示一切正常、Claude Code 卻在重試。
  */
@@ -267,6 +273,59 @@ function sleep(ms, signal) {
 }
 
 /**
+ * 上游靜默多久就自己補一個 ping。Claude Code 的 byte watchdog 與 undici 的
+ * bodyTimeout 都是 300 秒，取五分之一，留足夠餘裕。
+ */
+const PING_IDLE_MS = 60_000
+
+const SSE_PING = 'event: ping\ndata: {"type":"ping"}\n\n'
+
+/** 這一塊資料有沒有剛好停在 SSE 的事件邊界（空行）上。 */
+function endsFrame(buf) {
+  const n = buf.length
+  if (n >= 2 && buf[n - 1] === 10 && buf[n - 2] === 10) return true
+  return n >= 4 && buf[n - 1] === 10 && buf[n - 2] === 13 && buf[n - 3] === 10 && buf[n - 4] === 13
+}
+
+/**
+ * 上游安靜太久時替它補 ping —— 官方 gateway protocol 明文要求 gateway 這麼做：
+ * 長思考期間上游可能一個 byte 都不吐，而 Claude Code 數的是位元組，靜默 300 秒就砍串流。
+ *
+ * **只掛在 provider 線上。** 訂閱線的價值就在原始 bytes 原樣轉發，摻合成資料進去
+ * 就不成立了，而且 Anthropic 自己就會 ping。
+ *
+ * 補之前一定要確認停在事件邊界：上游的 chunk 不保證切在 frame 邊界上，
+ * 插進半個事件中間會把整條串流弄壞。
+ */
+export function createPinger(res, idleMs = PING_IDLE_MS) {
+  let lastWriteAt = Date.now()
+  let atBoundary = true
+  let count = 0
+
+  const timer = setInterval(() => {
+    if (!atBoundary || res.writableEnded || res.destroyed) return
+    if (Date.now() - lastWriteAt < idleMs) return
+    lastWriteAt = Date.now()
+    count += 1
+    res.write(SSE_PING)
+  }, Math.max(50, Math.round(idleMs / 4)))
+  timer.unref?.()
+
+  return {
+    /** 每收到一塊上游資料就叫一次：重置計時，並記住有沒有停在事件邊界。 */
+    saw(chunk) {
+      lastWriteAt = Date.now()
+      atBoundary = endsFrame(chunk)
+    },
+    /** @returns {number} 總共補了幾個 ping */
+    stop() {
+      clearInterval(timer)
+      return count
+    },
+  }
+}
+
+/**
  * 串流中途斷掉時的收尾。Claude Code 收到被切斷的串流只會說「回應可能不完整」，
  * 收到合法的 error 事件才知道發生了什麼事。
  */
@@ -315,6 +374,7 @@ function baseEntry(req, ctx, over) {
     error: null,
     retryAfter: null,
     rateLimit: null,
+    pings: 0,
     requestId: null,
     detail: null,
     attempts: 0,
@@ -352,8 +412,20 @@ export function createProxyServer(getConfig, log) {
     try {
       raw = await readBody(req, config.maxRequestBytes)
     } catch (err) {
-      // 其他讀取失敗沿用舊行為：當成空 body 繼續，讓上游去回它的 400
-      if (err.code === 'BODY_TOO_LARGE') tooLarge = err.message
+      if (err.code !== 'BODY_TOO_LARGE') {
+        // client 在送 body 的途中就走了。拿一個空 body 往上游打一次註定 400 的請求
+        // 只是白費一次來回 —— 已經沒有人在等這個回應了
+        const ctx = describeRequest(req.headers, null)
+        log.finish(log.start(baseEntry(req, ctx, {
+          cwd: sessionCwd.lookup(ctx.sessionId),
+          target: '未送出',
+          ms: Date.now() - started,
+          error: `讀取 request body 失敗：${err.message}`,
+        })))
+        res.destroy()
+        return
+      }
+      tooLarge = err.message
     }
 
     if (tooLarge) {
@@ -438,6 +510,7 @@ export function createProxyServer(getConfig, log) {
     const policy = resolveRetryPolicy(config, route)
     // 上游是不是串流：串流斷掉時的收尾方式跟一般回應不一樣
     let sse = false
+    let pinger = null
 
     try {
       const init = {
@@ -506,12 +579,15 @@ export function createProxyServer(getConfig, log) {
       // 逐塊寫出，不緩衝：Claude Code 會數 SSE 位元組，靜默 300 秒就中斷串流
       // 標記有可能被切在兩塊之間，所以每塊都帶上一塊的尾巴一起看
       let carry = Buffer.alloc(0)
+      if (sse && route.kind === 'provider') pinger = createPinger(res)
       if (upstream.body) {
         for await (const chunk of upstream.body) {
+          pinger?.saw(chunk)
           if (sse && entry.detail === null) {
             const window = carry.length ? Buffer.concat([carry, chunk]) : chunk
             entry.detail = findStreamError(window)
-            carry = window.subarray(Math.max(0, window.length - SSE_ERROR_MARK.length))
+            // 留夠長的尾巴，讓跨塊的標記還找得到它所屬事件的開頭大括號
+            carry = window.subarray(Math.max(0, window.length - CARRY_BYTES))
           }
           if (res.destroyed) break
           // 一定要帶 signal：client 中途離開時 res 不見得會發 error，
@@ -537,6 +613,7 @@ export function createProxyServer(getConfig, log) {
         res.destroy()
       }
     } finally {
+      entry.pings = pinger?.stop() ?? 0
       entry.ms = Date.now() - started
       log.finish(entry)
     }
