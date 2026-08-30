@@ -37,13 +37,14 @@ npm start
 
 ## 設定
 
-`config.json` 也可以直接手改，GUI 只是它的前端。
+`config.json` 也可以直接手改，GUI 是它的完整前端 —— 表格裡每一項都改得到。
 
 | 欄位 | 說明 |
 | --- | --- |
 | `proxyPort` / `adminPort` | 分別是 proxy 與 GUI 的埠。改了要重啟；其他設定即時生效 |
 | `maxRequestBytes` | 單一請求 body 的上限，超過直接回 413。router 為了能重送會把整包留在記憶體，這是防呆不是限流。預設 64MB，1M context 的請求實測十幾 MB |
 | `passthrough.baseUrl` | 沒有規則命中時的去向，預設 `https://api.anthropic.com`。憑證原樣轉發，不做任何改寫 |
+| `passthrough.retry` | 訂閱線的 retry 覆寫（稀疏，只寫的鍵生效）。**預設 `{"retryRateLimit": false}`** |
 | `providers[].baseUrl` | 必須是 Anthropic Messages 格式的端點，router 會往 `{baseUrl}/v1/messages` 送 |
 | `providers[].model` | 送出前把 `model` 改寫成這個值。留空 = 不改寫 |
 | `providers[].authStyle` | `bearer`（`Authorization: Bearer`）或 `x-api-key` |
@@ -51,14 +52,17 @@ npm start
 | `providers[].dropBeta` | 移除 `anthropic-beta` header，預設 true |
 | `providers[].maxOutputTokens` | `max_tokens` 上限，超過就夾住。留空 = 不夾 |
 | `providers[].extraHeaders` | 額外 header |
+| `providers[].retry` | 這個 provider 的 retry 覆寫（稀疏）。`null` = 全部繼承全域 |
 | `trafficLog.file` | 流量記錄的落檔路徑，相對於 config.json 所在目錄。留空 = 不落檔。預設 `traffic.log` |
 | `trafficLog.maxBytes` | 超過就輪替成 `traffic.log.1`，只留一份舊的。預設 5000000 |
 | `retry.attempts` | 上游回可重送的錯誤時，router 自己額外重送幾次。預設 2，填 0 = 關掉 |
 | `retry.baseDelayMs` / `retry.maxDelayMs` | 上游沒給 `retry-after` 時的指數退避起跳值與上限，實際等待會再加上抖動 |
 | `retry.maxRetryAfterMs` | 上游的 `retry-after` 超過這個值就不自己扛，把回應交回 Claude Code。預設 10000 |
-| `rules[]` | 由上而下取第一條命中者。條件為 `any` / `main` / `subagent` / `nested`，另可用 `modelGlob`（支援 `*`）再篩 |
+| `retry.retryRateLimit` | 節流（`429`）算不算可重送。全域預設 true，`passthrough.retry` 預設覆寫成 false |
+| `rules[]` | 由上而下取第一條命中者。條件為 `any` / `main` / `subagent` / `nested`，另可用 `modelGlob` / `agentIdGlob`（都支援 `*`）再篩 |
 | `rules[].providerId` | 導向哪個 provider。填保留值 `passthrough` = 明確導回訂閱 |
 | `rules[].modelOverride` | 送出前把 `model` 改寫成這個值，蓋過 `providers[].model`。留空 = 不改寫。指向 `passthrough` 時一樣生效 |
+| `rules[].agentIdGlob` | 比對 `x-claude-code-agent-id`，`*` = 不篩。用途是按 agent team 的 teammate 名字分流 |
 
 ### 三種來源分別是什麼
 
@@ -108,6 +112,27 @@ model 名要填**上游看得懂的完整字串**，不是 `opus` / `sonnet` 這
 - Claude Code 的 UI 仍然顯示你在對話框裡選的模型，實際跑的是改寫後的。要對照就看流量記錄的「要求 model」與「實送 model」兩欄。
 - `max_tokens` 是 Claude Code 依原模型算的。改寫成上限較低的模型時可能被上游退件，這種情況只能調 `modelOverride` 或改回去。
 
+### 按 agent 身分分流
+
+規則的 `agentIdGlob` 比對 `x-claude-code-agent-id`，`*` = 不篩。
+
+一般 subagent 的 id **每次 spawn 重新產生**，篩不出東西。但官方 gateway protocol 文檔載明：
+
+> Teammate agents, the named members of an agent team, **reuse a stable name-based ID** across reconnections.
+
+所以這個欄位的實際用途是把 [agent team](https://code.claude.com/docs/en/agent-teams) 的 teammate 按角色拆開 —— 便宜的活丟第三方，需要推理品質的留在訂閱：
+
+```jsonc
+[
+  { "match": "subagent", "agentIdGlob": "Explore*", "providerId": "kimi" },
+  { "match": "subagent", "agentIdGlob": "*",        "providerId": "passthrough" }
+]
+```
+
+主對話沒有這個 header，所以**永遠不會被非 `*` 的樣式命中** —— 不用擔心一條 agent 規則把主對話也捲進去。
+
+規則預覽那格可以填 agent id 直接試，不必真的去 spawn 一個。
+
 ### 流量記錄的「目錄」欄是怎麼來的
 
 同時開好幾個專案時，用來分辨哪一筆流量出自哪個 session。
@@ -143,14 +168,42 @@ grep -v '"status":200' traffic.log | jq -r '[.ts, .target, .status, .detail] | @
 
 ### 上游暫時性失敗時 router 自己重送
 
-Anthropic 的 429 / 529、第三方的 5xx、還有連線被中間的東西掐掉，都會讓 Claude Code 中斷對話並開始倒數（`attempt 9/10`）。這類失敗大多重送一次就過了，所以 router 先扛。
+Anthropic 的 529、第三方的 5xx、還有連線被中間的東西掐掉，都會讓 Claude Code 中斷對話並開始倒數（`attempt 9/10`）。這類失敗大多重送一次就過了，所以 router 先扛。節流（`429`）是唯一的例外，它該不該扛取決於是誰擋的 —— 見下面那段。
 
 **重送只發生在還沒寫出任何一個 byte 給 client 的階段**：請求 body 完整留在記憶體，這時候重送是安全的，而且 client 完全不知道發生過。串流一旦開始轉發就不能重來 —— 那時候重送會讓 client 收到兩段接不起來的回應。
 
-- 會重送：`408 409 429 500 502 503 504 529`，以及連線層的失敗（`fetch failed`、`terminated`）
+- 會重送：`408 409 500 502 503 504 529`，以及連線層的失敗（`fetch failed`、`terminated`）
+- **節流（`429`）看路由**：`retry.retryRateLimit` 說了算，第三方預設重送、訂閱線預設不重送（原因見下一段）
 - 不重送：其餘 4xx。請求本身有問題，重送幾次都一樣
 - 上游有給 `retry-after` 就照它說的等；超過 `retry.maxRetryAfterMs` 就不自己扛，把回應交回去讓 Claude Code 顯示倒數 —— 使用者至少知道在等什麼，而不是對著一個沒反應的畫面等好幾分鐘
 - 扛不住時交回去的是**上游最後一次的原始回應**，狀態碼與 body 都不改寫
+
+#### 為什麼訂閱線不重送 429
+
+一份 2711 筆的流量記錄裡，22 筆觸發了重試 —— **全部在訂閱線、全部是 429、全部三次都失敗**，而且 `retry-after` 一個都沒有（所以 `maxRetryAfterMs` 那條逃生路徑從來沒觸發過）。同期第三方線 1668 筆：0 個 5xx、0 個連線錯誤。
+
+原因是訂閱的 429 是 **5 小時額度窗**，不是瞬時擁塞，退避幾百毫秒等不到它恢復。代價是對已經被擋下的端點多打 63 次請求，並在 Claude Code 顯示倒數之前多壓 3.5～9.4 秒。第三方的 429 通常是真的等一下就過，所以那邊留著。
+
+`retry` 的解析順序是：**全域 `retry` 打底 → 路由自己的覆寫蓋上去**。覆寫是稀疏的，只有寫出來的鍵生效，所以之後調全域的 `attempts` 或退避，只覆寫了 `retryRateLimit` 的路由也會跟著動。
+
+```jsonc
+{
+  "retry": { "attempts": 2, "baseDelayMs": 600, "retryRateLimit": true },
+  "passthrough": { "retry": { "retryRateLimit": false } },   // 訂閱：節流直接交回去
+  "providers": [
+    { "id": "kimi", "retry": null },                          // 全部繼承
+    { "id": "flaky", "retry": { "attempts": 4 } }             // 只加重送次數
+  ]
+}
+```
+
+**舊設定檔升級行為**：`passthrough` 底下沒有 `retry` 鍵時，載入就會套用新預設 `{ "retryRateLimit": false }`。想要舊行為就明寫 `"retry": { "retryRateLimit": true }`。
+
+#### 上游安靜太久時 router 自己補 ping
+
+長思考期間第三方可能一個 byte 都不吐，而 Claude Code 數的是位元組、靜默 300 秒就砍串流（undici 的 `bodyTimeout` 也是 300 秒）。官方 gateway protocol 要求 gateway 在這種時候自己發 `ping`，router 照做：上游安靜超過 60 秒就補一個 `event: ping`。
+
+只補在 **provider 那條線**。訂閱線的價值就是原始 bytes 原樣轉發，摻合成資料進去就不成立了，而且 Anthropic 本來就會自己 ping。補之前一定確認停在事件邊界 —— 上游的 chunk 不保證切在 frame 邊界上，插進半個事件中間會把整條串流弄壞。補了幾個看流量記錄狀態欄的 tooltip。
 
 流量記錄的狀態欄會顯示 `200 ×3`：送出去三次才成功，而 Claude Code 那頭只看到一次乾淨的 200。滑鼠移上去看每一次的失敗原因。
 
@@ -165,7 +218,9 @@ Anthropic 的 429 / 529、第三方的 5xx、還有連線被中間的東西掐�
 - `client aborted` → 是 Claude Code 自己收手（按了 esc、subagent 被取消、上一輪結束）。這不是錯誤。
 - **完全沒有對應的那一筆** → 請求根本沒送到 router，問題在 Claude Code 到 127.0.0.1 之間。
 
-**畫面上倒數的秒數就是上游 `retry-after` 的值**，所以狀態欄顯示 `429 ·146s 後重試` 而畫面寫 `will retry in 2m 26s` 是同一件事，不是 router 卡住。
+上游**有給** `retry-after` 時，畫面上倒數的秒數就是它的值，所以狀態欄顯示 `429 ·146s 後重試` 而畫面寫 `will retry in 2m 26s` 是同一件事，不是 router 卡住。
+
+但訂閱線的 429 實測**不帶** `retry-after`（21 筆全部是空的），那時候畫面的倒數是 Claude Code 自己算的。這種情況下限流資訊在 `anthropic-ratelimit-*` 那組 header 上，router 會整組收進流量記錄：狀態欄改顯示 `429 ·3586s 後重置`，tooltip 裡有完整的鍵值。
 
 目錄欄是 `–` 時滑鼠移上去會顯示 **session id**；連 session id 都沒有，代表那筆根本不是 Claude Code 送來的，是別的東西打到了 router 的埠。
 
@@ -264,19 +319,44 @@ GUI 上每個 provider 都能一鍵測，對應 Claude Code 實際會用到、�
 
 前三項任一不過，Claude Code 在這個 provider 上就跑不起來。第四項不一樣，它驗的是**不會報錯的那種壞**：`dropFields` 含 `output_config`，或上游收下欄位卻沒接到思考檔位，請求都照樣 200，只是模型變笨。
 
-第四項的判定依據是「Claude Code 的五個檔位有沒有哪個被回 400」—— 這是確定性的，而且上游的錯誤訊息通常直接點名欄位（DeepSeek 就是這樣把完整枚舉吐出來的）。它另外會用 `low` 與 `max` 各跑一次比思考量，但那只寫進說明、不決定成敗 —— 單次採樣分不出「上游沒接線」和「這題對這個模型沒有解析度」。實測 Kimi K3 在這題上，六種送法（不帶 `output_config` 加五個檔位）各採樣 3 次，中位數全部落在 400～660 字元、範圍互相完全覆蓋，連基準線都分不出來；但它其實是吃這個欄位的，換一道夠難的題目就有 4～5 倍差距（見上面 effort 段落）。所以比值只有在夠大時才下正面結論，接近 1 一律不判定。要真的確認就換一道對該模型難度合適的題目多採樣幾次。
+第四項的判定依據是「Claude Code 的五個檔位有沒有哪個被回 400」—— 這是確定性的，而且上游的錯誤訊息通常直接點名欄位（DeepSeek 就是這樣把完整枚舉吐出來的）。
 
-這一項會打 7 次請求（五個檔位各一次小探針，加兩次量測），比前三項慢，付費 provider 上留意一下。未儲存的設定也能直接測，測完滿意再按儲存。
+它曾經還會用 `low` 與 `max` 各跑一次比思考量，**已經拿掉**：那要多花兩次付費請求，而單次採樣分不出「上游沒把欄位接到檔位」和「這題對這個模型沒有解析度」。實測 Kimi K3 在那題上，六種送法（不帶 `output_config` 加五個檔位）各採樣 3 次，中位數全部落在 400～660 字元、範圍互相完全覆蓋，連基準線都分不出來 —— 但它其實是吃這個欄位的，換一道夠難的題目就有 4～5 倍差距（見上面 effort 段落）。花錢買一個「無法判定」不划算。真的要確認就自己挑一道對該模型難度合適的題目多採樣幾次。
+
+這一項會打 5 次請求（五個檔位各一次小探針），比前三項慢，付費 provider 上留意一下。未儲存的設定也能直接測，測完滿意再按儲存。
+
+### 只收本機來源的請求
+
+兩台 server 都只綁 `127.0.0.1`，但那只擋得住別台機器，擋不住**你自己瀏覽器裡的網頁**：
+
+- 網頁可以用 `content-type: text/plain` 發簡單請求（不觸發 preflight）打 `POST /api/test`，把 `apiKey` 填保留值、`baseUrl` 填自己的網域 —— router 會把真的 API key 還原出來送過去，攻擊者不必讀得到回應。
+- 攻擊者的網域重綁到 `127.0.0.1`（DNS rebinding）之後對瀏覽器就是同源，可以自由 `PUT /api/config` 把 `passthrough.baseUrl` 換掉，主對話的下一個請求就會把訂閱的 OAuth token 送給他。
+
+所以兩台 server 都會檢查來源，不通過回 `403`：
+
+- **`Origin`** —— 沒有（Claude Code 走 undici，不送）或等於自己的 `http://127.0.0.1:<埠>` 才放行。沙箱 iframe 送的字串 `"null"` 不算「沒有」。
+- **`Host`** —— 主機名必須是 `127.0.0.1` / `localhost` / `[::1]`。只驗主機名不驗埠：rebinding 情境下瀏覽器送的埠本來就是我們綁的那個，比對它擋不到東西，卻會誤殺埠轉發。
+
+`Origin` 擋一般 CSRF，`Host` 擋 rebinding，兩個都要。
 
 ## 已知限制
 
 - Anthropic 官方文檔明說「doesn't support routing Claude Code to non-Claude models through any gateway」。不是禁止，是壞了自己修。
 - Claude Code v2.1.196 起，`ANTHROPIC_BASE_URL` 指向非 Anthropic host 時 **Remote Control 會停用**。
 - `/fast` 的可用性檢查與 WebFetch 網域安全檢查直連 `api.anthropic.com`，不經過 router。
-- Claude Code 每次升級都可能新增 body 欄位，寬容度低的第三方收到會回 `400`。照錯誤訊息把欄位名加進該 provider 的 `dropFields` 即可 —— 一次只加一個，別整組刪掉，否則會連帶關掉 `/effort`。
+- Claude Code 每次升級都可能新增 body 欄位，寬容度低的第三方收到會回 `400`。**先看下面那條的順序再決定怎麼修**，別反射性地往 `dropFields` 加。
+- **`anthropic-beta` 與 body 欄位是成對的。** 官方文檔明說：capability 的 header 與 body 欄位一起走，「a gateway that strips the header while passing the body … produces hard `400` errors；only when both halves are absent together does the feature turn off quietly」。而 `dropBeta: true` + `dropFields: []`（目前的預設）正好就是「剝 header、留 body」。實測 Kimi 1668 筆與 DeepSeek 都零 `400`，所以預設沒動；但真的撞到 `400` 時，修法的優先序是：
+  1. 把 `dropBeta` 關掉，讓 header 與 body 成對抵達上游
+  2. 還是不行就在 Claude Code 那頭設 `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`，兩半一起不送 —— 這是官方指定的解法，代價是它**全域生效**，訂閱線也會少掉那些 capability
+  3. 最後才動 `dropFields`，而且一次只加一個。整組刪掉會連帶關掉 `/effort`，且請求照樣 200，只是模型變笨
 - `dropFields`、`maxOutputTokens`、`extraHeaders` 只作用在要送去 provider 的請求。passthrough（訂閱）那條線是原始 bytes 原樣轉發，連 JSON 都不重新序列化，主對話的思考檔位不受任何影響 —— 唯一的例外是規則設了 `modelOverride`，那筆會重新序列化，但也只換 `model` 一個欄位。
 - `/v1/messages/count_tokens` 若 provider 不支援會回 404，Claude Code 會自動退回用推論端點估算，不影響運作。
 - 建議一併設 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`。Claude Code 會在 system prompt 前面加一段 attribution block，只有 `api.anthropic.com` 會自動剝除，第三方 provider 會把它當 prompt 收下去。
+
+## 文檔
+
+- [`docs/refactor-2026-08.md`](docs/refactor-2026-08.md) —— 2026-08 那次重構的前後對照：
+  補上的本機來源守衛、依路由分開的重試策略、以及每項改動背後的實測數據。
 
 ## 測試
 
