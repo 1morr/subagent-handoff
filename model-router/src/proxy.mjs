@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { once } from 'node:events'
-import { describeRequest, resolveModel, resolveRoute } from './routing.mjs'
+import { describeRequest, resolveModel, resolveRetryPolicy, resolveRoute } from './routing.mjs'
 import { isLocalRequest, rejectForeignOrigin } from './guard.mjs'
 
 /** fetch 會自動解壓，所以 content-encoding 一定要拿掉，否則 client 會二次解壓。 */
@@ -183,10 +183,25 @@ export function findStreamError(chunk) {
 }
 
 /**
- * 值得重送的狀態：上游明講「現在別來」（429 / 503 / 529）或它自己出錯（5xx）。
+ * 兩條線都值得重送的狀態：上游自己出錯（5xx）或明講「現在別來」（503 / 529）。
  * 其餘 4xx 是請求本身的問題，重送幾次都一樣。
+ *
+ * 節流（429）不在這裡，因為它該不該重送取決於是誰擋的 —— 見 isRetryable。
  */
-export const RETRYABLE_STATUS = new Set([408, 409, 429, 500, 502, 503, 504, 529])
+export const RETRYABLE_STATUS = new Set([408, 409, 500, 502, 503, 504, 529])
+
+/**
+ * 這個狀態在這條路由上該不該重送。
+ *
+ * 429 是唯一需要分線判斷的：訂閱的節流是 5 小時額度窗，不是瞬時擁塞。實測 21 筆
+ * 全部沒帶 retry-after，退避幾百毫秒重送三次，三次都失敗 —— 只是對已經被擋下的
+ * 端點多打兩次，還在 Claude Code 顯示倒數之前多壓 3.5～9.4 秒。第三方的 429
+ * 通常等一下就過，所以 policy.retryRateLimit 預設留著，只有 passthrough 關掉。
+ */
+export function isRetryable(status, policy) {
+  if (RETRYABLE_STATUS.has(status)) return true
+  return status === 429 && policy.retryRateLimit === true
+}
 
 export function parseRetryAfter(raw) {
   if (raw == null || raw === '') return null
@@ -400,7 +415,8 @@ export function createProxyServer(getConfig, log) {
       if (!res.writableEnded) ac.abort()
     })
 
-    const policy = config.retry
+    // 每條路由各自的 retry policy：全域打底，provider / passthrough 的覆寫蓋上去
+    const policy = resolveRetryPolicy(config, route)
     // 上游是不是串流：串流斷掉時的收尾方式跟一般回應不一樣
     let sse = false
 
@@ -425,7 +441,7 @@ export function createProxyServer(getConfig, log) {
 
         try {
           upstream = await fetch(target, init)
-          if (!RETRYABLE_STATUS.has(upstream.status)) break
+          if (!isRetryable(upstream.status, policy)) break
           failure = String(upstream.status)
           retryAfter = upstream.headers.get('retry-after')
         } catch (err) {

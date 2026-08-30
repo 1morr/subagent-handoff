@@ -124,3 +124,20 @@ export function resolveRoute(config, ctx) {
 export function resolveModel(route, requestedModel) {
   return route.rule?.modelOverride || route.provider?.model || requestedModel || null
 }
+
+/**
+ * 這條路由實際生效的 retry policy：全域預設打底，路由自己的覆寫蓋上去。
+ *
+ * 稀疏合併而不是整組取代 —— 只覆寫了 `retryRateLimit` 的路由，之後調全域的 attempts
+ * 或退避仍然跟著動，不會被凍在設定當下的值。
+ *
+ * @param {object} route resolveRoute 的結果；provider 路由讀 provider.retry，
+ *                       passthrough（含明確指向 passthrough 的規則）讀 config.passthrough.retry
+ */
+export function resolveRetryPolicy(config, route) {
+  const override = route.kind === 'provider' ? route.provider.retry : config.passthrough.retry
+  const merged = { ...config.retry, ...(override ?? {}) }
+  // 合併之後才可能出現「上限比起跳值小」，那會讓退避永遠停在起跳值不再增加
+  merged.maxDelayMs = Math.max(merged.baseDelayMs, merged.maxDelayMs)
+  return merged
+}

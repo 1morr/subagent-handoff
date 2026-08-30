@@ -9,7 +9,7 @@ import {
   createProxyServer, TrafficLog, SessionCwd, rewriteBodyForProvider, rewriteModel,
   summarizeUpstreamError, findStreamError, parseRetryAfter, retryDelay, sseError,
 } from '../src/proxy.mjs'
-import { globMatch, describeRequest, resolveRoute, resolveModel, extractCwd, PASSTHROUGH_ID } from '../src/routing.mjs'
+import { globMatch, describeRequest, resolveRoute, resolveModel, resolveRetryPolicy, extractCwd, PASSTHROUGH_ID } from '../src/routing.mjs'
 import { normalizeConfig, defaultProvider, defaultRule, toClientConfig, fromClientConfig, KEEP_SECRET } from '../src/config.mjs'
 import { runProbes } from '../src/probe.mjs'
 import { createAdminServer } from '../src/admin.mjs'
@@ -1024,4 +1024,103 @@ test('proxy：外來 Host 被擋下', async () => {
   })
   assert.equal(res.status, 403)
   assert.equal(received.length, 0)
+})
+
+// ── 依路由決定的 retry policy ──────────────────────────────────────
+
+test('resolveRetryPolicy：稀疏覆寫只蓋自己寫的鍵，其餘繼承全域', () => {
+  const cfg = normalizeConfig({
+    retry: { attempts: 4, baseDelayMs: 700, maxDelayMs: 9000, maxRetryAfterMs: 20000 },
+    passthrough: { baseUrl: 'https://api.anthropic.com', retry: { retryRateLimit: false } },
+    providers: [
+      defaultProvider({ id: 'inherit', baseUrl: 'https://x.test' }),
+      defaultProvider({ id: 'tuned', baseUrl: 'https://y.test', retry: { attempts: 0 } }),
+    ],
+    rules: [],
+  })
+
+  const pt = resolveRetryPolicy(cfg, { kind: 'passthrough', rule: null })
+  assert.equal(pt.retryRateLimit, false, '訂閱線把節流重送關掉')
+  assert.equal(pt.attempts, 4, '沒覆寫的鍵要繼承全域')
+  assert.equal(pt.maxRetryAfterMs, 20000)
+
+  const inherit = cfg.providers.find((p) => p.id === 'inherit')
+  assert.equal(inherit.retry, null, '沒設就是 null＝全部繼承')
+  assert.deepEqual(resolveRetryPolicy(cfg, { kind: 'provider', provider: inherit }), {
+    attempts: 4, baseDelayMs: 700, maxDelayMs: 9000, maxRetryAfterMs: 20000, retryRateLimit: true,
+  })
+
+  const tuned = cfg.providers.find((p) => p.id === 'tuned')
+  assert.deepEqual(tuned.retry, { attempts: 0 }, '覆寫只存使用者真的寫了的鍵')
+  const merged = resolveRetryPolicy(cfg, { kind: 'provider', provider: tuned })
+  assert.equal(merged.attempts, 0)
+  assert.equal(merged.baseDelayMs, 700, '之後調全域退避，只覆寫 attempts 的 provider 也要跟著動')
+})
+
+test('resolveRetryPolicy：合併後上限比起跳值小時夾回去', () => {
+  const cfg = normalizeConfig({
+    retry: { baseDelayMs: 5000, maxDelayMs: 8000 },
+    providers: [defaultProvider({ id: 'p', baseUrl: 'https://x.test', retry: { maxDelayMs: 1000 } })],
+    rules: [],
+  })
+  const policy = resolveRetryPolicy(cfg, { kind: 'provider', provider: cfg.providers[0] })
+  assert.ok(policy.maxDelayMs >= policy.baseDelayMs, `退避上限不能小於起跳值，實際 ${policy.maxDelayMs}`)
+})
+
+test('舊設定檔沒有 passthrough.retry 時，載入就套用「訂閱不重送節流」', () => {
+  const cfg = normalizeConfig({ passthrough: { baseUrl: 'https://api.anthropic.com' } })
+  assert.deepEqual(cfg.passthrough.retry, { retryRateLimit: false })
+})
+
+test('訂閱線的 429 只送一次就交回去 —— 額度窗等不到退避結束', async () => {
+  failPlan = [{ status: 429 }, { status: 429 }]
+  const res = await post(SUBSCRIPTION_HEADERS, BASE_BODY)
+
+  assert.equal(res.status, 429)
+  await res.text()
+  assert.equal(failPlan.length, 1, '只該消耗掉一筆，第二筆還留著')
+
+  const entry = logStore.list()[0]
+  assert.equal(entry.attempts, 1, '訂閱的 429 重送三次也是三次都失敗，只是多壓幾秒')
+  assert.deepEqual(entry.retries, [])
+  failPlan = []
+})
+
+test('第三方的 429 照樣重送 —— 那通常等一下就過', async () => {
+  failPlan = [{ status: 429 }, { status: 429 }]
+  const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY)
+
+  assert.equal(res.status, 200, '重送成功，client 看到的是一次乾淨的 200')
+  await res.text()
+  assert.equal(failPlan.length, 0)
+
+  const entry = logStore.list()[0]
+  assert.equal(entry.target, 'Kimi')
+  assert.equal(entry.attempts, 3)
+  assert.deepEqual(entry.retries, ['429', '429'])
+})
+
+test('429 以外的可重送狀態在兩條線行為一致', async () => {
+  failPlan = [{ status: 529 }]
+  await (await post(SUBSCRIPTION_HEADERS, BASE_BODY)).text()
+  assert.equal(logStore.list()[0].attempts, 2, '訂閱線的 529 是瞬時過載，還是要扛')
+
+  failPlan = [{ status: 529 }]
+  await (await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY)).text()
+  assert.equal(logStore.list()[0].attempts, 2, '第三方線同樣要扛')
+})
+
+test('provider 可以自己把重送整組關掉', async () => {
+  const provider = config.providers.find((p) => p.id === 'kimi')
+  provider.retry = { attempts: 0 }
+  try {
+    failPlan = [{ status: 529 }]
+    const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY)
+    assert.equal(res.status, 529)
+    await res.text()
+    assert.equal(logStore.list()[0].attempts, 1)
+  } finally {
+    provider.retry = null
+    failPlan = []
+  }
 })
