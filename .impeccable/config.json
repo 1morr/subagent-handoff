@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "layout-transition",
+        "value": "transition: width",
+        "createdAt": "2026-08-30T15:20:35.393Z",
+        "reason": "finish reviewer 裁定例外成立：只由明確點擊觸發；寬度本身就是語意，scaleX 會壓扁段內的排字並謊報比例；兩段是固定高度 flex 容器內的兄弟節點，layout 失效框死在兩個 box 內、無法向頁面串聯；已有 overflow:hidden + nowrap 護欄，且 0% 的段完全不畫。"
+      }
+    ]
+  }
+}
