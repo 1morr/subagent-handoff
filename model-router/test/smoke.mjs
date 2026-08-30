@@ -929,3 +929,99 @@ test('思考檔位：上游不吐 thinking block 時退回比 output_tokens，�
     },
   )
 })
+
+// ── 本機來源守衛 ──────────────────────────────────────────────────
+
+/**
+ * 用原生 http.request 而不是 fetch：這些測試的重點就是自訂 Host 與 Origin，
+ * 而 fetch 對這兩個 header 有自己的想法，送不送得出去不由測試決定。
+ */
+function rawRequest(url, { method = 'GET', headers = {}, body } = {}) {
+  const u = new URL(url)
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: u.hostname, port: u.port, path: u.pathname + u.search, method, headers },
+      (res) => {
+        const chunks = []
+        res.on('data', (c) => chunks.push(c))
+        res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }))
+      },
+    )
+    req.on('error', reject)
+    if (body) req.write(body)
+    req.end()
+  })
+}
+
+test('admin：跨來源的 Origin 被擋下，而且設定一個字都沒被改到', async () => {
+  const before = JSON.stringify(config.passthrough)
+  const res = await rawRequest(`${adminUrl}/api/config`, {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+      origin: 'https://evil.example',
+      host: new URL(adminUrl).host,
+    },
+    body: JSON.stringify({ passthrough: { baseUrl: 'https://evil.example' } }),
+  })
+  assert.equal(res.status, 403)
+  assert.equal(JSON.stringify(config.passthrough), before, '擋下來就不該碰設定')
+})
+
+test('admin：POST /api/test 的簡單請求 CSRF 被擋下 —— 真 key 不會被送出門', async () => {
+  const res = await rawRequest(`${adminUrl}/api/test`, {
+    // text/plain 在瀏覽器上不觸發 preflight，這正是這條路徑原本危險的原因
+    method: 'POST',
+    headers: { 'content-type': 'text/plain', origin: 'https://evil.example', host: new URL(adminUrl).host },
+    body: JSON.stringify({
+      provider: { id: 'kimi', apiKey: KEEP_SECRET, baseUrl: 'http://127.0.0.1:1', authStyle: 'bearer' },
+      tests: ['connectivity'],
+    }),
+  })
+  assert.equal(res.status, 403)
+})
+
+test('admin：外來 Host 被擋下 —— DNS rebinding 進不來', async () => {
+  const res = await rawRequest(`${adminUrl}/api/state`, { headers: { host: 'evil.example' } })
+  assert.equal(res.status, 403)
+})
+
+test('admin：沒有 Origin（Claude Code / curl）與自己的 Origin 都放行', async () => {
+  const bare = await rawRequest(`${adminUrl}/api/state`, { headers: { host: new URL(adminUrl).host } })
+  assert.equal(bare.status, 200)
+
+  // getRuntime 在測試裡回報 boundAdminPort=8788，守衛就是拿它組出允許的 Origin
+  const own = await rawRequest(`${adminUrl}/api/state`, {
+    headers: { host: new URL(adminUrl).host, origin: 'http://127.0.0.1:8788' },
+  })
+  assert.equal(own.status, 200)
+})
+
+test('admin：沙箱 iframe 的 Origin: null 不算「沒有 Origin」', async () => {
+  const res = await rawRequest(`${adminUrl}/api/state`, {
+    headers: { host: new URL(adminUrl).host, origin: 'null' },
+  })
+  assert.equal(res.status, 403)
+})
+
+test('proxy：跨來源請求被擋下，一個 byte 都不往上游送', async () => {
+  received = []
+  const res = await rawRequest(`${proxyUrl}/v1/messages`, {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain', origin: 'https://evil.example', host: new URL(proxyUrl).host },
+    body: JSON.stringify(BASE_BODY),
+  })
+  assert.equal(res.status, 403)
+  assert.equal(received.length, 0, '擋下來的請求不該產生任何上游流量')
+})
+
+test('proxy：外來 Host 被擋下', async () => {
+  received = []
+  const res = await rawRequest(`${proxyUrl}/v1/messages`, {
+    method: 'POST',
+    headers: { host: 'evil.example', 'content-type': 'application/json' },
+    body: JSON.stringify(BASE_BODY),
+  })
+  assert.equal(res.status, 403)
+  assert.equal(received.length, 0)
+})

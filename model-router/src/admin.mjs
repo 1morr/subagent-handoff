@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { CONFIG_PATH, KEEP_SECRET, fromClientConfig, toClientConfig } from './config.mjs'
 import { describeRequest, resolveModel, resolveRoute } from './routing.mjs'
 import { runProbes } from './probe.mjs'
+import { isLocalRequest, rejectForeignOrigin } from './guard.mjs'
 
 const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'ui')
 
@@ -30,6 +31,12 @@ async function readJson(req) {
  */
 export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
   return http.createServer(async (req, res) => {
+    // 這台 server 握有 API key 的還原能力與整份設定的寫入權，來源檢查必須在路由之前
+    if (!isLocalRequest(req, getRuntime().boundAdminPort)) {
+      rejectForeignOrigin(res)
+      return
+    }
+
     const url = new URL(req.url, 'http://127.0.0.1')
     const route = `${req.method} ${url.pathname}`
 

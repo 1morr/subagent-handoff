@@ -1,6 +1,7 @@
 import http from 'node:http'
 import { once } from 'node:events'
 import { describeRequest, resolveModel, resolveRoute } from './routing.mjs'
+import { isLocalRequest, rejectForeignOrigin } from './guard.mjs'
 
 /** fetch 會自動解壓，所以 content-encoding 一定要拿掉，否則 client 會二次解壓。 */
 const HOP_BY_HOP = new Set([
@@ -295,13 +296,21 @@ export function createProxyServer(getConfig, log) {
   const sessionCwd = new SessionCwd()
 
   return http.createServer(async (req, res) => {
+    const config = getConfig()
+
+    // 這條線握有第三方的 API key。DNS rebinding 之後網頁就能自己補上 agent-id header
+    // 命中分流規則，拿你的額度去跑推論，所以來源檢查要在做任何事之前
+    if (!isLocalRequest(req, config.proxyPort)) {
+      rejectForeignOrigin(res)
+      return
+    }
+
     // Claude Code 的連線預熱探針，回什麼都行
     if (req.method === 'HEAD' && req.url.startsWith('/api/hello')) {
       res.writeHead(200).end()
       return
     }
 
-    const config = getConfig()
     const started = Date.now()
 
     let raw = Buffer.alloc(0)
