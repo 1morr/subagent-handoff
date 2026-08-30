@@ -14,15 +14,30 @@ const trafficLogPath = config.trafficLog.file
   : ''
 const log = new TrafficLog(300, createFileSink({ file: trafficLogPath, maxBytes: config.trafficLog.maxBytes }))
 
-const boundPorts = { proxy: config.proxyPort, admin: config.adminPort }
+/**
+ * 啟動時就定下來、之後改了必須重啟才生效的那幾項。
+ * 埠是綁定當下決定的；流量記錄的 sink 也只在這裡建立一次，換檔名或改上限都不會自己重來。
+ */
+const bootedWith = {
+  proxyPort: config.proxyPort,
+  adminPort: config.adminPort,
+  trafficLog: JSON.stringify(config.trafficLog),
+}
 
 const getConfig = () => config
-const getRuntime = () => ({
-  boundProxyPort: boundPorts.proxy,
-  boundAdminPort: boundPorts.admin,
-  // port 是啟動時綁定的，改了要重啟才生效；其餘設定即時生效
-  restartRequired: config.proxyPort !== boundPorts.proxy || config.adminPort !== boundPorts.admin,
-})
+const getRuntime = () => {
+  // 講清楚是「哪一項」要重啟：只說「需要重啟」會讓人回頭找不到自己改了什麼
+  const reasons = []
+  if (config.proxyPort !== bootedWith.proxyPort || config.adminPort !== bootedWith.adminPort) reasons.push('埠號')
+  if (JSON.stringify(config.trafficLog) !== bootedWith.trafficLog) reasons.push('流量記錄落檔')
+  return {
+    boundProxyPort: bootedWith.proxyPort,
+    boundAdminPort: bootedWith.adminPort,
+    // 其餘設定都是每筆請求現查的，改完即時生效
+    restartRequired: reasons.length > 0,
+    restartReasons: reasons,
+  }
+}
 
 async function setConfig(next) {
   config = await saveConfig(next)

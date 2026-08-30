@@ -103,7 +103,7 @@
   td.mono { font-family: var(--mono); font-size: 12px; }
   .scroll { overflow-x: auto; }
 
-  .rule-row { display: grid; grid-template-columns: 28px 1.1fr 0.8fr 1.3fr 1fr auto; gap: 8px; align-items: center; margin-bottom: 9px; }
+  .rule-row { display: grid; grid-template-columns: 28px 1fr 0.7fr 0.8fr 1.1fr 0.9fr auto; gap: 8px; align-items: center; margin-bottom: 9px; }
   .rule-row > select, .rule-row > input[type=text] { min-width: 0; }
   .empty { color: var(--muted); padding: 22px; text-align: center; }
   .note {
@@ -111,6 +111,18 @@
     padding: 11px 13px; border-radius: 0 8px 8px 0; margin-bottom: 14px; font-size: 13px;
   }
   .note.warn { border-left-color: var(--warn); }
+  details.tune { grid-column: 1 / -1; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  details.tune > summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+  details.tune[open] > summary { margin-bottom: 10px; }
+  #toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px;
+    padding: 10px 14px; font-size: 13px; max-width: min(560px, 92vw);
+    box-shadow: 0 6px 24px rgb(0 0 0 / .18);
+  }
+  #toast.bad { border-left-color: var(--bad); }
+  #toast[hidden] { display: none; }
   pre {
     background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
     padding: 12px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; margin: 0;
@@ -140,18 +152,21 @@
     <button data-tab="providers" aria-selected="true">Providers</button>
     <button data-tab="rules" aria-selected="false">路由規則</button>
     <button data-tab="logs" aria-selected="false">流量記錄</button>
+    <button data-tab="advanced" aria-selected="false">進階</button>
     <button data-tab="setup" aria-selected="false">接入說明</button>
   </nav>
 
   <main id="view"></main>
 </div>
 
+<div id="toast" hidden></div>
+
 <script type="module">
 const KEEP = '__keep__'
 const S = {
   config: null, runtime: null, dirty: false, tab: 'providers', tests: {}, busy: {}, logs: [],
   // 預覽的輸入也放 state，否則每次預覽完重繪都會被模板的預設值蓋回去
-  preview: null, pvKind: 'subagent', pvModel: 'claude-opus-5',
+  preview: null, pvKind: 'subagent', pvModel: 'claude-opus-5', pvAgent: '',
 }
 let logTimer = null
 
@@ -169,6 +184,17 @@ async function api(method, path, body) {
   return json
 }
 
+let toastTimer = null
+/** 取代 alert()：阻塞式對話框會卡住整個分頁，而這些訊息都不需要使用者回答。 */
+function toast(message, kind = '') {
+  const el = $('#toast')
+  el.textContent = message
+  el.className = kind
+  el.hidden = false
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { el.hidden = true }, 4000)
+}
+
 function markDirty() {
   S.dirty = true
   $('#save').disabled = false
@@ -184,8 +210,9 @@ function applyState(payload) {
   $('#pill-proxy').textContent = `proxy :${payload.runtime.boundProxyPort}`
   $('#pill-admin').textContent = `gui :${payload.runtime.boundAdminPort}`
   $('#pill-config').textContent = payload.runtime.configPath
+  const reasons = payload.runtime.restartReasons ?? []
   $('#restart-note').innerHTML = payload.runtime.restartRequired
-    ? '<div class="note warn">埠號已變更，需要重新啟動 <code>npm start</code> 才會生效。</div>'
+    ? `<div class="note warn">${esc(reasons.join('、')) || '設定'}已變更，需要重新啟動 <code>npm start</code> 才會生效。</div>`
     : ''
 }
 
@@ -202,6 +229,51 @@ function parseHeaders(text) {
   return out
 }
 const formatHeaders = (obj) => Object.entries(obj ?? {}).map(([k, v]) => `${k}: ${v}`).join('\n')
+
+// ── retry 覆寫 ────────────────────────────────────────────────────
+const RETRY_FIELDS = [
+  ['attempts', '重送次數', '0 = 關掉'],
+  ['baseDelayMs', '退避起跳 (ms)', ''],
+  ['maxDelayMs', '退避上限 (ms)', ''],
+  ['maxRetryAfterMs', 'retry-after 上限 (ms)', '超過就交回 Claude Code'],
+]
+
+/**
+ * 路由層的 retry 覆寫。欄位留空＝繼承全域，所以不需要另一個「要不要覆寫」的開關 ——
+ * 空 / 有值這兩態跟 config 的稀疏語意一對一，看得到的就是存下去的。
+ */
+function retryTune(retry, scopeAttr = '') {
+  const r = retry ?? {}
+  const count = Object.keys(r).length
+  const num = ([key, label, hint]) => `
+    <label class="field">${label}
+      <input type="number" min="0" class="mono" data-f="retry.${key}" value="${r[key] ?? ''}" placeholder="繼承全域">
+      ${hint ? `<span class="hint">${hint}</span>` : ''}
+    </label>`
+  return `
+    <details class="tune"${scopeAttr}>
+      <summary>重試覆寫${count ? `（已覆寫 ${count} 項）` : '（留空＝繼承全域）'}</summary>
+      <div class="grid">
+        ${RETRY_FIELDS.map(num).join('')}
+        <label class="field">節流（429）
+          <select data-f="retry.retryRateLimit">
+            <option value="" ${r.retryRateLimit == null ? 'selected' : ''}>繼承全域</option>
+            <option value="true" ${r.retryRateLimit === true ? 'selected' : ''}>重送</option>
+            <option value="false" ${r.retryRateLimit === false ? 'selected' : ''}>不重送</option>
+          </select>
+        </label>
+      </div>
+    </details>`
+}
+
+/** 把一格 retry 覆寫的輸入寫回稀疏物件；清空就把那個鍵拿掉，全空就回到 null。 */
+function applyRetryInput(owner, key, el) {
+  const next = { ...(owner.retry ?? {}) }
+  if (el.value === '') delete next[key]
+  else if (key === 'retryRateLimit') next[key] = el.value === 'true'
+  else next[key] = Number(el.value)
+  owner.retry = Object.keys(next).length ? next : null
+}
 
 // ── Providers ─────────────────────────────────────────────────────
 function providerCard(p) {
@@ -225,6 +297,9 @@ function providerCard(p) {
       </label>
       <label class="field wide">Base URL（Anthropic Messages 格式的端點）
         <input type="text" class="mono" data-f="baseUrl" value="${esc(p.baseUrl)}" placeholder="https://api.moonshot.ai/anthropic">
+        ${/\/v1$/.test(p.baseUrl)
+          ? '<span class="hint status-bad">結尾的 <code>/v1</code> 會讓實際路徑變成 <code>/v1/v1/messages</code>，通常要去掉</span>'
+          : ''}
       </label>
       <label class="field wide">API Key
         <input type="password" class="mono" data-f="apiKey" value="${p.apiKey === KEEP ? KEEP : ''}"
@@ -254,6 +329,7 @@ function providerCard(p) {
         <span class="check"><input type="checkbox" data-f="dropBeta" ${p.dropBeta ? 'checked' : ''}> 移除 <code>anthropic-beta</code> header</span>
         <span class="hint">裡面是 Anthropic 專屬 capability，第三方通常拒收。passthrough 那條線永遠原樣保留，不受此設定影響。</span>
       </label>
+      ${retryTune(p.retry)}
     </div>
 
     <div class="tests">
@@ -312,6 +388,8 @@ function renderRules() {
       <select data-f="match">${Object.entries(MATCH_LABELS)
         .map(([k, v]) => `<option value="${k}" ${r.match === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <input type="text" class="mono" data-f="modelGlob" value="${esc(r.modelGlob)}" title="model 名比對，支援 *">
+      <input type="text" class="mono" data-f="agentIdGlob" value="${esc(r.agentIdGlob ?? '*')}"
+             title="比對 x-claude-code-agent-id，支援 *。* = 不篩">
       <select data-f="providerId">${targetOpts(r.providerId)}</select>
       <input type="text" class="mono" data-f="modelOverride" list="model-hints" value="${esc(r.modelOverride ?? '')}"
              placeholder="不改寫" title="改寫送出的 model 名，留空＝不改寫">
@@ -349,6 +427,11 @@ function renderRules() {
       <br><br>
       名字要填上游看得懂的完整 model 名。不確定的話，把主對話切到那個模型送一句話，
       再去<strong>流量記錄</strong>分頁的「要求 model」欄複製實際送出的字串最保險。
+      <br><br>
+      <strong>「agent 比對」比對的是 <code>x-claude-code-agent-id</code></strong>，<code>*</code> = 不篩。
+      一般 subagent 的 id 每次 spawn 重新產生，篩不出東西；但官方文檔載明
+      <strong>agent team 的 teammate 會沿用由名字衍生的穩定 id</strong>，所以這欄的用途是按角色分流。
+      主對話沒有這個 header，永遠不會被非 <code>*</code> 的樣式命中。
     </div>
 
     <datalist id="model-hints">
@@ -364,13 +447,15 @@ function renderRules() {
         <input type="text" class="mono" id="pt-base" value="${esc(S.config.passthrough.baseUrl)}">
       </label>
       <span class="hint">所有規則都沒命中、以及規則明確指向 passthrough 時的去向。憑證與 header 原樣轉發，body 除了規則指定的 model 改寫之外一個字不動 —— 這條線就是你的訂閱。除非另外架了 Anthropic 前置，否則不要改。</span>
+      <div class="grid" style="margin-top:12px">${retryTune(S.config.passthrough.retry, ' data-scope="passthrough"')}</div>
+      <span class="hint">預設就把節流重送關掉：訂閱的 429 是 5 小時額度窗，退避幾秒等不到恢復，只會在 Claude Code 顯示倒數之前多壓幾秒。</span>
     </section>
 
     <section class="card">
       <div class="card-head"><h3>規則</h3><span class="spacer"></span>
         <button class="btn tiny" data-act="add-rule">＋ 新增規則</button></div>
       <div class="rule-row" style="color:var(--muted);font-size:12px">
-        <span>啟用</span><span>條件</span><span>model 比對</span><span>導向</span><span>改寫 model</span><span></span>
+        <span>啟用</span><span>條件</span><span>model 比對</span><span>agent 比對</span><span>導向</span><span>改寫 model</span><span></span>
       </div>
       ${rows || '<div class="empty">沒有規則，所有流量都走訂閱。</div>'}
     </section>
@@ -382,8 +467,11 @@ function renderRules() {
           <select id="pv-kind">${[['main', '主對話'], ['subagent', '子 agent'], ['nested', '巢狀子 agent']]
             .map(([k, v]) => `<option value="${k}" ${S.pvKind === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
         </label>
-        <label class="field" style="flex:1;min-width:180px">請求的 model
+        <label class="field" style="flex:1;min-width:160px">請求的 model
           <input type="text" class="mono" id="pv-model" list="model-hints" value="${esc(S.pvModel)}">
+        </label>
+        <label class="field" style="flex:1;min-width:140px">agent id（選填）
+          <input type="text" class="mono" id="pv-agent" value="${esc(S.pvAgent)}" placeholder="Explore-1">
         </label>
         <button class="btn" data-act="preview">預覽</button>
       </div>
@@ -395,6 +483,7 @@ function renderRules() {
             ? esc(pv.sentModel)
             : `${esc(pv.requestedModel)} → ${esc(pv.sentModel)}`
         }</strong>
+        ${pv.agentId ? `・agent ${esc(pv.agentId)}` : ''}
         ${pv.ruleId ? `・命中規則 ${esc(pv.ruleId)}` : '・無規則命中'}
       </div>` : ''}
     </section>`
@@ -436,17 +525,31 @@ function shapeHint(e) {
  * 上游為什麼失敗，答案在這一格。Claude Code 撞到 429 / 5xx 時畫面上只寫
  * 「will retry in …」，那個秒數就是這裡的 retry-after。
  */
+/** anthropic-ratelimit-*-reset 可能是 unix 秒數也可能是 RFC3339，兩種都認，都不是就原樣顯示。 */
+function resetLabel(raw) {
+  const at = /^\d+$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw)
+  if (!Number.isFinite(at)) return raw
+  const secs = Math.round((at - Date.now()) / 1000)
+  return secs > 0 ? `${secs}s 後` : new Date(at).toTimeString().slice(0, 8)
+}
+
 function statusCell(e) {
   // 200 但串流裡夾著 error 事件的那種，看起來成功、其實沒有 —— 不能塗成綠的
   const failed = e.error || e.status >= 400 || (e.status && e.detail)
   const cls = failed ? 'status-bad' : e.status ? 'status-ok' : 'status-muted'
+  const reset = e.rateLimit?.['unified-reset']
   const hint = [
     e.detail,
     e.attempts > 1 ? `送出 ${e.attempts} 次，重送原因：${(e.retries || []).join(' → ')}` : null,
     e.retryAfter ? `retry-after: ${e.retryAfter}` : null,
+    // 訂閱的 429 多半不帶 retry-after，限流狀態只在這組 header 上
+    e.rateLimit ? `限流：${Object.entries(e.rateLimit).map(([k, v]) => `${k}=${v}`).join('・')}` : null,
+    e.pings ? `router 補了 ${e.pings} 個 keep-alive ping` : null,
     e.requestId ? `request-id: ${e.requestId}` : null,
   ].filter(Boolean).join('\n')
-  const retry = e.retryAfter ? ` <span class="status-muted">·${esc(e.retryAfter)}s 後重試</span>` : ''
+  const retry = e.retryAfter
+    ? ` <span class="status-muted">·${esc(e.retryAfter)}s 後重試</span>`
+    : reset ? ` <span class="status-muted">·${esc(resetLabel(reset))}重置</span>` : ''
   const flag = e.status && e.status < 400 && e.detail ? ' ⚠' : ''
   // router 自己扛掉的重送：Claude Code 看到的是一次乾淨的成功，只有這裡看得出來扛了幾次
   const tries = e.attempts > 1 ? ` <span class="status-muted">×${e.attempts}</span>` : ''
@@ -482,6 +585,69 @@ function renderLogs() {
           <tbody>${rows || '<tr><td colspan="11" class="empty">還沒有流量。</td></tr>'}</tbody>
         </table>
       </div>
+    </section>`
+}
+
+// ── 進階 ───────────────────────────────────────────────────────────
+function renderAdvanced() {
+  const r = S.config.retry
+  const t = S.config.trafficLog
+  return `
+    <div class="note">
+      router 本身的設定。除了<strong>流量記錄的檔名與上限</strong>（落檔只在啟動時建立一次，改了要重啟），
+      其餘都是每筆請求現查的，儲存後即時生效。
+    </div>
+
+    <section class="card">
+      <div class="card-head"><h3>重試（全域預設）</h3></div>
+      <p class="hint" style="margin-top:0">
+        每個 provider 與 passthrough 都能在自己的卡片上覆寫其中幾項，沒覆寫的就用這裡的值。
+        重送只發生在「一個 byte 都還沒寫給 client」的階段 —— 串流一旦開始就不能重來。
+      </p>
+      <div class="grid">
+        <label class="field">重送次數
+          <input type="number" min="0" max="10" class="mono" data-g="retry.attempts" value="${r.attempts}">
+          <span class="hint">0 = 關掉，所有錯誤原樣交回</span>
+        </label>
+        <label class="field">退避起跳 (ms)
+          <input type="number" min="0" class="mono" data-g="retry.baseDelayMs" value="${r.baseDelayMs}">
+        </label>
+        <label class="field">退避上限 (ms)
+          <input type="number" min="0" class="mono" data-g="retry.maxDelayMs" value="${r.maxDelayMs}">
+        </label>
+        <label class="field">retry-after 上限 (ms)
+          <input type="number" min="0" class="mono" data-g="retry.maxRetryAfterMs" value="${r.maxRetryAfterMs}">
+          <span class="hint">上游要求等更久就不自己扛，交回去讓 Claude Code 顯示倒數</span>
+        </label>
+        <label class="field wide">
+          <span class="check"><input type="checkbox" data-g="retry.retryRateLimit" ${r.retryRateLimit ? 'checked' : ''}> 節流（429）也算可重送</span>
+          <span class="hint">
+            第三方的 429 通常等一下就過，所以預設開著。訂閱線相反 —— passthrough 卡片預設就覆寫成不重送。
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h3>流量記錄落檔</h3><span class="pill">改了要重啟</span></div>
+      <div class="grid">
+        <label class="field wide">檔名（相對於 config.json 所在目錄，留空＝不落檔）
+          <input type="text" class="mono" data-g="trafficLog.file" value="${esc(t.file)}" placeholder="traffic.log">
+          <span class="hint">只有中繼資料，沒有 prompt；但含專案目錄與 session id，預設已進 .gitignore</span>
+        </label>
+        <label class="field">輪替上限 (bytes)
+          <input type="number" min="10000" class="mono" data-g="trafficLog.maxBytes" value="${t.maxBytes}">
+          <span class="hint">超過就輪替成 <code>.1</code>，只留一份舊的，磁碟最多佔兩倍</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h3>請求上限</h3></div>
+      <label class="field">單一請求 body 上限 (bytes)
+        <input type="number" min="1000000" class="mono" data-g="maxRequestBytes" value="${S.config.maxRequestBytes}">
+        <span class="hint">router 為了能重送會把整包留在記憶體，這是防呆不是限流。1M context 的請求實測十幾 MB</span>
+      </label>
     </section>`
 }
 
@@ -544,7 +710,7 @@ function render() {
   document.querySelectorAll('nav button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === S.tab)))
   const view = $('#view')
   if (!S.config) { view.innerHTML = '<div class="card empty">載入中…</div>'; return }
-  view.innerHTML = { providers: renderProviders, rules: renderRules, logs: renderLogs, setup: renderSetup }[S.tab]()
+  view.innerHTML = { providers: renderProviders, rules: renderRules, logs: renderLogs, advanced: renderAdvanced, setup: renderSetup }[S.tab]()
 }
 
 // 輸入時只更新 state，不重繪，避免游標跳走
@@ -557,8 +723,28 @@ document.addEventListener('input', (ev) => {
     return
   }
 
+  // 進階分頁的全域設定：data-g="<群組>.<欄位>"，沒有點就是頂層欄位
+  const g = el.dataset.g
+  if (g) {
+    const [group, key] = g.split('.')
+    const target = key ? S.config[group] : S.config
+    const name = key ?? group
+    if (el.type === 'checkbox') target[name] = el.checked
+    else if (el.type === 'number') target[name] = el.value === '' ? 0 : Number(el.value)
+    else target[name] = el.value
+    markDirty()
+    return
+  }
+
   const f = el.dataset.f
   if (!f) return
+
+  // passthrough 的 retry 覆寫不在任何 provider 卡片裡，要先認出來
+  if (f.startsWith('retry.') && el.closest('[data-scope="passthrough"]')) {
+    applyRetryInput(S.config.passthrough, f.slice(6), el)
+    markDirty()
+    return
+  }
 
   const card = el.closest('[data-pid]')
   const row = el.closest('[data-rid]')
@@ -567,7 +753,8 @@ document.addEventListener('input', (ev) => {
     if (f === 'testModel') { (S.tests[card.dataset.pid] ??= {}).model = el.value; return }
     const p = S.config.providers.find((x) => x.id === card.dataset.pid)
     if (!p) return
-    if (f === 'dropFields') p.dropFields = el.value.split(',').map((s) => s.trim()).filter(Boolean)
+    if (f.startsWith('retry.')) applyRetryInput(p, f.slice(6), el)
+    else if (f === 'dropFields') p.dropFields = el.value.split(',').map((s) => s.trim()).filter(Boolean)
     else if (f === 'extraHeaders') p.extraHeaders = parseHeaders(el.value)
     else if (f === 'maxOutputTokens') p.maxOutputTokens = el.value ? Number(el.value) : null
     else if (el.type === 'checkbox') p[f] = el.checked
@@ -602,7 +789,7 @@ document.addEventListener('click', async (ev) => {
         id: 'p-' + Math.random().toString(36).slice(2, 10),
         label: '新 Provider', baseUrl: '', apiKey: '', model: '', authStyle: 'bearer',
         dropFields: [],
-        dropBeta: true, maxOutputTokens: null, extraHeaders: {},
+        dropBeta: true, maxOutputTokens: null, retry: null, extraHeaders: {},
       })
       markDirty(); render()
     } else if (act === 'del-provider') {
@@ -611,7 +798,7 @@ document.addEventListener('click', async (ev) => {
     } else if (act === 'add-rule') {
       S.config.rules.push({
         id: 'r-' + Math.random().toString(36).slice(2, 10),
-        enabled: true, match: 'subagent', modelGlob: '*',
+        enabled: true, match: 'subagent', modelGlob: '*', agentIdGlob: '*',
         providerId: S.config.providers[0]?.id ?? 'passthrough', modelOverride: '',
       })
       markDirty(); render()
@@ -639,7 +826,10 @@ document.addEventListener('click', async (ev) => {
     } else if (act === 'preview') {
       S.pvKind = $('#pv-kind').value
       S.pvModel = $('#pv-model').value
-      S.preview = await api('POST', '/api/routing/preview', { kind: S.pvKind, model: S.pvModel, config: S.config })
+      S.pvAgent = $('#pv-agent').value
+      S.preview = await api('POST', '/api/routing/preview', {
+        kind: S.pvKind, model: S.pvModel, agentId: S.pvAgent, config: S.config,
+      })
       render()
     } else if (act === 'clear-logs') {
       await api('POST', '/api/logs/clear'); S.logs = []; render()
@@ -649,7 +839,7 @@ document.addEventListener('click', async (ev) => {
       setTimeout(() => { btn.textContent = '複製' }, 1200)
     }
   } catch (err) {
-    alert('操作失敗：' + err.message)
+    toast('操作失敗：' + err.message, 'bad')
   }
 })
 
@@ -659,8 +849,9 @@ $('#save').addEventListener('click', async () => {
   try {
     applyState(await api('PUT', '/api/config', S.config))
     render()
+    toast('已儲存')
   } catch (err) {
-    alert('儲存失敗：' + err.message)
+    toast('儲存失敗：' + err.message, 'bad')
     btn.disabled = false
   }
 })
