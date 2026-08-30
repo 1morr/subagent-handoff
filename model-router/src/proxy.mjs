@@ -362,6 +362,7 @@ function baseEntry(req, ctx, over) {
     cwd: null,
     requestedModel: ctx.model,
     target: null,
+    providerId: null,
     ruleId: null,
     sentModel: null,
     effort: ctx.effort,
@@ -493,6 +494,8 @@ export function createProxyServer(getConfig, log) {
     const entry = log.start(baseEntry(req, ctx, {
       cwd,
       target: route.kind === 'provider' ? route.provider.label : 'passthrough（訂閱）',
+      // label 會被使用者改名，分類要看 id。null = 走訂閱那條線
+      providerId: route.kind === 'provider' ? route.provider.id : null,
       ruleId: route.rule?.id ?? null,
       sentModel,
       sentEffort,

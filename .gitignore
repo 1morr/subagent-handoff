@@ -1,2 +1,7 @@
 # Claude Code 本地設定：內含機器專屬的 router 位址，不進版控
 .claude/
+
+# impeccable / design canvas 的產出物：可從 design/*.dc.html 重新 seed 出來
+design/model-router-console.html
+.impeccable/review/
+.impeccable/questions/
