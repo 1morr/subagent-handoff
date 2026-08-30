@@ -4,173 +4,332 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>model-router</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>🔀</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%231b1f26'/><rect x='2' y='4' width='12' height='3' fill='%2343a08e'/><rect x='2' y='9' width='12' height='3' fill='%23bd9047'/></svg>">
+<!--
+  視覺世界：航管進程條（flight progress strip bay）。決策與色值見專案根目錄 DESIGN.md。
+  每一筆請求是一張進條，在訂閱與第三方兩個席位之間被交接；異常的進條推出機架、批註印在條上。
+  硬約束：單一自帶檔、原生 JS、零建置、零外部資源 —— 字型只用系統自帶的。
+-->
 <style>
   :root {
-    --bg: #f6f7f9;      --panel: #ffffff;    --panel-2: #f0f2f5;
-    --text: #16181d;    --muted: #646c7a;    --border: #dde1e8;
-    --accent: #2f6df6;  --ok: #1a7f45;       --bad: #c02a35;   --warn: #9a6200;
-    --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+    --bay: #1b1f26;      --recess: #151920;   --panel: #171b21;
+    --rail: #2b323c;     --rail-lit: #3d4653;
+    --on-bay: #dfe3e8;   --on-bay-dim: #8b939f;
+    --stock: #e9e5db;    --ink: #1a1e24;      --ink-dim: #635c50;
+    /* 席位編碼：兩色等明度等彩度、只變色相 —— 訂閱與第三方沒有高下之分。
+       告警是唯一被允許打破這個色階的顏色（彩度明顯更高），所以它一出現就是被擋下了。 */
+    --sub: #43a08e;      --prv: #ad8649;      --alarm: #e0563c;
+    /* 告警當小級數文字時要再亮一階才過 4.5:1；色塊與粗體標題用 --alarm */
+    --alarm-ink: #e8705a;
+    /* Bahnschrift 與 Cascadia Mono 是 Windows 自帶，不下載任何東西。
+       Bahnschrift 是 DIN 系壓縮體 —— 標誌系字體，正好是這個世界的聲音。 */
+    --sign: "Bahnschrift SemiCondensed", Bahnschrift, "DIN Alternate", "Franklin Gothic Medium", system-ui, sans-serif;
+    --data: "Cascadia Mono", ui-monospace, Consolas, "SF Mono", Menlo, monospace;
+    --han: "Microsoft JhengHei UI", "Noto Sans TC", "PingFang TC", system-ui, sans-serif;
+    color-scheme: dark;
   }
-  :root:not([data-theme="light"]) { color-scheme: light dark; }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --bg: #16181d;    --panel: #1e2128;    --panel-2: #262a33;
-      --text: #e6e8ec;  --muted: #949cab;    --border: #333944;
-      --accent: #6a9bff; --ok: #4ec97f;      --bad: #ff7b85;   --warn: #e0aa4a;
-    }
-  }
-  :root[data-theme="dark"] {
-    --bg: #16181d;      --panel: #1e2128;    --panel-2: #262a33;
-    --text: #e6e8ec;    --muted: #949cab;    --border: #333944;
-    --accent: #6a9bff;  --ok: #4ec97f;       --bad: #ff7b85;   --warn: #e0aa4a;
-  }
-
   * { box-sizing: border-box; }
   body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 14px/1.55 system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    margin: 0; background: var(--bay); color: var(--on-bay);
+    font: 13px/1.55 var(--han); -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 80px; }
+  a { color: #7fc7b8; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  a:hover { color: #a5ded1; }
+  ::selection { background: var(--sub); color: #10161a; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: var(--recess); }
+  ::-webkit-scrollbar-thumb { background: var(--rail); border: 2px solid var(--recess); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--rail-lit); }
+  :focus-visible { outline: 2px solid var(--sub); outline-offset: 2px; }
 
-  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
-  h1 { font-size: 19px; margin: 0; letter-spacing: -0.01em; }
-  .sub { color: var(--muted); font-size: 13px; }
-  code, .mono { font-family: var(--mono); font-size: 12.5px; }
+  .sign { font-family: var(--sign); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  /* 漢字沒有 DIN 系壓縮體可用，uppercase 與 tracking 對它也是無效的 ——
+     所以中文的顯示重量交給字重與級數，不假裝它是標牌體。見 DESIGN.md「字體」。 */
+  .disp { font-family: var(--han); font-weight: 700; letter-spacing: 0; }
+  .num  { font-family: var(--data); font-variant-numeric: tabular-nums; }
+  .lbl  { font-family: var(--sign); font-weight: 500; letter-spacing: .10em;
+          text-transform: uppercase; font-size: 10px; color: var(--on-bay-dim); }
+  .spacer { flex: 1; }
+  .dim { color: var(--on-bay-dim); }
 
-  .bar {
-    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
-    margin: 16px 0 20px; padding: 10px 12px;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  /* ── 標題塊：席位名牌與綁定資訊，不是導覽列 ───────────────────── */
+  .titleblock {
+    display: flex; align-items: baseline; gap: 20px; flex-wrap: wrap;
+    padding: 14px 26px 12px; border-bottom: 1px solid var(--rail);
   }
-  .bar .spacer { flex: 1; }
-  .pill {
-    font-family: var(--mono); font-size: 12px; padding: 3px 8px;
-    background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; color: var(--muted);
-  }
+  .titleblock h1 { font: 600 21px/1 var(--sign); letter-spacing: .10em; margin: 0; text-transform: uppercase; }
 
-  nav { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+  /* ── 機架 register：分頁是機架標籤，坐在導軌上 ─────────────────── */
+  nav { display: flex; padding: 0 26px; border-bottom: 1px solid var(--rail); background: var(--panel); flex-wrap: wrap; }
   nav button {
-    background: none; border: none; border-bottom: 2px solid transparent;
-    padding: 9px 14px; font: inherit; color: var(--muted); cursor: pointer; margin-bottom: -1px;
+    font: 600 12px/1 var(--sign); letter-spacing: .06em; text-transform: uppercase;
+    background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    padding: 12px 17px 11px; color: var(--on-bay-dim); cursor: pointer;
   }
-  nav button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  nav button:hover { color: var(--on-bay); }
+  nav button[aria-selected="true"] { color: var(--on-bay); border-bottom-color: var(--sub); }
 
-  button.btn {
-    font: inherit; padding: 6px 13px; border-radius: 7px; cursor: pointer;
-    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  main { padding: 22px 26px 60px; display: flex; flex-direction: column; gap: 22px; }
+
+  /* ── 控制項 ───────────────────────────────────────────────── */
+  .btn {
+    font: 600 11px/1 var(--sign); letter-spacing: .08em; text-transform: uppercase;
+    padding: 8px 13px; border: 1px solid var(--rail-lit); background: transparent;
+    color: var(--on-bay-dim); cursor: pointer; border-radius: 0;
   }
-  button.btn:hover { border-color: var(--accent); }
-  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button.btn.primary:disabled { opacity: .45; cursor: default; }
-  button.btn.danger { color: var(--bad); }
-  button.btn.tiny { padding: 3px 8px; font-size: 12px; }
+  .btn:hover { background: rgba(255,255,255,.05); color: var(--on-bay); }
+  .btn[aria-pressed="true"] { background: var(--sub); border-color: var(--sub); color: #10161a; }
+  .btn.go { color: var(--sub); border-color: var(--sub); }
+  .btn.warn { color: var(--prv); border-color: var(--prv); }
+  .btn.danger { color: var(--alarm); border-color: var(--alarm); }
+  .btn:disabled { opacity: .38; cursor: not-allowed; }
+  .btn:disabled:hover { background: transparent; }
+  .btn.tiny { padding: 5px 8px; font-size: 10px; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; }
+  .btn > svg { flex: none; }
 
-  .card {
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 11px; padding: 16px; margin-bottom: 14px;
+  .panel { background: var(--panel); border: 1px solid var(--rail); }
+  .panel-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 11px 16px; border-bottom: 1px solid var(--rail);
   }
-  .card h3 { margin: 0; font-size: 15px; }
-  .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-  .card-head .spacer { flex: 1; }
+  .panel-body { padding: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .wide { grid-column: 1 / -1; }
 
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
-  label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--muted); }
-  label.field.wide { grid-column: 1 / -1; }
+  .fld { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .fld > .lbl { color: var(--on-bay-dim); }
   input[type=text], input[type=password], input[type=number], select, textarea {
-    font: inherit; padding: 7px 9px; border-radius: 7px;
-    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    font: 12px/1.5 var(--data); font-variant-numeric: tabular-nums;
+    padding: 8px 10px; border: 1px solid var(--rail); border-radius: 0;
+    background: #10141a; color: var(--on-bay);
   }
-  input.mono, textarea.mono { font-family: var(--mono); font-size: 12.5px; }
-  textarea { resize: vertical; min-height: 62px; }
-  .check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text); }
-  .hint { font-size: 12px; color: var(--muted); margin-top: 2px; }
-
-  .tests { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); }
-  .tests-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
-  .result { display: flex; gap: 9px; padding: 7px 0; border-top: 1px solid var(--border); font-size: 13px; }
-  .result:first-of-type { border-top: none; }
-  .result .icon { flex: none; width: 16px; font-weight: 700; }
-  .result .icon.ok { color: var(--ok); } .result .icon.bad { color: var(--bad); }
-  .result .body { min-width: 0; }
-  .result .name { font-weight: 600; }
-  .result .detail { color: var(--muted); font-family: var(--mono); font-size: 12px; word-break: break-word; }
-  .result .err { color: var(--bad); font-family: var(--mono); font-size: 12px; word-break: break-word; }
-
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  th { color: var(--muted); font-weight: 600; font-size: 12px; white-space: nowrap; }
-  td.mono { font-family: var(--mono); font-size: 12px; }
-  .scroll { overflow-x: auto; }
-
-  .rule-row { display: grid; grid-template-columns: 28px 1fr 0.7fr 0.8fr 1.1fr 0.9fr auto; gap: 8px; align-items: center; margin-bottom: 9px; }
-  .rule-row > select, .rule-row > input[type=text] { min-width: 0; }
-  .empty { color: var(--muted); padding: 22px; text-align: center; }
-  .note {
-    background: var(--panel-2); border-left: 3px solid var(--accent);
-    padding: 11px 13px; border-radius: 0 8px 8px 0; margin-bottom: 14px; font-size: 13px;
-  }
-  .note.warn { border-left-color: var(--warn); }
-  details.tune { grid-column: 1 / -1; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
-  details.tune > summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
-  details.tune[open] > summary { margin-bottom: 10px; }
-  #toast {
-    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
-    background: var(--panel); color: var(--text);
-    border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px;
-    padding: 10px 14px; font-size: 13px; max-width: min(560px, 92vw);
-    box-shadow: 0 6px 24px rgb(0 0 0 / .18);
-  }
-  #toast.bad { border-left-color: var(--bad); }
-  #toast[hidden] { display: none; }
+  select { font-family: var(--han); font-size: 12.5px; }
+  textarea { resize: vertical; min-height: 60px; }
+  input:hover, select:hover, textarea:hover { border-color: var(--rail-lit); }
+  .hint { font: 11px/1.6 var(--han); color: var(--on-bay-dim); }
+  .hint code, code { font: 11.5px var(--data); color: #b6bcc5; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--on-bay); }
   pre {
-    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
-    padding: 12px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; margin: 0;
+    background: #10141a; border: 1px solid var(--rail); padding: 12px; margin: 0;
+    overflow-x: auto; font: 12px/1.6 var(--data); color: var(--on-bay);
   }
-  .status-ok { color: var(--ok); } .status-bad { color: var(--bad); } .status-muted { color: var(--muted); }
+
+  /* 說明貼著它解釋的控制項出現，不當開場白。單邊色條只在整塊警示上、且是結構的一部分 */
+  .marginal { display: grid; grid-template-columns: 4px 1fr; border: 1px solid var(--rail); background: var(--panel); }
+  .marginal > i { background: var(--rail-lit); }
+  .marginal > div { padding: 11px 14px; font: 12px/1.65 var(--han); color: #a8b0bb; }
+  .marginal.alarm { border-color: #4a2a24; background: #22181a; }
+  .marginal.alarm > i { background: var(--alarm); }
+  .marginal.alarm > div { color: #d8bdb5; }
+  .marginal.note { border-color: #4a4128; background: #211d13; }
+  .marginal.note > i { background: var(--prv); }
+  .marginal.note > div { color: #cbbd9e; }
+
+  /* ── 進條：方角印刷卡條。席位色是實心標籤塊，不是彩色左邊框 ─────── */
+  .rack {
+    display: flex; flex-direction: column; gap: 3px;
+    background: var(--recess); border: 1px solid var(--rail); padding: 3px 36px 3px 3px;
+  }
+  .rackhead {
+    display: grid; background: var(--panel); border: 1px solid var(--rail); border-bottom: 0;
+    margin-right: 33px; padding-left: 3px;
+  }
+  .rackhead > span { padding: 6px 10px; }
+  .slot { transition: transform .18s cubic-bezier(.16,1,.3,1); }
+  /* 只有新到的那幾張會播，而且只播一次：閒置時整面機架是死的 */
+  @keyframes printed { from { opacity: 0; transform: translateY(-9px); } }
+  .slot.fresh > .strip { animation: printed .26s cubic-bezier(.16,1,.3,1); }
+  @media (prefers-reduced-motion: reduce) {
+    .slot, .strip, .band > div, .load > i, .clearance { transition: none; }
+    .slot.fresh > .strip { animation: none; }
+  }
+  .slot.chk  { transform: translateX(14px); }
+  .slot.hold { transform: translateX(30px); box-shadow: 0 0 0 2px var(--alarm); }
+  .strip {
+    display: grid; grid-template-columns: 46px 1fr; width: 100%; padding: 0; border: 0;
+    background: var(--stock); color: var(--ink); font: inherit; text-align: left; cursor: pointer;
+    transition: transform .16s cubic-bezier(.16,1,.3,1);
+  }
+  .strip:hover { transform: translateX(4px); }
+  .tab {
+    display: grid; place-items: center; align-content: center; gap: 1px;
+    padding: 7px 0; color: #10161a; background: var(--rail-lit);
+  }
+  .tab.sub { background: var(--sub); } .tab.prv { background: var(--prv); }
+  .tab .code { font: 600 11px/1 var(--sign); letter-spacing: .06em; }
+  /* CHK / HOLD 的旗標翻成反白小塊 —— 第三個通道走明度與形狀，不再多發一個色相
+     （多一個色相就會跟席位編碼的琥珀撞義） */
+  .tab .flag { font: 600 10px/1 var(--sign); letter-spacing: .08em; padding: 1px 4px; }
+  .slot.chk .tab .flag, .slot.hold .tab .flag { background: rgba(16,22,26,.86); }
+  .slot.chk .tab.sub .flag, .slot.hold .tab.sub .flag { color: var(--sub); }
+  .slot.chk .tab.prv .flag, .slot.hold .tab.prv .flag { color: var(--prv); }
+  .slot.chk .tab:not(.sub):not(.prv) .flag, .slot.hold .tab:not(.sub):not(.prv) .flag { color: #cfd5dd; }
+  .cells { display: grid; min-width: 0; }
+  .cell {
+    padding: 7px 10px; border-left: 1px solid rgba(26,30,36,.14); min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font: 11px var(--data); font-variant-numeric: tabular-nums; color: var(--ink);
+  }
+  .cell:first-child { border-left: 0; }
+  .cell.han { font-family: var(--han); }
+  .cell.dimink { color: var(--ink-dim); }
+  .cell.bad { color: #a8321c; font-weight: 700; }
+  .cell.warnink { color: #82590f; }
+  .cell.okink { color: var(--ink); font-weight: 700; }
+
+  /* 批註印在條上。這一塊就是舊版全部藏在 title tooltip 裡的東西 */
+  .annot { display: grid; grid-template-columns: 46px 1fr; background: var(--stock); }
+  .annot > .gutter { opacity: .34; }
+  .annot > .body {
+    padding: 10px 12px 12px; border-top: 1px solid rgba(26,30,36,.2); background: rgba(26,30,36,.045);
+  }
+  .annot dl { margin: 0; display: grid; grid-template-columns: 104px 1fr; gap: 3px 12px; }
+  .annot dt { font: 500 10px/1.6 var(--sign); letter-spacing: .10em; text-transform: uppercase; color: var(--ink-dim); }
+  .annot dd { margin: 0; font: 11.5px/1.55 var(--data); color: #3c4149; word-break: break-word; }
+  .annot dd.bad { color: #8f2c18; }
+
+  /* ── 分流帶：一條就回答「到底有沒有在分流」 ───────────────────── */
+  .band { display: flex; height: 54px; background: var(--recess); border: 1px solid var(--rail); }
+  .band > div {
+    display: flex; align-items: center; gap: 10px; overflow: hidden; min-width: 0;
+    transition: width .45s cubic-bezier(.16,1,.3,1);
+  }
+  .band > div > span:first-child { margin-left: 14px; }
+  .band > div:last-child > span:last-child { margin-right: 14px; }
+  .band .seg-sub { background: var(--sub); color: #10161a; }
+  .band .seg-prv { background: var(--prv); color: #17130a; }
+  .band .name { font: 600 13px/1 var(--sign); letter-spacing: .06em; white-space: nowrap; text-transform: uppercase; }
+  .band .qty { font: 12px var(--data); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* ── 席位卡：負載是機架的形變（堆起來的格子），不是一顆數字徽章 ─── */
+  .sectors { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+  .sector { display: grid; grid-template-columns: 8px 1fr; border: 1px solid var(--rail); background: var(--panel); }
+  .sector > .edge { background: var(--rail-lit); }
+  .sector.s-sub > .edge { background: var(--sub); }
+  .sector.s-prv > .edge { background: var(--prv); }
+  .sector > .in { padding: 14px 17px 15px; display: flex; flex-direction: column; gap: 13px; }
+  .load { display: flex; align-items: flex-end; gap: 3px; height: 46px; }
+  /* 不加 transition：每 3 秒輪詢會整段重繪，過場永遠播不到，留著只是一個會動版面的宣告 */
+  .load > i { width: 9px; min-height: 2px; background: #2c333d; }
+  .load > i.on.sub { background: var(--sub); } .load > i.on.prv { background: var(--prv); }
+  .meter { width: 176px; height: 10px; background: #10141a; border: 1px solid var(--rail); display: flex; }
+  .meter > i { background: var(--alarm); }
+
+  /* ── 排程句：整條規則讀得出來，欄位本身就是句子裡的字段 ─────────── */
+  .clearance { display: grid; grid-template-columns: 44px 1fr; transition: transform .18s cubic-bezier(.16,1,.3,1); }
+  .clearance.hit { transform: translateX(12px); box-shadow: 0 0 0 2px var(--sub); }
+  .clearance.shadowed { opacity: .4; }
+  .clearance > .ord {
+    display: grid; place-items: center; align-content: center; gap: 2px; padding: 8px 0;
+    background: var(--rail); color: var(--on-bay-dim);
+  }
+  .clearance.hit > .ord { background: var(--sub); color: #10161a; }
+  .clearance > .ord > b { font: 700 15px/1 var(--data); }
+  .clearance > .ord > span { font: 500 8px/1 var(--sign); letter-spacing: .08em; opacity: .8; }
+  .clearance > .say { background: var(--stock); color: var(--ink); }
+  .clearance .line { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 9px 11px; }
+  .clearance .word { font: 12px var(--han); color: var(--ink-dim); }
+  .clearance .reads {
+    border-top: 1px solid rgba(26,30,36,.16); background: rgba(26,30,36,.045);
+    padding: 7px 11px; font: 11.5px/1.6 var(--han); color: #5f6570;
+  }
+  /* 句子裡的字段：控制項本身，不是唯讀文字 —— 功能一項不掉 */
+  .clearance select, .clearance input[type=text] {
+    font: 12px var(--data); padding: 3px 7px; min-width: 0;
+    background: rgba(26,30,36,.06); border: 1px solid rgba(26,30,36,.2); color: var(--ink);
+  }
+  .clearance select { font-family: var(--han); }
+  .clearance select:hover, .clearance input[type=text]:hover { border-color: rgba(26,30,36,.45); }
+  .clearance select.target { font-weight: 700; }
+  .clearance select.target.prv { background: var(--prv); border-color: var(--prv); color: #17130a; }
+  .clearance select.target.sub { background: var(--sub); border-color: var(--sub); color: #10161a; }
+  .clearance .w-sm { width: 84px; } .clearance .w-md { width: 130px; }
+  .arrow { flex: none; }
+
+  /* ── 圖例：舊版靠 README 教你怎麼讀，這裡印在機架上 ─────────────── */
+  .legend { display: flex; align-items: center; flex-wrap: wrap; border: 1px solid var(--rail); background: var(--panel); }
+  .legend > div { display: flex; align-items: center; gap: 9px; padding: 9px 16px; border-right: 1px solid var(--rail); }
+  .legend .chip { font: 600 10px/1 var(--sign); letter-spacing: .08em; padding: 3px 6px; color: #10161a; }
+
+  .empty { padding: 26px; text-align: center; color: var(--on-bay-dim); }
+  #restart-note:not(:empty) { padding: 0 26px; margin-top: 14px; }
+  #toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    display: grid; grid-template-columns: 4px 1fr; max-width: min(560px, 92vw);
+    background: var(--panel); border: 1px solid var(--rail); box-shadow: 0 8px 28px rgb(0 0 0 / .45);
+  }
+  #toast > i { background: var(--sub); }
+  #toast > span { padding: 10px 14px; font-size: 12.5px; }
+  #toast.bad { border-color: #4a2a24; } #toast.bad > i { background: var(--alarm); }
+  #toast[hidden] { display: none; }
+
+  @media (max-width: 820px) {
+    .titleblock, nav, main, #restart-note:not(:empty) { padding-left: 14px; padding-right: 14px; }
+    .rack { padding-right: 3px; }
+    .slot.chk, .slot.hold { transform: none; }
+    .slot.hold { box-shadow: 0 0 0 2px var(--alarm); }
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <h1>model-router</h1>
-    <span class="sub">主 session 走訂閱，子 agent 分流到第三方</span>
-  </header>
 
-  <div class="bar">
-    <span class="pill" id="pill-proxy">proxy –</span>
-    <span class="pill" id="pill-admin">gui –</span>
-    <span class="pill" id="pill-config">config –</span>
-    <span class="spacer"></span>
-    <span id="dirty-note" class="sub"></span>
-    <button class="btn primary" id="save" disabled>儲存</button>
-  </div>
+<header class="titleblock">
+  <h1>model-router</h1>
+  <span class="num dim" id="binding" style="font-size:11px">–</span>
+  <span class="spacer"></span>
+  <span class="lbl" id="dirty-note">設定已儲存</span>
+  <button class="btn go" id="save" disabled>儲存</button>
+</header>
 
-  <div id="restart-note"></div>
+<nav id="nav">
+  <button data-tab="bay" aria-selected="true">機架</button>
+  <button data-tab="providers" aria-selected="false">Providers</button>
+  <button data-tab="rules" aria-selected="false">路由</button>
+  <button data-tab="logs" aria-selected="false">流量</button>
+  <button data-tab="advanced" aria-selected="false">進階</button>
+  <button data-tab="setup" aria-selected="false">接入</button>
+</nav>
 
-  <nav>
-    <button data-tab="providers" aria-selected="true">Providers</button>
-    <button data-tab="rules" aria-selected="false">路由規則</button>
-    <button data-tab="logs" aria-selected="false">流量記錄</button>
-    <button data-tab="advanced" aria-selected="false">進階</button>
-    <button data-tab="setup" aria-selected="false">接入說明</button>
-  </nav>
+<div id="restart-note"></div>
+<main id="view"></main>
 
-  <main id="view"></main>
-</div>
+<div id="toast" hidden><i></i><span></span></div>
 
-<div id="toast" hidden></div>
+<datalist id="model-hints">
+  <option value="claude-opus-5"></option>
+  <option value="claude-sonnet-5"></option>
+  <option value="claude-haiku-4-5-20251001"></option>
+  <option value="claude-fable-5"></option>
+</datalist>
 
 <script type="module">
 const KEEP = '__keep__'
+const PASSTHROUGH_TARGET = 'passthrough（訂閱）'
+
 const S = {
-  config: null, runtime: null, dirty: false, tab: 'providers', tests: {}, busy: {}, logs: [],
+  config: null, runtime: null, dirty: false, tab: 'bay',
+  tests: {}, busy: {}, logs: [], open: null,
+  logFilter: 'all',
   // 預覽的輸入也放 state，否則每次預覽完重繪都會被模板的預設值蓋回去
   preview: null, pvKind: 'subagent', pvModel: 'claude-opus-5', pvAgent: '',
+  // 「交還給訂閱」的還原點：記下被改掉的規則原本指向哪裡
+  flipBackup: null,
 }
 let logTimer = null
+// 見過的進條 id。只有真的新到的那幾張會播「印進機架」，閒置時整面是死的。
+const SEEN = new Set()
 
 const $ = (sel) => document.querySelector(sel)
+
+// 圖示一律畫出來，同一套 1.6 描邊、12px 網格 —— ＋ ↑ ✕ ⚠ 這些字元不是圖示系統
+const ICON = {
+  plus: '<svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/></svg>',
+  up:   '<svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 10V2M2.5 5.5 6 2l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/></svg>',
+  down: '<svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2v8M2.5 6.5 6 10l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/></svg>',
+  del:  '<svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/></svg>',
+  warn: '<svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.5 11 10.5H1z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 5v2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="square"/><circle cx="6" cy="9" r=".7" fill="currentColor"/></svg>',
+}
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 
 async function api(method, path, body) {
@@ -188,7 +347,7 @@ let toastTimer = null
 /** 取代 alert()：阻塞式對話框會卡住整個分頁，而這些訊息都不需要使用者回答。 */
 function toast(message, kind = '') {
   const el = $('#toast')
-  el.textContent = message
+  el.querySelector('span').textContent = message
   el.className = kind
   el.hidden = false
   clearTimeout(toastTimer)
@@ -206,13 +365,13 @@ function applyState(payload) {
   S.runtime = payload.runtime
   S.dirty = false
   $('#save').disabled = true
-  $('#dirty-note').textContent = ''
-  $('#pill-proxy').textContent = `proxy :${payload.runtime.boundProxyPort}`
-  $('#pill-admin').textContent = `gui :${payload.runtime.boundAdminPort}`
-  $('#pill-config').textContent = payload.runtime.configPath
+  $('#dirty-note').textContent = '設定已儲存'
+  $('#binding').textContent =
+    `PROXY ${payload.runtime.boundProxyPort} · GUI ${payload.runtime.boundAdminPort} · ${payload.runtime.configPath}`
   const reasons = payload.runtime.restartReasons ?? []
   $('#restart-note').innerHTML = payload.runtime.restartRequired
-    ? `<div class="note warn">${esc(reasons.join('、')) || '設定'}已變更，需要重新啟動 <code>npm start</code> 才會生效。</div>`
+    ? `<div class="marginal note"><i></i><div><strong>${esc(reasons.join('、')) || '設定'}已變更，要重新啟動 <code>npm start</code> 才會生效。</strong>
+         其餘設定都是每筆請求現查的，儲存後即時生效。</div></div>`
     : ''
 }
 
@@ -230,7 +389,360 @@ function parseHeaders(text) {
 }
 const formatHeaders = (obj) => Object.entries(obj ?? {}).map(([k, v]) => `${k}: ${v}`).join('\n')
 
-// ── retry 覆寫 ────────────────────────────────────────────────────
+// ── 進條的判讀 ────────────────────────────────────────────────────
+// 這一組函式是整個重設計的核心：舊版把這些答案全塞在 title tooltip 裡，
+// 鍵盤取不到、觸控取不到、選不起來也複製不了，README 得用整節教人該把滑鼠移到哪。
+
+/** 這一筆停在哪個席位。null = 還沒送出去（被擋在 router 這關） */
+function sectorOf(e) {
+  if (e.providerId) return 'prv'
+  if (e.target === PASSTHROUGH_TARGET) return 'sub'
+  return null
+}
+
+const isAborted = (e) => !!e.error && /abort/i.test(e.error)
+const effortStripped = (e) => !!e.effort && e.sentEffort !== e.effort
+
+/** 進行中 / 順利 / 有事發生 / 被擋下。顏色不是唯一訊號 —— 每一級都有機架位置與印字旗標。 */
+function stateOf(e) {
+  if (e.error && !isAborted(e)) return 'hold'
+  if (e.status >= 400) return 'hold'
+  if (e.status == null && !e.error) return 'live'
+  if (isAborted(e)) return 'chk'
+  if (e.detail) return 'chk'                    // 200 但串流裡夾著 error 事件
+  if (effortStripped(e)) return 'chk'
+  if (e.attempts > 1) return 'chk'
+  if (e.pings) return 'chk'
+  if (!e.cwd) return 'chk'
+  return 'clr'
+}
+const FLAG = { clr: 'CLR', chk: 'CHK', hold: 'HOLD', live: '···' }
+
+/** anthropic-ratelimit-*-reset 可能是 unix 秒數也可能是 RFC3339，兩種都認，都不是就原樣顯示。 */
+function resetLabel(raw) {
+  const at = /^\d+$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw)
+  if (!Number.isFinite(at)) return String(raw)
+  const secs = Math.round((at - Date.now()) / 1000)
+  return secs > 0 ? `${secs}s 後` : new Date(at).toTimeString().slice(0, 8)
+}
+
+/** 常駐在批註欄的一行摘要。航管的進條右側就是控制員寫字的地方。 */
+function marginNote(e) {
+  if (e.error && !isAborted(e)) return `router 連不上上游・${e.error}`
+  if (isAborted(e)) return '不是錯誤・Claude Code 自己收手'
+  if (e.status >= 400) {
+    const reset = e.rateLimit?.['unified-reset']
+    if (e.retryAfter) return `上游擋的・${e.retryAfter}s 後重試`
+    if (reset) return `上游擋的・${resetLabel(reset)}重置`
+    return '上游擋的・router 只是照實轉發'
+  }
+  if (e.detail) return '200 但串流裡夾著 error 事件'
+  if (effortStripped(e)) return '/effort 被 dropFields 吃掉'
+  if (e.attempts > 1) return `router 自己重送 ${e.attempts} 次才成功`
+  if (e.pings) return `補了 ${e.pings} 個 keep-alive ping`
+  if (!e.cwd && e.status != null) return e.sessionId ? 'cwd 表還沒建立' : '沒有 session id・不是 Claude Code 送來的'
+  return ''
+}
+
+/** 攤開後印在條上的完整批註。 */
+/** 回傳 [鍵, 值, 是否為失敗說明]。染紅只給第三項為 true 的行。 */
+function annotation(e) {
+  const rows = []
+  if (e.detail) rows.push(['上游說法', e.detail, true])
+  if (e.error) rows.push([isAborted(e) ? '中止' : 'router 連不上上游', e.error, !isAborted(e)])
+  rows.push(['命中規則', e.ruleId ? `${e.ruleId} → ${e.target}` : `無規則命中 · ${e.target ?? '未送出'}`])
+  if (e.attempts > 1) rows.push(['重送', `送出 ${e.attempts} 次 · ${(e.retries || []).join(' → ') || '原因未記錄'}`, true])
+  if (e.retryAfter) rows.push(['retry-after', `${e.retryAfter}s`, true])
+  if (e.rateLimit) {
+    rows.push(['限流', Object.entries(e.rateLimit).map(([k, v]) => `${k}=${v}`).join(' · '), true])
+    if (!e.retryAfter) rows.push(['倒數', '上游沒給 retry-after —— Claude Code 畫面上那個倒數是它自己算的'])
+  }
+  if (effortStripped(e)) {
+    rows.push(['靜默降級', `送出時 /effort 被拿掉（${e.effort} → 無）。請求照樣 200，只是模型變笨`, true])
+    rows.push(['修法', '到 Providers 把 output_config 從「移除的 body 欄位」拿掉'])
+  }
+  if (e.pings) rows.push(['keep-alive', `router 補了 ${e.pings} 個 ping · 上游安靜超過 60 秒`])
+  if ((e.changes || []).length) rows.push(['送出前改寫', e.changes.join(' · ')])
+  if (e.shape) {
+    const s = e.shape
+    rows.push(['請求形狀', [
+      s.messages != null ? `${s.messages} 則 messages` : null,
+      s.system ? '有 system' : '無 system',
+      s.stream ? '串流' : '非串流',
+      s.maxTokens != null ? `max_tokens ${s.maxTokens}` : null,
+    ].filter(Boolean).join(' · ')])
+  }
+  rows.push(['目錄', e.cwd || '認不出來 —— 這個 session 的主對話還沒發過請求，cwd 表還沒建立'])
+  rows.push(['session', e.sessionId || '沒有 —— 這一筆不是 Claude Code 送來的，是別的東西打到了 router 的埠'])
+  if (e.agentId) rows.push(['agent id', e.agentId])
+  if (e.requestId) rows.push(['request-id', e.requestId])
+  rows.push(['時間', e.ts])
+  return rows
+}
+
+/** 回傳已跳脫的 HTML —— 只有這裡會夾圖示，其餘欄位一律走 esc()。 */
+function statusHtml(e) {
+  if (e.error) return esc(e.error)
+  if (e.status == null) return '…'
+  let out = esc(String(e.status))
+  if (e.status < 400 && e.detail) out += ' ' + ICON.warn
+  if (e.attempts > 1) out += esc(` ×${e.attempts}`)
+  return out
+}
+
+// ── 進條的繪製 ────────────────────────────────────────────────────
+const COLS_BAY  = '46px 74px 92px 108px minmax(120px,1fr) 104px 68px 128px minmax(180px,1.4fr)'
+const COLS_LOGS = '46px 74px 92px 108px 150px minmax(120px,1fr) 116px 68px 128px minmax(180px,1.4fr)'
+const HEAD_BAY  = ['席位', '時間', '來源', '目錄', '實送 model', '狀態', '耗時', '思考', '批註']
+const HEAD_LOGS = ['席位', '時間', '來源', '目錄', '要求 model', '實送 model', '狀態', '耗時', '思考', '批註']
+
+function shortCwd(cwd) {
+  if (!cwd) return '–'
+  return cwd.split(/[\\/]/).filter(Boolean).at(-1) || cwd
+}
+
+function stripRow(e, withRequested) {
+  const st = stateOf(e)
+  const sec = sectorOf(e)
+  const open = S.open === e.id
+  const note = marginNote(e)
+  const statusCls = st === 'hold' ? 'bad' : st === 'chk' ? 'warnink' : st === 'live' ? 'dimink' : 'okink'
+  const cells = [
+    `<span class="cell">${esc(e.ts.slice(11, 19))}</span>`,
+    `<span class="cell">${esc(e.kind)}</span>`,
+    `<span class="cell ${e.cwd ? '' : 'dimink'}">${esc(shortCwd(e.cwd))}</span>`,
+    withRequested ? `<span class="cell">${esc(e.requestedModel ?? '–')}</span>` : '',
+    `<span class="cell ${e.sentModel && e.sentModel !== e.requestedModel ? '' : 'dimink'}">${esc(e.sentModel ?? '–')}</span>`,
+    `<span class="cell ${statusCls}">${statusHtml(e)}</span>`,
+    `<span class="cell">${e.ms != null ? e.ms + 'ms' : '…'}</span>`,
+    `<span class="cell ${effortStripped(e) ? 'bad' : 'dimink'}">${
+      e.effort ? esc(effortStripped(e) ? `${e.effort} → 已移除` : e.effort) : '–'}</span>`,
+    `<span class="cell han ${st === 'hold' ? 'bad' : 'dimink'}">${esc(note)}</span>`,
+  ].join('')
+
+  const body = open ? `
+    <div class="annot">
+      <div class="gutter ${sec === 'prv' ? 'prv' : 'sub'}" style="background:${sec === 'prv' ? 'var(--prv)' : sec === 'sub' ? 'var(--sub)' : 'var(--rail-lit)'}"></div>
+      <div class="body"><dl>${annotation(e).map(([k, v, bad]) =>
+        `<dt>${esc(k)}</dt><dd${bad ? ' class="bad"' : ''}>${esc(v)}</dd>`).join('')}</dl></div>
+    </div>` : ''
+
+  return `
+    <div class="slot ${st}${SEEN.size && !SEEN.has(e.id) ? ' fresh' : ''}" data-eid="${e.id}">
+      <button class="strip" data-act="toggle-strip" aria-expanded="${open}">
+        <span class="tab ${sec ?? ''}">
+          <span class="code">${sec ? sec.toUpperCase() : '???'}</span>
+          <span class="flag">${FLAG[st]}</span>
+        </span>
+        <span class="cells" style="grid-template-columns:${(withRequested ? COLS_LOGS : COLS_BAY).replace('46px ', '')}">${cells}</span>
+      </button>
+      ${body}
+    </div>`
+}
+
+function rack(entries, withRequested) {
+  const cols = withRequested ? COLS_LOGS : COLS_BAY
+  const head = withRequested ? HEAD_LOGS : HEAD_BAY
+  if (!entries.length) {
+    return `<div class="panel"><div class="empty">${
+      S.logs.length ? '這個篩選底下沒有進條。' : '機架是空的 —— router 在聽，但一筆請求都還沒進來。'}</div></div>`
+  }
+  return `
+    <div class="rackhead" style="grid-template-columns:${cols}">
+      ${head.map((h) => `<span class="lbl">${h}</span>`).join('')}
+    </div>
+    <div class="rack">${entries.map((e) => stripRow(e, withRequested)).join('')}</div>`
+}
+
+// ── 機架總覽 ──────────────────────────────────────────────────────
+/** 分流數字全部從流量記錄現算，不需要另一支 API。 */
+function overview() {
+  const cutoff = Date.now() - 5 * 60 * 1000
+  const win = S.logs.filter((e) => Date.parse(e.ts) >= cutoff)
+  const sub = win.filter((e) => sectorOf(e) === 'sub')
+  const prv = win.filter((e) => sectorOf(e) === 'prv')
+  const routed = sub.length + prv.length
+  const live = (list) => list.filter((e) => e.status == null && !e.error).length
+  const subPct = routed ? Math.round(sub.length / routed * 100) : 0
+  // 額度窗只有訂閱那條線會回 anthropic-ratelimit-*，取最近一筆有的
+  const rl = S.logs.find((e) => sectorOf(e) === 'sub' && e.rateLimit)?.rateLimit ?? null
+  const prvName = prv.find((e) => e.target)?.target
+    ?? S.config.providers.find((p) => S.config.rules.some((r) => r.enabled && r.providerId === p.id))?.label
+    ?? S.config.providers[0]?.label ?? '未設定'
+  // 兩張席位卡共用同一個上限，否則兩邊的柱高不能互相比較
+  const subBuckets = buckets(sub)
+  const prvBuckets = buckets(prv)
+  const peak = Math.max(1, ...subBuckets, ...prvBuckets)
+  return {
+    win, routed, sub, prv, subPct, prvPct: routed ? 100 - subPct : 0,
+    subLive: live(sub), prvLive: live(prv), rl, prvName,
+    subBuckets, prvBuckets, peak,
+    blocked: win.filter((e) => stateOf(e) === 'hold').length,
+  }
+}
+
+/** 近 4 分鐘切成 8 個 30 秒桶。柱高就是那 30 秒的請求數 —— 高度承載資料，不是裝飾。 */
+function buckets(list) {
+  const now = Date.now(), span = 30000, n = 8
+  const out = new Array(n).fill(0)
+  for (const e of list) {
+    const age = now - Date.parse(e.ts)
+    if (age >= 0 && age < span * n) out[n - 1 - Math.floor(age / span)]++
+  }
+  return out
+}
+const loadCells = (b, max, cls) => b.map((v) =>
+  `<i class="${v ? 'on ' + cls : ''}" style="height:${max ? Math.round(2 + v / max * 42) : 2}px"></i>`).join('')
+
+function renderBay() {
+  const o = overview()
+  const toProvider = S.config.rules.some((r) => r.enabled && r.providerId && r.providerId !== 'passthrough')
+
+  const rlBar = o.rl ? (() => {
+    const rem = Number(o.rl['unified-remaining'])
+    const lim = Number(o.rl['unified-limit'])
+    const used = Number.isFinite(rem) && Number.isFinite(lim) && lim > 0
+      ? Math.round((lim - rem) / lim * 100) : null
+    const reset = o.rl['unified-reset']
+    return `
+      <div class="fld" style="align-items:flex-end">
+        <span class="lbl">5 小時額度窗・已用</span>
+        ${used == null ? '' : `<div class="meter"><i style="width:${used}%"></i></div>`}
+        <span class="num" style="font-size:11px;color:var(--alarm)">${
+          Number.isFinite(rem) && Number.isFinite(lim) ? `${lim - rem} / ${lim}` : '限流資訊已回報'
+        }${reset ? ` · ${esc(resetLabel(reset))}重置` : ''}</span>
+      </div>`
+  })() : `
+      <div class="fld" style="align-items:flex-end">
+        <span class="lbl">5 小時額度窗</span>
+        <span class="hint">上游還沒回報過限流</span>
+      </div>`
+
+  // 0% 的段完全不畫 —— 留一條有 padding 的殘段會讀成「還有流量走那邊」
+  const seg = (cls, pct, name, qty) => pct <= 0 ? '' : `
+      <div class="${cls}" style="width:${pct}%">
+        <span class="name">${name}</span>
+        <span class="qty">${qty}</span>
+      </div>`
+  const band = o.routed ? `
+    <div class="band">
+      ${seg('seg-sub', o.subPct, 'SUB 訂閱', `${o.sub.length} 筆 · ${o.subPct}%`)}
+      ${seg('seg-prv', o.prvPct, `PRV ${esc(o.prvName)}`, `${o.prv.length} 筆 · ${o.prvPct}%`)}
+    </div>`
+    : `<div class="panel"><div class="empty">近 5 分鐘沒有流量。Claude Code 那頭指過來之後，這條帶子會顯示分流比例。</div></div>`
+
+  return `
+    <section class="fld" style="gap:9px">
+      <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+        <span class="lbl">近 5 分鐘的分流</span>
+        <span><b class="num">${o.routed}</b> 筆</span>
+        ${o.blocked ? `<span style="color:var(--alarm-ink)"><b class="num">${o.blocked}</b> 筆被擋下</span>` : ''}
+        <span class="spacer"></span>
+        <span class="hint">設定即時生效・下一個請求就改道</span>
+      </div>
+      ${band}
+    </section>
+
+    <section class="sectors">
+      <div class="sector s-sub"><div class="edge"></div><div class="in">
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+          <span class="sign" style="font-size:15px;color:var(--sub)">SUB</span>
+          <span style="font-weight:500">訂閱席位</span>
+          <span class="spacer"></span>
+          <span class="lbl">${toProvider ? '主對話' : '主對話 ＋ 所有子 agent'}</span>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap">
+          <div class="load" title="近 4 分鐘，每格 30 秒">${loadCells(o.subBuckets, o.peak, 'sub')}</div>
+          <div class="fld" style="gap:2px">
+            <span class="num" style="font-size:22px;line-height:1">${o.subLive}</span>
+            <span class="lbl">在途請求</span>
+            <span class="lbl" style="letter-spacing:.04em">近 4 分鐘 ${o.sub.length} 筆</span>
+          </div>
+          <span class="spacer"></span>
+          ${rlBar}
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid var(--rail);padding-top:12px">
+          <span class="hint" style="flex:1;min-width:200px"><code>${esc(S.config.passthrough.baseUrl)}</code> · 憑證原樣轉發${
+            S.config.passthrough.retry?.retryRateLimit === false ? ' · 節流不重送' : ''}</span>
+        </div>
+      </div></div>
+
+      <div class="sector s-prv"><div class="edge"></div><div class="in">
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+          <span class="sign" style="font-size:15px;color:var(--prv)">PRV</span>
+          <span style="font-weight:500">第三方席位 · ${esc(o.prvName)}</span>
+          <span class="spacer"></span>
+          <span class="lbl">${toProvider ? '所有子 agent' : '目前沒有流量'}</span>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap">
+          <div class="load" title="近 4 分鐘，每格 30 秒">${loadCells(o.prvBuckets, o.peak, 'prv')}</div>
+          <div class="fld" style="gap:2px">
+            <span class="num" style="font-size:22px;line-height:1">${o.prvLive}</span>
+            <span class="lbl">在途請求</span>
+            <span class="lbl" style="letter-spacing:.04em">近 4 分鐘 ${o.prv.length} 筆</span>
+          </div>
+          <span class="spacer"></span>
+          <div class="fld" style="align-items:flex-end">
+            <span class="lbl">送出的 model</span>
+            <span class="num" style="font-size:12px">${esc(
+              S.config.providers.find((p) => p.label === o.prvName)?.model || '不改寫，原樣轉發')}</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid var(--rail);padding-top:12px">
+          <span class="hint" style="flex:1;min-width:200px">${
+            S.config.providers.find((p) => p.label === o.prvName)?.baseUrl
+              ? `<code>${esc(S.config.providers.find((p) => p.label === o.prvName).baseUrl)}</code>`
+              : '尚未設定 base URL'}</span>
+          ${S.flipBackup
+            ? '<button class="btn go" data-act="unflip">重新收下子 agent</button>'
+            : `<button class="btn warn" data-act="flip" ${toProvider ? '' : 'disabled'}>交還給訂閱・立即生效</button>`}
+        </div>
+      </div></div>
+    </section>
+
+    <section class="fld" style="gap:9px">
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <span class="lbl">進條</span>
+        <span class="hint">點一張攤開它的批註・每 3 秒更新</span>
+        <span class="spacer"></span>
+        <button class="btn" data-act="filter" data-key="all"
+                aria-pressed="${S.logFilter === 'all'}">全部</button>
+        <button class="btn" data-act="filter" data-key="attn"
+                aria-pressed="${S.logFilter === 'attn'}">只看異常</button>
+      </div>
+      ${flagLegend()}
+      ${rack(filteredLogs().slice(0, 12), false)}
+    </section>`
+}
+
+/** 圖例用的是機架上真正的夾條，不是另一組色票 —— 同一個顏色不能有兩個意思。 */
+function flagLegend() {
+  const sample = (st, sec, meaning) => `
+    <div>
+      <span class="slot ${st}" style="transform:none;box-shadow:none;display:inline-grid">
+        <span class="tab ${sec}" style="padding:4px 7px"><span class="flag">${FLAG[st]}</span></span>
+      </span>
+      <span style="font-size:12px;color:#b6bcc5">${meaning}</span>
+    </div>`
+  return `
+    <section class="legend">
+      <span class="lbl" style="padding:9px 16px;border-right:1px solid var(--rail)">機架旗標</span>
+      ${sample('clr', 'sub', '順利放行')}
+      ${sample('chk', 'prv', '成功但有事發生・推出半格')}
+      ${sample('hold', 'sub', '被擋下・推出整格＋整圈告警框')}
+      <span class="spacer"></span>
+      <span class="hint" style="padding:9px 16px">夾條顏色是<strong>席位</strong>（青＝訂閱、琥珀＝第三方），旗標與推出距離才是狀態</span>
+    </section>`
+}
+
+function filteredLogs() {
+  const f = S.logFilter
+  if (f === 'all') return S.logs
+  if (f === 'attn') return S.logs.filter((e) => ['chk', 'hold'].includes(stateOf(e)))
+  return S.logs.filter((e) => e.kind === f)
+}
+
+// ── Providers ─────────────────────────────────────────────────────
 const RETRY_FIELDS = [
   ['attempts', '重送次數', '0 = 關掉'],
   ['baseDelayMs', '退避起跳 (ms)', ''],
@@ -245,17 +757,16 @@ const RETRY_FIELDS = [
 function retryTune(retry, scopeAttr = '') {
   const r = retry ?? {}
   const count = Object.keys(r).length
-  const num = ([key, label, hint]) => `
-    <label class="field">${label}
-      <input type="number" min="0" class="mono" data-f="retry.${key}" value="${r[key] ?? ''}" placeholder="繼承全域">
-      ${hint ? `<span class="hint">${hint}</span>` : ''}
-    </label>`
   return `
-    <details class="tune"${scopeAttr}>
-      <summary>重試覆寫${count ? `（已覆寫 ${count} 項）` : '（留空＝繼承全域）'}</summary>
-      <div class="grid">
-        ${RETRY_FIELDS.map(num).join('')}
-        <label class="field">節流（429）
+    <details class="wide"${scopeAttr} style="border:1px solid var(--rail);padding:9px 12px">
+      <summary class="lbl" style="cursor:pointer">重試覆寫${count ? `（已覆寫 ${count} 項）` : '（留空＝繼承全域）'}</summary>
+      <div class="grid" style="margin-top:11px">
+        ${RETRY_FIELDS.map(([key, label, hint]) => `
+          <label class="fld"><span class="lbl">${label}</span>
+            <input type="number" min="0" data-f="retry.${key}" value="${r[key] ?? ''}" placeholder="繼承全域">
+            ${hint ? `<span class="hint">${hint}</span>` : ''}
+          </label>`).join('')}
+        <label class="fld"><span class="lbl">節流（429）</span>
           <select data-f="retry.retryRateLimit">
             <option value="" ${r.retryRateLimit == null ? 'selected' : ''}>繼承全域</option>
             <option value="true" ${r.retryRateLimit === true ? 'selected' : ''}>重送</option>
@@ -266,105 +777,120 @@ function retryTune(retry, scopeAttr = '') {
     </details>`
 }
 
-/** 把一格 retry 覆寫的輸入寫回稀疏物件；清空就把那個鍵拿掉，全空就回到 null。 */
-function applyRetryInput(owner, key, el) {
-  const next = { ...(owner.retry ?? {}) }
-  if (el.value === '') delete next[key]
-  else if (key === 'retryRateLimit') next[key] = el.value === 'true'
-  else next[key] = Number(el.value)
-  owner.retry = Object.keys(next).length ? next : null
+function probeRow(r) {
+  const cls = r.ok ? 'clr' : 'hold'
+  return `
+    <div class="slot ${cls}">
+      <div class="strip" style="cursor:default">
+        <span class="tab" style="background:${r.ok ? 'var(--sub)' : 'var(--alarm)'}">
+          <span class="code">${r.ok ? 'PASS' : 'FAIL'}</span>
+        </span>
+        <span style="padding:9px 12px;display:flex;flex-direction:column;gap:4px;min-width:0">
+          <span style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap">
+            <span style="font-weight:700;color:var(--ink);font-size:12.5px">${esc(r.label)}</span>
+            ${r.ms != null ? `<span class="num" style="font-size:11px;color:var(--ink-dim)">${r.ms}ms</span>` : ''}
+          </span>
+          ${r.detail ? `<span class="num" style="font-size:11px;color:var(--ink-dim);word-break:break-word">${esc(r.detail)}</span>` : ''}
+          ${r.error ? `<span class="num" style="font-size:11px;color:#8f2c18;word-break:break-word">${esc(r.error)}</span>` : ''}
+        </span>
+      </div>
+    </div>`
 }
 
-// ── Providers ─────────────────────────────────────────────────────
 function providerCard(p) {
   const t = S.tests[p.id]
   const busy = S.busy[p.id]
+  const dropsEffort = (p.dropFields || []).includes('output_config')
   return `
-  <section class="card" data-pid="${esc(p.id)}">
-    <div class="card-head">
-      <h3>${esc(p.label)}</h3>
-      <span class="pill">${esc(p.id)}</span>
+  <section class="panel" data-pid="${esc(p.id)}">
+    <div class="panel-head" style="background:var(--prv);border-bottom:0">
+      <span class="sign" style="font-size:15px;color:#17130a">PRV</span>
+      <span style="font-weight:700;color:#17130a;font-size:14px">${esc(p.label)}</span>
+      <span class="num" style="font-size:11px;color:rgba(23,19,10,.66)">provider id: ${esc(p.id)}</span>
       <span class="spacer"></span>
-      <button class="btn tiny danger" data-act="del-provider">刪除</button>
+      <button class="btn tiny" style="color:#17130a;border-color:rgba(23,19,10,.4)" data-act="del-provider">刪除席位</button>
     </div>
 
-    <div class="grid">
-      <label class="field">名稱
-        <input type="text" data-f="label" value="${esc(p.label)}">
+    <div class="panel-body grid">
+      <label class="fld"><span class="lbl">名稱</span>
+        <input type="text" data-f="label" value="${esc(p.label)}" style="font-family:var(--han)">
       </label>
-      <label class="field">Model（留空＝不改寫，原樣轉發）
-        <input type="text" class="mono" data-f="model" value="${esc(p.model)}" placeholder="kimi-k3">
+      <label class="fld"><span class="lbl">Model・留空＝不改寫，原樣轉發</span>
+        <input type="text" data-f="model" value="${esc(p.model)}" placeholder="kimi-k3">
       </label>
-      <label class="field wide">Base URL（Anthropic Messages 格式的端點）
-        <input type="text" class="mono" data-f="baseUrl" value="${esc(p.baseUrl)}" placeholder="https://api.moonshot.ai/anthropic">
-        ${/\/v1$/.test(p.baseUrl)
-          ? '<span class="hint status-bad">結尾的 <code>/v1</code> 會讓實際路徑變成 <code>/v1/v1/messages</code>，通常要去掉</span>'
-          : ''}
+      <label class="fld wide"><span class="lbl">Base URL・必須是 Anthropic Messages 格式的端點</span>
+        <input type="text" data-f="baseUrl" value="${esc(p.baseUrl)}" placeholder="https://api.moonshot.ai/anthropic">
+        <span class="hint">router 會往 <code>{baseUrl}/v1/messages</code> 送。${
+          /\/v1$/.test(p.baseUrl)
+            ? '<strong style="color:var(--alarm)">結尾的 <code>/v1</code> 會讓實際路徑變成 <code>/v1/v1/messages</code>，通常要去掉。</strong>'
+            : ''}</span>
       </label>
-      <label class="field wide">API Key
-        <input type="password" class="mono" data-f="apiKey" value="${p.apiKey === KEEP ? KEEP : ''}"
+      <label class="fld wide"><span class="lbl">API Key</span>
+        <input type="password" data-f="apiKey" value="${p.apiKey === KEEP ? KEEP : ''}"
                placeholder="${p.apiKeyHint ? `目前：${esc(p.apiKeyHint)}（不動就保留）` : '尚未設定'}">
-        <span class="hint">存進 config.json 明文，該檔已在 .gitignore。</span>
+        <span class="hint">明文存進 config.json，該檔已在 .gitignore。</span>
       </label>
-      <label class="field">認證 header
+      <label class="fld"><span class="lbl">認證 header</span>
         <select data-f="authStyle">
           <option value="bearer" ${p.authStyle === 'bearer' ? 'selected' : ''}>Authorization: Bearer</option>
           <option value="x-api-key" ${p.authStyle === 'x-api-key' ? 'selected' : ''}>x-api-key</option>
         </select>
       </label>
-      <label class="field">max_tokens 上限（留空＝不夾）
+      <label class="fld"><span class="lbl">max_tokens 上限・留空＝不夾</span>
         <input type="number" min="1" data-f="maxOutputTokens" value="${p.maxOutputTokens ?? ''}">
       </label>
-      <label class="field wide">移除的 body 欄位（逗號分隔，建議留空）
-        <input type="text" class="mono" data-f="dropFields" value="${esc((p.dropFields || []).join(', '))}"
-               placeholder="留空＝原樣轉發">
-        <span class="hint">只在上游回 <code>400 unknown field</code> 時才照錯誤訊息填。
-          刪 <code>output_config</code> 會讓 <code>/effort</code> 靜默失效，
-          刪 <code>thinking</code> 會讓 <code>kimi-k2.7-code</code> 直接拒收。</span>
+
+      <div class="fld wide">
+        <label class="fld"><span class="lbl" ${dropsEffort ? 'style="color:var(--alarm)"' : ''}>移除的 body 欄位・逗號分隔・建議留空</span>
+          <input type="text" data-f="dropFields" value="${esc((p.dropFields || []).join(', '))}" placeholder="留空＝原樣轉發">
+        </label>
+        <div class="marginal ${dropsEffort ? 'alarm' : ''}" style="margin-top:5px"><i></i><div>${
+          dropsEffort
+            ? '刪掉 <code>output_config</code> 會讓 <code>/effort</code> <strong>靜默失效</strong> —— 請求照樣回 200，只是模型變笨，不會有任何錯誤提示。流量記錄的「思考」欄會標成「已移除」。'
+            : '預設不刪任何欄位：換來一個看得見的 400，比靜默降級好。真的撞到 400 時<strong>先關掉上面的「移除 anthropic-beta」</strong>讓 header 與 body 成對抵達，再不行就在 Claude Code 那頭設 <code>CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1</code>，最後才動這一格、而且一次只加一個。刪 <code>thinking</code> 會讓 <code>kimi-k2.7-code</code> 直接拒收。'
+        }</div></div>
+      </div>
+
+      <label class="fld wide"><span class="lbl">額外 header・每行一組 Name: Value</span>
+        <textarea data-f="extraHeaders" placeholder="X-Tenant: acme">${esc(formatHeaders(p.extraHeaders))}</textarea>
       </label>
-      <label class="field wide">額外 header（每行一組 Name: Value）
-        <textarea class="mono" data-f="extraHeaders" placeholder="X-Tenant: acme">${esc(formatHeaders(p.extraHeaders))}</textarea>
-      </label>
-      <label class="field wide">
-        <span class="check"><input type="checkbox" data-f="dropBeta" ${p.dropBeta ? 'checked' : ''}> 移除 <code>anthropic-beta</code> header</span>
-        <span class="hint">裡面是 Anthropic 專屬 capability，第三方通常拒收。passthrough 那條線永遠原樣保留，不受此設定影響。</span>
-      </label>
+      <div class="fld wide">
+        <label class="check"><input type="checkbox" data-f="dropBeta" ${p.dropBeta ? 'checked' : ''}> 移除 <code>anthropic-beta</code> header</label>
+        <span class="hint">
+          官方文檔明說 header 與 body 欄位是<strong>成對</strong>的：只剝 header、留著 body 正是會產生 hard <code>400</code> 的組合，
+          兩半一起不送才會安靜關閉。而預設的 <code>dropBeta: true</code> + <code>dropFields</code> 留空剛好就是「剝 header、留 body」——
+          實測 Kimi 1668 筆與 DeepSeek 都零 <code>400</code>，所以預設沒動。真的撞到 400 時，先把這格關掉讓兩半成對抵達。
+          訂閱那條線永遠原樣保留，不受此設定影響。
+        </span>
+      </div>
       ${retryTune(p.retry)}
     </div>
 
-    <div class="tests">
-      <div class="tests-row">
-        <label class="field" style="flex:1;min-width:180px">測試用 model（留空＝用上面那個）
-          <input type="text" class="mono" data-f="testModel" value="${esc(t?.model ?? '')}">
+    <div class="panel-body" style="border-top:1px solid var(--rail);display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+        <label class="fld" style="flex:1;min-width:200px"><span class="lbl">測試用 model・留空＝用上面那個</span>
+          <input type="text" data-f="testModel" value="${esc(t?.model ?? '')}">
         </label>
-        <button class="btn primary" data-act="test" ${busy ? 'disabled' : ''}>${busy ? '測試中…' : '執行測試'}</button>
+        <button class="btn go" data-act="test" ${busy ? 'disabled' : ''}>${busy ? '測試中…' : '執行測試'}</button>
       </div>
-      <div style="margin-top:10px">${
-        t?.results?.length
-          ? t.results.map((r) => `
-            <div class="result">
-              <span class="icon ${r.ok ? 'ok' : 'bad'}">${r.ok ? '✓' : '✕'}</span>
-              <span class="body">
-                <span class="name">${esc(r.label)}</span>
-                ${r.ms != null ? `<span class="detail"> ${r.ms}ms</span>` : ''}
-                ${r.detail ? `<div class="detail">${esc(r.detail)}</div>` : ''}
-                ${r.error ? `<div class="err">${esc(r.error)}</div>` : ''}
-              </span>
-            </div>`).join('')
-          : '<span class="sub">尚未測試。前三項驗基本推論、SSE 串流、工具呼叫 —— 任一不過，Claude Code 在這個 provider 上就跑不起來。第四項驗 /effort 到不到得了模型，它壞掉不會報錯，只是模型變笨。</span>'
-      }</div>
+      ${t?.results?.length
+        ? `<div class="rack" style="padding:3px 26px 3px 3px">${t.results.map(probeRow).join('')}</div>
+           <span class="hint">${
+             t.results.every((r) => r.ok)
+               ? '四項全過。這個 provider 可以接 Claude Code 的子 agent 流量。'
+               : '有項目沒過 —— 前三項任一不過，Claude Code 在這個 provider 上就跑不起來；第四項不過的話跑得起來，但 <code>/effort</code> 會被吃掉。'}</span>`
+        : '<span class="hint">尚未測試。前三項驗基本推論、SSE 串流、工具呼叫 —— 任一不過，Claude Code 在這個 provider 上就跑不起來。第四項驗 <code>/effort</code> 到不到得了模型，它壞掉不會報錯，只是模型變笨。</span>'}
     </div>
   </section>`
 }
 
 function renderProviders() {
   return `
-    <div class="note">
-      Provider 必須提供 <strong>Anthropic Messages 格式</strong>的端點（<code>POST {baseUrl}/v1/messages</code>）。
-      OpenAI 格式的端點不能直接填在這裡。
-    </div>
-    ${S.config.providers.map(providerCard).join('') || '<div class="card empty">還沒有 provider。</div>'}
-    <button class="btn" data-act="add-provider">＋ 新增 Provider</button>`
+    <div class="marginal"><i></i><div>
+      Provider 必須提供 <strong>Anthropic Messages 格式</strong>的端點（<code>POST {baseUrl}/v1/messages</code>）。OpenAI 格式的端點不能直接填在這裡。
+    </div></div>
+    ${S.config.providers.map(providerCard).join('') || '<div class="panel"><div class="empty">還沒有 provider。</div></div>'}
+    <div><button class="btn" data-act="add-provider">${ICON.plus} 新增 Provider</button></div>`
 }
 
 // ── 路由規則 ───────────────────────────────────────────────────────
@@ -372,219 +898,190 @@ const MATCH_LABELS = {
   any: '任何請求',
   main: '只有主對話',
   subagent: '所有子 agent（含 Workflow / ultracode）',
-  nested: '只有巢狀子 agent（agent 開的 agent）',
+  nested: '只有巢狀子 agent',
+}
+
+/** 這一筆會不會命中這條規則。跟 routing.mjs 同一套語意，用來在機架上標出被遮住的規則。 */
+function globHit(pattern, value) {
+  if (!pattern || pattern === '*') return true
+  if (!value) return false
+  const rx = new RegExp('^' + pattern.split('*').map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$')
+  return rx.test(value)
 }
 
 function renderRules() {
   const targetOpts = (sel) => `
     <option value="" ${sel ? '' : 'selected'}>— 選一個導向 —</option>
-    <option value="passthrough" ${sel === 'passthrough' ? 'selected' : ''}>passthrough（訂閱）</option>
-    ${S.config.providers
-      .map((p) => `<option value="${esc(p.id)}" ${p.id === sel ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}`
+    <option value="passthrough" ${sel === 'passthrough' ? 'selected' : ''}>SUB 訂閱</option>
+    ${S.config.providers.map((p) =>
+      `<option value="${esc(p.id)}" ${p.id === sel ? 'selected' : ''}>PRV ${esc(p.label)}</option>`).join('')}`
 
-  const rows = S.config.rules.map((r, i) => `
-    <div class="rule-row" data-rid="${esc(r.id)}">
-      <input type="checkbox" data-f="enabled" ${r.enabled ? 'checked' : ''} title="啟用">
-      <select data-f="match">${Object.entries(MATCH_LABELS)
-        .map(([k, v]) => `<option value="${k}" ${r.match === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
-      <input type="text" class="mono" data-f="modelGlob" value="${esc(r.modelGlob)}" title="model 名比對，支援 *">
-      <input type="text" class="mono" data-f="agentIdGlob" value="${esc(r.agentIdGlob ?? '*')}"
-             title="比對 x-claude-code-agent-id，支援 *。* = 不篩">
-      <select data-f="providerId">${targetOpts(r.providerId)}</select>
-      <input type="text" class="mono" data-f="modelOverride" list="model-hints" value="${esc(r.modelOverride ?? '')}"
-             placeholder="不改寫" title="改寫送出的 model 名，留空＝不改寫">
-      <span>
-        <button class="btn tiny" data-act="up" ${i === 0 ? 'disabled' : ''}>↑</button>
-        <button class="btn tiny" data-act="down" ${i === S.config.rules.length - 1 ? 'disabled' : ''}>↓</button>
-        <button class="btn tiny danger" data-act="del-rule">✕</button>
-      </span>
-    </div>`).join('')
+  // 預覽條件下，第一條命中的規則吃下這筆，它下面的全部被遮住
+  const agentId = S.pvKind === 'main' ? '' : S.pvAgent
+  let hitAt = -1
+  const hits = S.config.rules.map((r, i) => {
+    const ok = r.enabled && (r.match === 'any' || r.match === S.pvKind)
+      && globHit(r.modelGlob, S.pvModel) && globHit(r.agentIdGlob ?? '*', agentId)
+    if (ok && hitAt < 0) hitAt = i
+    return ok
+  })
+
+  const rows = S.config.rules.map((r, i) => {
+    const isHit = i === hitAt
+    const shadowed = hitAt >= 0 && i > hitAt
+    const toPrv = r.providerId && r.providerId !== 'passthrough'
+    return `
+    <div class="clearance ${isHit ? 'hit' : ''} ${shadowed ? 'shadowed' : ''}" data-rid="${esc(r.id)}">
+      <div class="ord">
+        <b>${i + 1}</b>
+        <span>${isHit ? 'HIT' : shadowed ? 'SHDW' : r.enabled ? 'PASS' : 'OFF'}</span>
+      </div>
+      <div class="say">
+        <div class="line">
+          <label class="check" title="啟用"><input type="checkbox" data-f="enabled" ${r.enabled ? 'checked' : ''}></label>
+          <select data-f="match">${Object.entries(MATCH_LABELS)
+            .map(([k, v]) => `<option value="${k}" ${r.match === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+          <span class="word">・model</span>
+          <input type="text" class="w-sm" data-f="modelGlob" value="${esc(r.modelGlob)}" title="model 名比對，支援 *">
+          <span class="word">・agent</span>
+          <input type="text" class="w-sm" data-f="agentIdGlob" value="${esc(r.agentIdGlob ?? '*')}"
+                 title="比對 x-claude-code-agent-id，支援 *。* = 不篩">
+          <svg class="arrow" width="20" height="12" viewBox="0 0 20 12" fill="none" aria-hidden="true">
+            <path d="M0 6h16M12 2l4 4-4 4" stroke="rgba(26,30,36,.45)" stroke-width="1.4" stroke-linecap="square"/>
+          </svg>
+          <select class="target ${toPrv ? 'prv' : 'sub'}" data-f="providerId">${targetOpts(r.providerId)}</select>
+          <span class="word">・送出</span>
+          <input type="text" class="w-md" data-f="modelOverride" list="model-hints"
+                 value="${esc(r.modelOverride ?? '')}" placeholder="不改寫">
+          <span class="spacer"></span>
+          <button class="btn tiny" data-act="up" ${i === 0 ? 'disabled' : ''} aria-label="上移">${ICON.up}</button>
+          <button class="btn tiny" data-act="down" ${i === S.config.rules.length - 1 ? 'disabled' : ''} aria-label="下移">${ICON.down}</button>
+          <button class="btn tiny danger" data-act="del-rule" aria-label="刪除規則">${ICON.del}</button>
+        </div>
+        ${isHit ? '<div class="reads">這一筆由這條吃下。下面的規則這次用不到。</div>' : ''}
+      </div>
+    </div>`
+  }).join('')
 
   const pv = S.preview
   return `
-    <div class="note">
-      由上而下取<strong>第一條命中</strong>的規則；全部沒命中就走 passthrough，也就是原樣送到 Anthropic、由訂閱付帳。
-      分流依據是 Claude Code 送出的 <code>x-claude-code-agent-id</code> header，只有 session 內 spawn 的子 agent 才帶它；
-      <code>x-claude-code-parent-agent-id</code> 只有「agent 開的 agent」才有。
-      <br><br>
-      <strong>Workflow / ultracode 的 <code>agent()</code> 算第一層子 agent，沒有 parent header</strong>，
-      所以要涵蓋它們必須選「所有子 agent」；選「只有巢狀」會一個都分流不到。
-    </div>
-
-    <div class="note">
-      <strong>導向可以直接選 <code>passthrough（訂閱）</code>。</strong>
-      第三方配額快用完時，把規則的導向從 provider 換成訂閱就好 —— 不用刪規則、不用清 API key，
-      正在跑的 agent 下一個請求就會改走訂閱，設定即時生效不必重啟。
-      <br><br>
-      比「停用規則」好的地方是排序還在：多條規則疊著時，停用會讓流量掉到<strong>下一條</strong>規則去，
-      而不是掉回訂閱。明確指向 passthrough 才是真的擋在那裡。
-      流量記錄的「導向」欄滑鼠移上去會顯示命中的規則 id，可以確認是哪一條在作用。
-      <br><br>
-      <strong>「改寫 model」把送出去的 model 名換掉</strong>，留空＝不改寫。
-      指向 provider 時它蓋過該 provider 自己的 Model 欄位；指向訂閱時，它就是讓子 agent 跑跟主對話不同模型的唯一辦法 ——
-      Workflow 的 <code>agent()</code> 沒指定模型時一律沿用主對話的，主對話開 <code>fable</code> 整批 workflow 也會是 fable。
-      填一條「所有子 agent → passthrough（訂閱）→ <code>claude-opus-5</code>」就能拉回來。
-      <br><br>
-      名字要填上游看得懂的完整 model 名。不確定的話，把主對話切到那個模型送一句話，
-      再去<strong>流量記錄</strong>分頁的「要求 model」欄複製實際送出的字串最保險。
-      <br><br>
-      <strong>「agent 比對」比對的是 <code>x-claude-code-agent-id</code></strong>，<code>*</code> = 不篩。
-      一般 subagent 的 id 每次 spawn 重新產生，篩不出東西；但官方文檔載明
-      <strong>agent team 的 teammate 會沿用由名字衍生的穩定 id</strong>，所以這欄的用途是按角色分流。
-      主對話沒有這個 header，永遠不會被非 <code>*</code> 的樣式命中。
-    </div>
-
-    <datalist id="model-hints">
-      <option value="claude-opus-5"></option>
-      <option value="claude-sonnet-5"></option>
-      <option value="claude-haiku-4-5-20251001"></option>
-      <option value="claude-fable-5"></option>
-    </datalist>
-
-    <section class="card">
-      <div class="card-head"><h3>預設去向（passthrough）</h3></div>
-      <label class="field">Base URL
-        <input type="text" class="mono" id="pt-base" value="${esc(S.config.passthrough.baseUrl)}">
-      </label>
-      <span class="hint">所有規則都沒命中、以及規則明確指向 passthrough 時的去向。憑證與 header 原樣轉發，body 除了規則指定的 model 改寫之外一個字不動 —— 這條線就是你的訂閱。除非另外架了 Anthropic 前置，否則不要改。</span>
-      <div class="grid" style="margin-top:12px">${retryTune(S.config.passthrough.retry, ' data-scope="passthrough"')}</div>
-      <span class="hint">預設就把節流重送關掉：訂閱的 429 是 5 小時額度窗，退避幾秒等不到恢復，只會在 Claude Code 顯示倒數之前多壓幾秒。</span>
-    </section>
-
-    <section class="card">
-      <div class="card-head"><h3>規則</h3><span class="spacer"></span>
-        <button class="btn tiny" data-act="add-rule">＋ 新增規則</button></div>
-      <div class="rule-row" style="color:var(--muted);font-size:12px">
-        <span>啟用</span><span>條件</span><span>model 比對</span><span>agent 比對</span><span>導向</span><span>改寫 model</span><span></span>
+    <section class="fld" style="gap:12px">
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <span class="lbl">排程順序</span>
+        <span class="hint">由上而下取第一條命中的；下面被遮住的那幾條這一筆用不到</span>
+        <span class="spacer"></span>
+        <button class="btn" data-act="add-rule">${ICON.plus} 新增規則</button>
       </div>
-      ${rows || '<div class="empty">沒有規則，所有流量都走訂閱。</div>'}
+      <div class="rack" style="padding:4px 20px 4px 4px">
+        ${rows || '<div class="empty">沒有規則，所有流量都走訂閱。</div>'}
+        <div class="clearance" style="opacity:${hitAt < 0 ? 1 : .4}">
+          <div class="ord" style="background:var(--rail)">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M2 11h12M8 2v7M5 6l3 3 3-3" stroke="var(--on-bay-dim)" stroke-width="1.4" stroke-linecap="square"/>
+            </svg>
+          </div>
+          <div style="background:#20262e;border:1px dashed var(--rail-lit);border-left:0;display:flex;
+                      align-items:center;gap:10px;padding:11px;flex-wrap:wrap">
+            <span class="sign" style="font-size:12px;color:var(--sub)">SUB passthrough</span>
+            <span class="hint">全部沒命中就落在這裡 —— 原樣送到 <code>${esc(S.config.passthrough.baseUrl)}</code>，由訂閱付帳</span>
+            <span class="spacer"></span>
+            <span class="lbl">機架底板・不可刪</span>
+          </div>
+        </div>
+      </div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(340px,1fr))">
+        <div class="marginal"><i></i><div>
+          <strong>配額見底時</strong>，把規則的導向從 provider 換成 <code>SUB 訂閱</code> 就好 —— 不用刪規則、不用清 API key、不必重啟。設定是每筆請求現查的，正在跑的 agent 下一個請求就改道。
+        </div></div>
+        <div class="marginal"><i></i><div>
+          <strong>為什麼不用「停用」</strong>：停用會讓流量掉到<strong>下一條</strong>規則，不是掉回訂閱。明確指向 passthrough 才是真的擋在那裡，而且排序還在。
+        </div></div>
+        <div class="marginal"><i></i><div>
+          <strong>要涵蓋 ultracode 必須選「所有子 agent」</strong>。Workflow 的 <code>agent()</code> 算第一層子 agent、沒有 parent header，選「只有巢狀」一個都分流不到。
+        </div></div>
+        <div class="marginal"><i></i><div>
+          <strong>agent 比對</strong>的用途是按 agent team 的角色分流：teammate 的 id 由名字衍生、跨重連穩定。一般 subagent 每次 spawn 重新產生，篩不出東西。主對話沒有這個 header，永遠不會被非 <code>*</code> 的樣式命中。
+        </div></div>
+      </div>
     </section>
 
-    <section class="card">
-      <div class="card-head"><h3>規則預覽</h3></div>
-      <div class="tests-row">
-        <label class="field">請求來源
+    <section class="panel">
+      <div class="panel-head"><span class="lbl">排程預覽</span><span class="hint">不必真的 spawn 一個</span></div>
+      <div class="panel-body" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+        <label class="fld"><span class="lbl">請求來源</span>
           <select id="pv-kind">${[['main', '主對話'], ['subagent', '子 agent'], ['nested', '巢狀子 agent']]
             .map(([k, v]) => `<option value="${k}" ${S.pvKind === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
         </label>
-        <label class="field" style="flex:1;min-width:160px">請求的 model
-          <input type="text" class="mono" id="pv-model" list="model-hints" value="${esc(S.pvModel)}">
+        <label class="fld" style="flex:1;min-width:180px"><span class="lbl">請求的 model</span>
+          <input type="text" id="pv-model" list="model-hints" value="${esc(S.pvModel)}">
         </label>
-        <label class="field" style="flex:1;min-width:140px">agent id（選填）
-          <input type="text" class="mono" id="pv-agent" value="${esc(S.pvAgent)}" placeholder="Explore-1">
+        <label class="fld" style="flex:1;min-width:150px"><span class="lbl">agent id・選填</span>
+          <input type="text" id="pv-agent" value="${esc(S.pvAgent)}" placeholder="Explore-1">
         </label>
-        <button class="btn" data-act="preview">預覽</button>
+        <button class="btn go" data-act="preview">預覽</button>
       </div>
-      ${pv ? `<div style="margin-top:12px" class="mono">
-        判定為 <strong>${esc(pv.kind)}</strong> →
-        導向 <strong class="${pv.providerId ? 'status-ok' : 'status-muted'}">${esc(pv.target)}</strong>
-        ・實送 model <strong>${
-          pv.requestedModel === pv.sentModel
-            ? esc(pv.sentModel)
-            : `${esc(pv.requestedModel)} → ${esc(pv.sentModel)}`
-        }</strong>
-        ${pv.agentId ? `・agent ${esc(pv.agentId)}` : ''}
-        ${pv.ruleId ? `・命中規則 ${esc(pv.ruleId)}` : '・無規則命中'}
+      ${pv ? `
+      <div class="panel-body" style="border-top:1px solid var(--rail)">
+        <div class="slot"><div class="strip" style="cursor:default">
+          <span class="tab ${pv.providerId ? 'prv' : 'sub'}"><span class="code">${pv.providerId ? 'PRV' : 'SUB'}</span></span>
+          <span class="body" style="padding:10px 13px">
+            <dl style="margin:0;display:grid;grid-template-columns:80px 1fr;gap:3px 10px">
+              <dt class="lbl" style="color:#8f8878">判定為</dt><dd style="margin:0;font:11.5px var(--data);color:#3c4149">${esc(pv.kind)}</dd>
+              <dt class="lbl" style="color:#8f8878">導向</dt><dd style="margin:0;font:11.5px var(--data);color:var(--ink)">${esc(pv.target)}</dd>
+              <dt class="lbl" style="color:#8f8878">實送 model</dt><dd style="margin:0;font:11.5px var(--data);color:var(--ink)">${
+                pv.requestedModel === pv.sentModel ? esc(pv.sentModel) : `${esc(pv.requestedModel)} → ${esc(pv.sentModel)}`}</dd>
+              <dt class="lbl" style="color:#8f8878">命中</dt><dd style="margin:0;font:11.5px var(--data);color:#3c4149">${
+                pv.ruleId ? esc(pv.ruleId) : '無規則命中 · 掉到機架底板'}</dd>
+            </dl>
+          </span>
+        </div></div>
       </div>` : ''}
     </section>`
 }
 
 // ── 流量記錄 ───────────────────────────────────────────────────────
-
-/**
- * 只顯示目錄名，完整路徑放 title —— 路徑太長會把表格撐爛。
- * 認不出目錄時退而顯示 session id：沒有 session id 的請求根本不是 Claude Code 送的。
- */
-function cwdCell(e) {
-  const sess = e.sessionId ? `session ${e.sessionId}` : '沒有 session id・不是 Claude Code 送來的'
-  if (!e.cwd) return `<span class="status-muted" title="${esc(sess)}">–</span>`
-  const short = e.cwd.split(/[\\/]/).filter(Boolean).at(-1) || e.cwd
-  return `<span title="${esc(e.cwd)}・${esc(sess)}">${esc(short)}</span>`
-}
-
-/** effort 被 dropFields 吃掉時要看得出來 —— 請求照樣 200，只是模型變笨。 */
-function effortCell(e) {
-  if (!e.effort) return '<span class="status-muted">–</span>'
-  if (e.sentEffort === e.effort) return `<span class="status-ok">${esc(e.effort)}</span>`
-  return `<span class="status-bad">${esc(e.effort)} → 已移除</span>`
-}
-
-/** 沒有 cwd 的背景請求（壓縮、預熱那幾種）只能靠形狀認出來，但形狀不含任何內容。 */
-function shapeHint(e) {
-  if (!e.shape) return ''
-  const parts = [
-    e.shape.messages != null ? `${e.shape.messages} 則 messages` : null,
-    e.shape.system ? '有 system' : '無 system',
-    e.shape.stream ? '串流' : '非串流',
-    e.shape.maxTokens != null ? `max_tokens ${e.shape.maxTokens}` : null,
-  ].filter(Boolean)
-  return ` title="${esc(parts.join('・'))}"`
-}
-
-/**
- * 上游為什麼失敗，答案在這一格。Claude Code 撞到 429 / 5xx 時畫面上只寫
- * 「will retry in …」，那個秒數就是這裡的 retry-after。
- */
-/** anthropic-ratelimit-*-reset 可能是 unix 秒數也可能是 RFC3339，兩種都認，都不是就原樣顯示。 */
-function resetLabel(raw) {
-  const at = /^\d+$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw)
-  if (!Number.isFinite(at)) return raw
-  const secs = Math.round((at - Date.now()) / 1000)
-  return secs > 0 ? `${secs}s 後` : new Date(at).toTimeString().slice(0, 8)
-}
-
-function statusCell(e) {
-  // 200 但串流裡夾著 error 事件的那種，看起來成功、其實沒有 —— 不能塗成綠的
-  const failed = e.error || e.status >= 400 || (e.status && e.detail)
-  const cls = failed ? 'status-bad' : e.status ? 'status-ok' : 'status-muted'
-  const reset = e.rateLimit?.['unified-reset']
-  const hint = [
-    e.detail,
-    e.attempts > 1 ? `送出 ${e.attempts} 次，重送原因：${(e.retries || []).join(' → ')}` : null,
-    e.retryAfter ? `retry-after: ${e.retryAfter}` : null,
-    // 訂閱的 429 多半不帶 retry-after，限流狀態只在這組 header 上
-    e.rateLimit ? `限流：${Object.entries(e.rateLimit).map(([k, v]) => `${k}=${v}`).join('・')}` : null,
-    e.pings ? `router 補了 ${e.pings} 個 keep-alive ping` : null,
-    e.requestId ? `request-id: ${e.requestId}` : null,
-  ].filter(Boolean).join('\n')
-  const retry = e.retryAfter
-    ? ` <span class="status-muted">·${esc(e.retryAfter)}s 後重試</span>`
-    : reset ? ` <span class="status-muted">·${esc(resetLabel(reset))}重置</span>` : ''
-  const flag = e.status && e.status < 400 && e.detail ? ' ⚠' : ''
-  // router 自己扛掉的重送：Claude Code 看到的是一次乾淨的成功，只有這裡看得出來扛了幾次
-  const tries = e.attempts > 1 ? ` <span class="status-muted">×${e.attempts}</span>` : ''
-  return `<td class="mono ${cls}"${hint ? ` title="${esc(hint)}"` : ''}>${
-    e.error ? esc(e.error) : (e.status ?? '…')}${flag}${tries}${retry}</td>`
-}
-
 function renderLogs() {
-  const rows = S.logs.map((e) => `
-    <tr>
-      <td class="mono">${esc(e.ts.slice(11, 19))}</td>
-      <td class="mono">${esc(e.kind)}</td>
-      <td class="mono">${cwdCell(e)}</td>
-      <td class="mono"${shapeHint(e)}>${esc(e.path)}</td>
-      <td class="mono">${esc(e.requestedModel ?? '–')}</td>
-      <td title="${e.ruleId ? '命中規則 ' + esc(e.ruleId) : '無規則命中'}">${esc(e.target)}</td>
-      <td class="mono">${esc(e.sentModel ?? '–')}</td>
-      <td class="mono">${effortCell(e)}</td>
-      ${statusCell(e)}
-      <td class="mono">${e.ms != null ? e.ms + 'ms' : '…'}</td>
-      <td class="mono status-muted">${esc((e.changes || []).join(' '))}</td>
-    </tr>`).join('')
+  const filters = [['all', '全部'], ['attn', '只看異常'], ['main', '主對話'], ['subagent', '子 agent'], ['nested', '巢狀']]
+  const list = filteredLogs()
+  const worst = S.logs.find((e) => stateOf(e) === 'hold')
 
   return `
-    <section class="card">
-      <div class="card-head"><h3>最近的請求</h3>
-        <span class="sub">每 3 秒更新・只記中繼資料，不記 prompt 內容・狀態與路徑欄移上去看細節</span>
-        <span class="spacer"></span>
-        <button class="btn tiny" data-act="clear-logs">清空</button></div>
-      <div class="scroll">
-        <table>
-          <thead><tr><th>時間</th><th>來源</th><th>目錄</th><th>路徑</th><th>要求 model</th><th>導向</th><th>實送 model</th><th>思考</th><th>狀態</th><th>耗時</th><th>改寫</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="11" class="empty">還沒有流量。</td></tr>'}</tbody>
-        </table>
+    ${worst ? `
+    <section class="marginal alarm"><i></i><div style="display:flex;flex-direction:column;gap:11px">
+      <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
+        <span class="disp" style="font-size:24px;color:#f0d5cd;line-height:1.2">${
+          worst.error ? '最近一次是 router 連不上上游' : '最近一次是上游擋的'}</span>
+        <span class="num" style="font-size:11px">${esc(worst.ts.slice(11, 19))}</span>
+        <span class="num" style="font-size:14px;color:var(--alarm-ink)">${esc(worst.error || worst.status)}</span>
+        <span style="font-size:12.5px">${esc(sectorOf(worst) === 'sub' ? '訂閱線' : '第三方線')}・${
+          worst.error ? 'client 收到的是 router 合成的 502' : 'router 只是照實轉發'}</span>
       </div>
+      <div style="display:flex;gap:24px;flex-wrap:wrap;border-top:1px solid #4a2a24;padding-top:11px">
+        ${[
+          ['429 / 5xx', '上游擋的'],
+          ['fetch failed', 'router 連不上上游'],
+          ['client aborted', 'Claude Code 自己收手'],
+          ['完全沒有這一筆', '請求根本沒到 router'],
+        ].map(([k, v]) => `<div class="fld" style="gap:2px">
+          <span class="lbl" style="color:#8a6c64">${esc(k)}</span>
+          <span class="num" style="font-size:11.5px;color:#e4cdc6">${esc(v)}</span>
+        </div>`).join('')}
+      </div>
+    </div></section>` : ''}
+
+    ${flagLegend()}
+
+    <section class="fld" style="gap:9px">
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <span class="lbl">進條機架</span>
+        <span><b class="num">${list.length}</b> 筆</span>
+        <span class="hint">每 3 秒更新・只記中繼資料，不記 prompt 內容</span>
+        <span class="spacer"></span>
+        ${filters.map(([k, v]) =>
+          `<button class="btn" data-act="filter" data-key="${k}" aria-pressed="${S.logFilter === k}">${v}</button>`).join('')}
+        <button class="btn danger" data-act="clear-logs">清空</button>
+      </div>
+      ${rack(list, true)}
     </section>`
 }
 
@@ -593,61 +1090,72 @@ function renderAdvanced() {
   const r = S.config.retry
   const t = S.config.trafficLog
   return `
-    <div class="note">
-      router 本身的設定。除了<strong>流量記錄的檔名與上限</strong>（落檔只在啟動時建立一次，改了要重啟），
-      其餘都是每筆請求現查的，儲存後即時生效。
-    </div>
+    <div class="marginal"><i></i><div>
+      router 本身的設定。除了<strong>流量記錄的檔名與上限</strong>（落檔只在啟動時建立一次，改了要重啟），其餘都是每筆請求現查的，儲存後即時生效。
+    </div></div>
 
-    <section class="card">
-      <div class="card-head"><h3>重試（全域預設）</h3></div>
-      <p class="hint" style="margin-top:0">
-        每個 provider 與 passthrough 都能在自己的卡片上覆寫其中幾項，沒覆寫的就用這裡的值。
-        重送只發生在「一個 byte 都還沒寫給 client」的階段 —— 串流一旦開始就不能重來。
-      </p>
-      <div class="grid">
-        <label class="field">重送次數
-          <input type="number" min="0" max="10" class="mono" data-g="retry.attempts" value="${r.attempts}">
-          <span class="hint">0 = 關掉，所有錯誤原樣交回</span>
-        </label>
-        <label class="field">退避起跳 (ms)
-          <input type="number" min="0" class="mono" data-g="retry.baseDelayMs" value="${r.baseDelayMs}">
-        </label>
-        <label class="field">退避上限 (ms)
-          <input type="number" min="0" class="mono" data-g="retry.maxDelayMs" value="${r.maxDelayMs}">
-        </label>
-        <label class="field">retry-after 上限 (ms)
-          <input type="number" min="0" class="mono" data-g="retry.maxRetryAfterMs" value="${r.maxRetryAfterMs}">
-          <span class="hint">上游要求等更久就不自己扛，交回去讓 Claude Code 顯示倒數</span>
-        </label>
-        <label class="field wide">
-          <span class="check"><input type="checkbox" data-g="retry.retryRateLimit" ${r.retryRateLimit ? 'checked' : ''}> 節流（429）也算可重送</span>
-          <span class="hint">
-            第三方的 429 通常等一下就過，所以預設開著。訂閱線相反 —— passthrough 卡片預設就覆寫成不重送。
-          </span>
-        </label>
+    <section class="panel">
+      <div class="panel-head"><span class="lbl">重試・全域預設</span></div>
+      <div class="panel-body">
+        <p class="hint" style="margin:0 0 14px">
+          每個 provider 與 passthrough 都能在自己的卡片上覆寫其中幾項，沒覆寫的就用這裡的值。
+          重送只發生在「一個 byte 都還沒寫給 client」的階段 —— 串流一旦開始就不能重來。
+        </p>
+        <div class="grid">
+          <label class="fld"><span class="lbl">重送次數</span>
+            <input type="number" min="0" max="10" data-g="retry.attempts" value="${r.attempts}">
+            <span class="hint">0 = 關掉，所有錯誤原樣交回</span>
+          </label>
+          <label class="fld"><span class="lbl">退避起跳 (ms)</span>
+            <input type="number" min="0" data-g="retry.baseDelayMs" value="${r.baseDelayMs}"></label>
+          <label class="fld"><span class="lbl">退避上限 (ms)</span>
+            <input type="number" min="0" data-g="retry.maxDelayMs" value="${r.maxDelayMs}"></label>
+          <label class="fld"><span class="lbl">retry-after 上限 (ms)</span>
+            <input type="number" min="0" data-g="retry.maxRetryAfterMs" value="${r.maxRetryAfterMs}">
+            <span class="hint">上游要求等更久就不自己扛，交回去讓 Claude Code 顯示倒數</span>
+          </label>
+          <div class="fld wide">
+            <label class="check"><input type="checkbox" data-g="retry.retryRateLimit" ${r.retryRateLimit ? 'checked' : ''}> 節流（429）也算可重送</label>
+            <span class="hint">第三方的 429 通常等一下就過，所以預設開著。訂閱線相反 —— passthrough 預設就覆寫成不重送：它的 429 是 5 小時額度窗，退避幾秒等不到恢復。</span>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="card">
-      <div class="card-head"><h3>流量記錄落檔</h3><span class="pill">改了要重啟</span></div>
-      <div class="grid">
-        <label class="field wide">檔名（相對於 config.json 所在目錄，留空＝不落檔）
-          <input type="text" class="mono" data-g="trafficLog.file" value="${esc(t.file)}" placeholder="traffic.log">
+    <section class="panel">
+      <div class="panel-head"><span class="lbl">預設去向・passthrough</span></div>
+      <div class="panel-body grid">
+        <label class="fld wide"><span class="lbl">Base URL</span>
+          <input type="text" id="pt-base" value="${esc(S.config.passthrough.baseUrl)}">
+          <span class="hint">所有規則都沒命中、以及規則明確指向 passthrough 時的去向。憑證與 header 原樣轉發，body 除了規則指定的 model 改寫之外一個字不動 —— 這條線就是你的訂閱。除非另外架了 Anthropic 前置，否則不要改。</span>
+        </label>
+        ${retryTune(S.config.passthrough.retry, ' data-scope="passthrough"')}
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="lbl">流量記錄落檔</span>
+        <span class="lbl" style="border:1px solid var(--prv);color:var(--prv);padding:2px 7px">改了要重啟</span></div>
+      <div class="panel-body grid">
+        <label class="fld wide"><span class="lbl">檔名・相對於 config.json 所在目錄・留空＝不落檔</span>
+          <input type="text" data-g="trafficLog.file" value="${esc(t.file)}" placeholder="traffic.log">
           <span class="hint">只有中繼資料，沒有 prompt；但含專案目錄與 session id，預設已進 .gitignore</span>
         </label>
-        <label class="field">輪替上限 (bytes)
-          <input type="number" min="10000" class="mono" data-g="trafficLog.maxBytes" value="${t.maxBytes}">
+        <label class="fld"><span class="lbl">輪替上限 (bytes)</span>
+          <input type="number" min="10000" data-g="trafficLog.maxBytes" value="${t.maxBytes}">
           <span class="hint">超過就輪替成 <code>.1</code>，只留一份舊的，磁碟最多佔兩倍</span>
         </label>
       </div>
     </section>
 
-    <section class="card">
-      <div class="card-head"><h3>請求上限</h3></div>
-      <label class="field">單一請求 body 上限 (bytes)
-        <input type="number" min="1000000" class="mono" data-g="maxRequestBytes" value="${S.config.maxRequestBytes}">
-        <span class="hint">router 為了能重送會把整包留在記憶體，這是防呆不是限流。1M context 的請求實測十幾 MB</span>
-      </label>
+    <section class="panel">
+      <div class="panel-head"><span class="lbl">請求上限</span></div>
+      <div class="panel-body">
+        <label class="fld" style="max-width:320px"><span class="lbl">單一請求 body 上限 (bytes)</span>
+          <input type="number" min="1000000" data-g="maxRequestBytes" value="${S.config.maxRequestBytes}">
+          <span class="hint">router 為了能重送會把整包留在記憶體，這是防呆不是限流。1M context 的請求實測十幾 MB</span>
+        </label>
+      </div>
     </section>`
 }
 
@@ -655,73 +1163,75 @@ function renderAdvanced() {
 function renderSetup() {
   const port = S.runtime.boundProxyPort
   return `
-    <section class="card">
-      <div class="card-head"><h3>1. 設定 Claude Code</h3></div>
-      <p>在 <code>~/.claude/settings.json</code>（Windows：<code>%USERPROFILE%\\.claude\\settings.json</code>）的 <code>env</code> 區塊加入：</p>
-      <pre id="snippet">{
+    <section class="panel">
+      <div class="panel-head"><span class="lbl">1・設定 Claude Code</span></div>
+      <div class="panel-body" style="display:flex;flex-direction:column;gap:12px">
+        <p style="margin:0">在 <code>~/.claude/settings.json</code>（Windows：<code>%USERPROFILE%\\.claude\\settings.json</code>）的 <code>env</code> 區塊加入：</p>
+        <pre id="snippet">{
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:${port}",
     "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
   }
 }</pre>
-      <p style="margin-bottom:0"><button class="btn tiny" data-act="copy">複製</button></p>
-      <div class="note warn" style="margin-top:14px">
-        <strong>絕對不要</strong>同時設 <code>ANTHROPIC_AUTH_TOKEN</code>、<code>ANTHROPIC_API_KEY</code> 或 <code>apiKeyHelper</code>。
-        官方文檔明載：只設 base URL 而不設憑證，claude.ai 訂閱登入會保留下來；一旦設了憑證，訂閱就整個被頂掉，全部流量改成按 token 計費。
+        <div><button class="btn" data-act="copy">複製</button></div>
+        <div class="marginal alarm"><i></i><div>
+          <strong>絕對不要</strong>同時設 <code>ANTHROPIC_AUTH_TOKEN</code>、<code>ANTHROPIC_API_KEY</code> 或 <code>apiKeyHelper</code>。
+          官方文檔明載：只設 base URL 而不設憑證，claude.ai 訂閱登入會保留下來；一旦設了憑證，訂閱就整個被頂掉，全部流量改成按 token 計費。
+        </div></div>
+        <span class="hint">
+          <code>CLAUDE_CODE_ATTRIBUTION_HEADER=0</code> 是選配。Claude Code 會在 system prompt 前面加一段 attribution block，只有 <code>api.anthropic.com</code> 會自動剝掉，第三方 provider 會把它當成 prompt 的一部分收下去。關掉比較乾淨。
+        </span>
       </div>
-      <p class="hint" style="margin-bottom:0">
-        <code>CLAUDE_CODE_ATTRIBUTION_HEADER=0</code> 是選配。Claude Code 會在 system prompt 前面加一段 attribution block，
-        只有 <code>api.anthropic.com</code> 會自動剝掉，第三方 provider 會把它當成 prompt 的一部分收下去。關掉比較乾淨。
-      </p>
     </section>
 
-    <section class="card">
-      <div class="card-head"><h3>2. 驗證訂閱還在</h3></div>
-      <p>重開 Claude Code，執行 <code>/status</code>，確認 <strong>Status</strong> 分頁上：</p>
-      <ul>
-        <li><code>Anthropic base URL</code> 那行出現，指向 <code>http://127.0.0.1:${port}</code></li>
-        <li>有 <code>Login method</code> 指向你的 claude.ai 帳號 —— <strong class="status-bad">不是</strong> <code>Auth token</code> 或 <code>API key</code></li>
-      </ul>
-      <p style="margin-bottom:0">看到 <code>Auth token</code> 就代表訂閱被頂掉了，回頭檢查有沒有殘留的環境變數。</p>
+    <section class="panel">
+      <div class="panel-head"><span class="lbl">2・驗證訂閱還在</span></div>
+      <div class="panel-body">
+        <p style="margin:0 0 8px">重開 Claude Code，執行 <code>/status</code>，確認 <strong>Status</strong> 分頁上：</p>
+        <ul style="margin:0 0 8px;padding-left:20px;line-height:1.8">
+          <li><code>Anthropic base URL</code> 那行出現，指向 <code>http://127.0.0.1:${port}</code></li>
+          <li>有 <code>Login method</code> 指向你的 claude.ai 帳號 —— <strong style="color:var(--alarm)">不是</strong> <code>Auth token</code> 或 <code>API key</code></li>
+        </ul>
+        <p style="margin:0">看到 <code>Auth token</code> 就代表訂閱被頂掉了，回頭檢查有沒有殘留的環境變數。</p>
+      </div>
     </section>
 
-    <section class="card">
-      <div class="card-head"><h3>3. 確認分流真的生效</h3></div>
-      <p style="margin-bottom:0">
-        在 Claude Code 裡叫一個子 agent 做任何事，然後回到<strong>流量記錄</strong>分頁。
-        主對話的請求「來源」欄應該是 <code>main</code>、導向 passthrough；子 agent 的是 <code>subagent</code>、導向你設定的 provider。
-      </p>
+    <section class="panel">
+      <div class="panel-head"><span class="lbl">3・確認分流真的生效</span></div>
+      <div class="panel-body">
+        <p style="margin:0">在 Claude Code 裡叫一個子 agent 做任何事，然後回到<strong>機架</strong>分頁。分流帶應該分成兩段：主對話的請求走 <code>SUB 訂閱</code>，子 agent 的走 <code>PRV</code> 你設定的 provider。</p>
+      </div>
     </section>
 
-    <section class="card">
-      <div class="card-head"><h3>已知限制</h3></div>
-      <ul style="margin-bottom:0">
-        <li>Anthropic 官方文檔明說不支援把 Claude Code 導到非 Claude 模型，壞了要自己修。</li>
-        <li>Claude Code v2.1.196 起，<code>ANTHROPIC_BASE_URL</code> 指向非 Anthropic host 時 <strong>Remote Control 會停用</strong>。</li>
-        <li><code>/fast</code> 的可用性檢查與 WebFetch 網域檢查直連 <code>api.anthropic.com</code>，不經過本 router。</li>
-        <li>Claude Code 每次升級都可能新增 body 欄位，第三方 provider 收到會回 400；照錯誤訊息把欄位名加進該 provider 的「移除的 body 欄位」即可。</li>
-        <li><code>/v1/messages/count_tokens</code> 若 provider 不支援會回 404，Claude Code 會自動退回用推論端點估算，不影響運作。</li>
-      </ul>
+    <section class="panel">
+      <div class="panel-head"><span class="lbl">已知限制</span></div>
+      <div class="panel-body">
+        <ul style="margin:0;padding-left:20px;line-height:1.8">
+          <li>Anthropic 官方文檔明說不支援把 Claude Code 導到非 Claude 模型，壞了要自己修。</li>
+          <li>Claude Code v2.1.196 起，<code>ANTHROPIC_BASE_URL</code> 指向非 Anthropic host 時 <strong>Remote Control 會停用</strong>。</li>
+          <li><code>/fast</code> 的可用性檢查與 WebFetch 網域檢查直連 <code>api.anthropic.com</code>，不經過本 router。</li>
+          <li>Claude Code 每次升級都可能新增 body 欄位，第三方 provider 收到會回 400；照錯誤訊息把欄位名加進該 provider 的「移除的 body 欄位」即可。</li>
+          <li><code>/v1/messages/count_tokens</code> 若 provider 不支援會回 404，Claude Code 會自動退回用推論端點估算，不影響運作。</li>
+        </ul>
+      </div>
     </section>`
 }
 
 // ── render / 事件 ─────────────────────────────────────────────────
+const VIEWS = { bay: renderBay, providers: renderProviders, rules: renderRules, logs: renderLogs, advanced: renderAdvanced, setup: renderSetup }
+
 function render() {
   document.querySelectorAll('nav button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === S.tab)))
   const view = $('#view')
-  if (!S.config) { view.innerHTML = '<div class="card empty">載入中…</div>'; return }
-  view.innerHTML = { providers: renderProviders, rules: renderRules, logs: renderLogs, advanced: renderAdvanced, setup: renderSetup }[S.tab]()
+  if (!S.config) { view.innerHTML = '<div class="panel"><div class="empty">載入中…</div></div>'; return }
+  view.innerHTML = VIEWS[S.tab]()
 }
 
 // 輸入時只更新 state，不重繪，避免游標跳走
 document.addEventListener('input', (ev) => {
   const el = ev.target
 
-  if (el.id === 'pt-base') {
-    S.config.passthrough.baseUrl = el.value
-    markDirty()
-    return
-  }
+  if (el.id === 'pt-base') { S.config.passthrough.baseUrl = el.value; markDirty(); return }
 
   // 進階分頁的全域設定：data-g="<群組>.<欄位>"，沒有點就是頂層欄位
   const g = el.dataset.g
@@ -767,6 +1277,23 @@ document.addEventListener('input', (ev) => {
     markDirty()
   }
 })
+
+/** 把一格 retry 覆寫的輸入寫回稀疏物件；清空就把那個鍵拿掉，全空就回到 null。 */
+function applyRetryInput(owner, key, el) {
+  const next = { ...(owner.retry ?? {}) }
+  if (el.value === '') delete next[key]
+  else if (key === 'retryRateLimit') next[key] = el.value === 'true'
+  else next[key] = Number(el.value)
+  owner.retry = Object.keys(next).length ? next : null
+}
+
+// 導向、啟用、比對條件改了要重繪：機架上的 HIT / SHDW 標記跟著變
+document.addEventListener('change', (ev) => {
+  const f = ev.target.dataset.f
+  if (!f || !ev.target.closest('[data-rid]')) return
+  if (['providerId', 'enabled', 'match'].includes(f)) render()
+})
+
 document.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('button')
   if (!btn) return
@@ -774,7 +1301,7 @@ document.addEventListener('click', async (ev) => {
   if (btn.dataset.tab) {
     S.tab = btn.dataset.tab
     render()
-    if (S.tab === 'logs') startLogPolling(); else stopLogPolling()
+    if (S.tab === 'logs' || S.tab === 'bay') startLogPolling(); else stopLogPolling()
     return
   }
 
@@ -782,9 +1309,16 @@ document.addEventListener('click', async (ev) => {
   if (!act) return
   const pid = btn.closest('[data-pid]')?.dataset.pid
   const rid = btn.closest('[data-rid]')?.dataset.rid
+  const eid = btn.closest('[data-eid]')?.dataset.eid
 
   try {
-    if (act === 'add-provider') {
+    if (act === 'toggle-strip') {
+      S.open = S.open === Number(eid) ? null : Number(eid)
+      render()
+    } else if (act === 'filter') {
+      S.logFilter = btn.dataset.key
+      render()
+    } else if (act === 'add-provider') {
       S.config.providers.push({
         id: 'p-' + Math.random().toString(36).slice(2, 10),
         label: '新 Provider', baseUrl: '', apiKey: '', model: '', authStyle: 'bearer',
@@ -812,6 +1346,20 @@ document.addEventListener('click', async (ev) => {
         ;[S.config.rules[i], S.config.rules[j]] = [S.config.rules[j], S.config.rules[i]]
         markDirty(); render()
       }
+    } else if (act === 'flip' || act === 'unflip') {
+      // 配額見底時最常做的動作，而且往往在 agent 正在跑的時候做 —— 所以直接存檔生效，
+      // 不讓它停在「未儲存」。還原點記在 S.flipBackup，按一下就換回去。
+      if (act === 'flip') {
+        S.flipBackup = S.config.rules.map((r) => ({ id: r.id, providerId: r.providerId }))
+        for (const r of S.config.rules) if (r.enabled && r.providerId !== 'passthrough') r.providerId = 'passthrough'
+      } else {
+        const back = new Map(S.flipBackup.map((b) => [b.id, b.providerId]))
+        for (const r of S.config.rules) if (back.has(r.id)) r.providerId = back.get(r.id)
+        S.flipBackup = null
+      }
+      applyState(await api('PUT', '/api/config', S.config))
+      render()
+      toast(act === 'flip' ? '所有子 agent 已交還給訂閱・下一個請求就改道' : '已重新收下子 agent')
     } else if (act === 'test') {
       const provider = S.config.providers.find((p) => p.id === pid)
       S.busy[pid] = true; render()
@@ -832,7 +1380,7 @@ document.addEventListener('click', async (ev) => {
       })
       render()
     } else if (act === 'clear-logs') {
-      await api('POST', '/api/logs/clear'); S.logs = []; render()
+      await api('POST', '/api/logs/clear'); S.logs = []; S.open = null; render()
     } else if (act === 'copy') {
       await navigator.clipboard.writeText($('#snippet').textContent)
       btn.textContent = '已複製'
@@ -860,7 +1408,8 @@ function startLogPolling() {
   const tick = async () => {
     try {
       S.logs = (await api('GET', '/api/logs')).entries
-      if (S.tab === 'logs') render()
+      if (S.tab === 'logs' || S.tab === 'bay') render()
+      for (const e of S.logs) SEEN.add(e.id)
     } catch {}
   }
   tick()
@@ -871,6 +1420,7 @@ function stopLogPolling() { if (logTimer) { clearInterval(logTimer); logTimer = 
 
 applyState(await api('GET', '/api/state'))
 render()
+startLogPolling()
 </script>
 </body>
 </html>

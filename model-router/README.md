@@ -30,10 +30,12 @@ npm start
 首次啟動會生出 `config.json`（已在 `.gitignore`），然後打開 <http://127.0.0.1:8788>：
 
 1. **Providers** 分頁填 Base URL、API Key、Model，按「執行測試」確認四項全過
-2. **路由規則** 分頁確認「所有子 agent → 你的 provider」
-3. **接入說明** 分頁複製 `settings.json` 片段，重開 Claude Code
+2. **路由** 分頁確認「所有子 agent → 你的 provider」
+3. **接入** 分頁複製 `settings.json` 片段，重開 Claude Code
 4. `/status` 確認 `Login method` 仍指向 claude.ai 帳號
-5. 叫個子 agent 幹活，回 **流量記錄** 分頁確認分流生效
+5. 叫個子 agent 幹活，回 **機架** 分頁看分流帶有沒有分成兩段
+
+GUI 有六個分頁：**機架**（總覽：分流比例、兩個席位的負載、最近的進條）、**Providers**、**路由**、**流量**（完整的進條機架）、**進階**、**接入**。
 
 ## 設定
 
@@ -86,7 +88,7 @@ npm start
 
 比「把規則停用」好的地方是規則排序還在：多條規則疊著時，停用會讓流量掉到下一條規則去，而不是掉回訂閱。明確指向 passthrough 才是真的擋在那裡。
 
-流量記錄的「導向」欄滑鼠移上去會顯示命中的規則 id，可以確認切過去的是哪一條，還是根本沒命中掉下來的。
+點開任何一張進條，「命中規則」那一行就寫著是哪一條吃下的，還是根本沒命中掉到底板。
 
 ### 讓子 agent 跑跟主對話不同的模型
 
@@ -151,7 +153,7 @@ router 只用一條 regex 挖出這行路徑，system prompt 的其他內容一�
 
 因此有一個已知空窗：**router 啟動後，某個 session 的主對話還沒發過任何請求，就先冒出子 agent 流量**，那幾筆的目錄欄會是 `–`。實務上主對話一定先講話，很難碰到。
 
-表格只顯示目錄名，滑鼠移上去看完整路徑。
+欄位只顯示目錄名，點開進條看完整路徑。
 
 ### 流量記錄會留在磁碟上
 
@@ -203,9 +205,9 @@ Anthropic 的 529、第三方的 5xx、還有連線被中間的東西掐掉，�
 
 長思考期間第三方可能一個 byte 都不吐，而 Claude Code 數的是位元組、靜默 300 秒就砍串流（undici 的 `bodyTimeout` 也是 300 秒）。官方 gateway protocol 要求 gateway 在這種時候自己發 `ping`，router 照做：上游安靜超過 60 秒就補一個 `event: ping`。
 
-只補在 **provider 那條線**。訂閱線的價值就是原始 bytes 原樣轉發，摻合成資料進去就不成立了，而且 Anthropic 本來就會自己 ping。補之前一定確認停在事件邊界 —— 上游的 chunk 不保證切在 frame 邊界上，插進半個事件中間會把整條串流弄壞。補了幾個看流量記錄狀態欄的 tooltip。
+只補在 **provider 那條線**。訂閱線的價值就是原始 bytes 原樣轉發，摻合成資料進去就不成立了，而且 Anthropic 本來就會自己 ping。補之前一定確認停在事件邊界 —— 上游的 chunk 不保證切在 frame 邊界上，插進半個事件中間會把整條串流弄壞。補了幾個，點開那張進條看「keep-alive」那一行。
 
-流量記錄的狀態欄會顯示 `200 ×3`：送出去三次才成功，而 Claude Code 那頭只看到一次乾淨的 200。滑鼠移上去看每一次的失敗原因。
+狀態欄會顯示 `200 ×3`：送出去三次才成功，而 Claude Code 那頭只看到一次乾淨的 200。批註欄直接寫著「router 自己重送 3 次才成功」，點開看每一次的失敗原因。
 
 串流轉發到一半才斷線沒辦法重送，但 router 會補一個合法的 SSE `error` 事件收尾，而不是把連線砍掉 —— 被砍斷的串流只會讓 Claude Code 說「回應可能不完整」，連原因都拿不到。
 
@@ -213,18 +215,18 @@ Anthropic 的 529、第三方的 5xx、還有連線被中間的東西掐掉，�
 
 畫面上那句 `Waiting for API response · will retry in 2m 26s · check your network` 只說了「在等」，沒說是誰擋的。答案在流量記錄的**狀態欄**：
 
-- 狀態是 `429` / `529` / `5xx` → **上游擋的**，router 只是照實轉發。滑鼠移上去看上游自己的說法（`rate_limit_error: …`、`overloaded_error: …`），以及 `retry-after` 與 `request-id`。
+- 狀態是 `429` / `529` / `5xx` → **上游擋的**，router 只是照實轉發。這種進條會被推出機架整格、加一圈朱紅框，批註欄寫著「上游擋的」；點開看上游自己的說法（`rate_limit_error: …`、`overloaded_error: …`），以及 `retry-after` 與 `request-id`。
 - 狀態欄直接寫著 `fetch failed` / `terminated` 這類文字 → **router 連不上上游**，client 收到的是 router 合成的 502。
 - `client aborted` → 是 Claude Code 自己收手（按了 esc、subagent 被取消、上一輪結束）。這不是錯誤。
 - **完全沒有對應的那一筆** → 請求根本沒送到 router，問題在 Claude Code 到 127.0.0.1 之間。
 
 上游**有給** `retry-after` 時，畫面上倒數的秒數就是它的值，所以狀態欄顯示 `429 ·146s 後重試` 而畫面寫 `will retry in 2m 26s` 是同一件事，不是 router 卡住。
 
-但訂閱線的 429 實測**不帶** `retry-after`（21 筆全部是空的），那時候畫面的倒數是 Claude Code 自己算的。這種情況下限流資訊在 `anthropic-ratelimit-*` 那組 header 上，router 會整組收進流量記錄：狀態欄改顯示 `429 ·3586s 後重置`，tooltip 裡有完整的鍵值。
+但訂閱線的 429 實測**不帶** `retry-after`（21 筆全部是空的），那時候畫面的倒數是 Claude Code 自己算的。這種情況下限流資訊在 `anthropic-ratelimit-*` 那組 header 上，router 會整組收進流量記錄：批註欄改寫「上游擋的・3586s 後重置」，點開進條的「限流」那一行有完整的鍵值。
 
-目錄欄是 `–` 時滑鼠移上去會顯示 **session id**；連 session id 都沒有，代表那筆根本不是 Claude Code 送來的，是別的東西打到了 router 的埠。
+目錄欄是 `–` 時，批註欄會寫「cwd 表還沒建立」；連 session id 都沒有時會改寫「沒有 session id・不是 Claude Code 送來的」—— 那筆是別的東西打到了 router 的埠。兩者都可以點開看 **session id** 那一行。
 
-路徑欄滑鼠移上去是**請求的形狀**（messages 幾則、有沒有 system、是不是串流、`max_tokens`）。用來認出那些沒有目錄的背景請求 —— 例如上下文壓縮這種沒有 Environment 區段的請求，光看目錄欄是 `–` 分不出來，看形狀就一眼認得。形狀只有數量與有無，不含任何內容。
+點開進條的「請求形狀」那一行是**請求的形狀**（messages 幾則、有沒有 system、是不是串流、`max_tokens`）。用來認出那些沒有目錄的背景請求 —— 例如上下文壓縮這種沒有 Environment 區段的請求，光看目錄欄是 `–` 分不出來，看形狀就一眼認得。形狀只有數量與有無，不含任何內容。
 
 ### 思考檔位（effort）會不會跟著過去
 
@@ -254,7 +256,7 @@ Anthropic 的 529、第三方的 5xx、還有連線被中間的東西掐掉，�
 
 單次波動不小（LLM 本來就隨機），但 `low` 與 `xhigh` 差 4～5 倍是穩定訊號。cliproxyapi 官方另外支援 model 名後綴語法（`kimi-k3(low)` / `kimi-k3(high)`），實測也有效，可以填在 `providers[].model` 當固定檔位用 —— 但那會蓋掉 `/effort`，一般不需要。
 
-流量記錄的**思考**欄會顯示每一筆的 effort，被剝掉時標成 `xhigh → 已移除`，不用猜。
+流量記錄的**思考**欄會顯示每一筆的 effort，被剝掉時標成 `xhigh → 已移除`（朱紅），批註欄同時寫著「/effort 被 dropFields 吃掉」，不用猜。
 
 ### DeepSeek 實測（2026-08，`deepseek-v4-pro`）
 
