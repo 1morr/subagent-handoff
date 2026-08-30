@@ -57,6 +57,14 @@ export function defaultRule(over = {}) {
     /** any | main | subagent | nested */
     match: 'subagent',
     modelGlob: '*',
+    /**
+     * 比對 `x-claude-code-agent-id`，支援 `*`。`*` = 不篩。
+     *
+     * 一般 subagent 的 id 是每次 spawn 重新產生的隨機值，篩不出東西；但官方文檔載明
+     * **agent team 的 teammate 會沿用由名字衍生的穩定 id**，所以這個欄位的用途是
+     * 按角色分流（例如某個 teammate 走便宜的 provider、另一個留在訂閱）。
+     */
+    agentIdGlob: '*',
     /** provider 的 id，或 PASSTHROUGH_ID＝導回訂閱。 */
     providerId: '',
     /** 空字串 = 不改寫。有值時蓋過 provider 自己的 model；指向 passthrough 時也照樣生效。 */
@@ -232,6 +240,7 @@ export function normalizeConfig(raw) {
           enabled: r.enabled !== false,
           match: MATCH_KINDS.includes(r.match) ? r.match : 'subagent',
           modelGlob: String(r.modelGlob ?? '*').trim() || '*',
+          agentIdGlob: String(r.agentIdGlob ?? '*').trim() || '*',
           providerId: String(r.providerId ?? '').trim(),
           modelOverride: String(r.modelOverride ?? '').trim(),
         }),

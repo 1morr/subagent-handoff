@@ -104,6 +104,9 @@ export function resolveRoute(config, ctx) {
     if (!rule.enabled) continue
     if (!kindMatches(rule.match, ctx)) continue
     if (!globMatch(rule.modelGlob, ctx.model)) continue
+    // agentId 是 null 的主對話永遠配不上非 `*` 的樣式，這正是想要的：
+    // 「按 agent 名字分流」的規則不該把主對話也捲進去
+    if (!globMatch(rule.agentIdGlob, ctx.agentId)) continue
     if (rule.providerId === PASSTHROUGH_ID) return { kind: 'passthrough', rule }
     const provider = config.providers.find((p) => p.id === rule.providerId)
     if (!provider) continue

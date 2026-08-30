@@ -76,17 +76,18 @@ export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
       }
 
       if (route === 'POST /api/routing/preview') {
-        const { kind = 'subagent', model = 'claude-opus-5', config } = await readJson(req)
+        const { kind = 'subagent', model = 'claude-opus-5', agentId = '', config } = await readJson(req)
         // 用前端當前（可能未儲存）的規則做預覽
         const effective = config ? fromClientConfig(config, getConfig()) : getConfig()
         const headers = {}
-        if (kind === 'subagent' || kind === 'nested') headers['x-claude-code-agent-id'] = 'preview-agent'
+        if (kind === 'subagent' || kind === 'nested') headers['x-claude-code-agent-id'] = agentId.trim() || 'preview-agent'
         if (kind === 'nested') headers['x-claude-code-parent-agent-id'] = 'preview-parent'
         const ctx = describeRequest(headers, { model })
         const decision = resolveRoute(effective, ctx)
         send(res, 200, {
           kind: ctx.kind,
           requestedModel: model,
+          agentId: ctx.agentId,
           target: decision.kind === 'provider' ? decision.provider.label : 'passthrough（訂閱）',
           providerId: decision.kind === 'provider' ? decision.provider.id : null,
           ruleId: decision.rule?.id ?? null,

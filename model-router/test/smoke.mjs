@@ -7,7 +7,7 @@ import path from 'node:path'
 import { after, before } from 'node:test'
 import {
   createProxyServer, TrafficLog, SessionCwd, rewriteBodyForProvider, rewriteModel,
-  summarizeUpstreamError, findStreamError, parseRetryAfter, retryDelay, sseError,
+  summarizeUpstreamError, findStreamError, parseRetryAfter, retryDelay, sseError, collectRateLimit,
 } from '../src/proxy.mjs'
 import { globMatch, describeRequest, resolveRoute, resolveModel, resolveRetryPolicy, extractCwd, PASSTHROUGH_ID } from '../src/routing.mjs'
 import { normalizeConfig, defaultProvider, defaultRule, toClientConfig, fromClientConfig, KEEP_SECRET } from '../src/config.mjs'
@@ -53,6 +53,17 @@ before(async () => {
         type: 'error',
         error: { type: 'rate_limit_error', message: 'Number of request tokens has exceeded your rate limit' },
       }))
+      return
+    }
+
+    // 訂閱線實際看到的 429：沒有 retry-after，限流資訊在 anthropic-ratelimit-* 上
+    if (req.url.includes('fail=ratelimit')) {
+      res.writeHead(429, {
+        'content-type': 'application/json',
+        'anthropic-ratelimit-unified-status': 'rejected',
+        'anthropic-ratelimit-unified-reset': '1756598400',
+      })
+      res.end(JSON.stringify({ type: 'error', error: { type: 'rate_limit_error', message: 'Error' } }))
       return
     }
 
@@ -1123,4 +1134,63 @@ test('provider 可以自己把重送整組關掉', async () => {
     provider.retry = null
     failPlan = []
   }
+})
+
+test('上游的 anthropic-ratelimit-* header 進到流量記錄', async () => {
+  const res = await post(SUBSCRIPTION_HEADERS, BASE_BODY, 'fail=ratelimit')
+  assert.equal(res.status, 429)
+  await res.text()
+
+  const entry = logStore.list()[0]
+  assert.equal(entry.retryAfter, null, '這批 429 就是不帶 retry-after，才需要另一組 header')
+  assert.deepEqual(entry.rateLimit, {
+    'unified-status': 'rejected',
+    'unified-reset': '1756598400',
+  }, '沒有這個，流量記錄答不出「什麼時候恢復」')
+})
+
+test('collectRateLimit 沒有相關 header 時回 null，不留空物件', () => {
+  assert.equal(collectRateLimit(new Headers({ 'content-type': 'application/json' })), null)
+})
+
+// ── 依 agent 身分分流 ──────────────────────────────────────────────
+
+test('agentIdGlob 篩得出 teammate，主對話永遠不會被捲進去', () => {
+  const cfg = normalizeConfig({
+    providers: [defaultProvider({ id: 'cheap', baseUrl: 'https://x.test' })],
+    rules: [defaultRule({ id: 'r-explore', match: 'any', agentIdGlob: 'Explore*', providerId: 'cheap' })],
+  })
+
+  const hit = describeRequest({ 'x-claude-code-agent-id': 'Explore-1' }, {})
+  assert.equal(resolveRoute(cfg, hit).kind, 'provider')
+
+  const miss = describeRequest({ 'x-claude-code-agent-id': 'Plan-1' }, {})
+  assert.equal(resolveRoute(cfg, miss).kind, 'passthrough', '名字對不上就落到下一條')
+
+  const main = describeRequest({}, {})
+  assert.equal(resolveRoute(cfg, main).kind, 'passthrough', '主對話沒有 agent-id，不該被 agent 規則命中')
+})
+
+test('agentIdGlob 預設 * 不影響任何既有規則', () => {
+  const cfg = normalizeConfig({
+    providers: [defaultProvider({ id: 'k', baseUrl: 'https://x.test' })],
+    rules: [defaultRule({ id: 'r', match: 'subagent', providerId: 'k' })],
+  })
+  assert.equal(cfg.rules[0].agentIdGlob, '*')
+  assert.equal(resolveRoute(cfg, describeRequest({ 'x-claude-code-agent-id': 'whatever' }, {})).kind, 'provider')
+})
+
+test('規則預覽吃得下 agentId', async () => {
+  const { json } = await adminApi('POST', '/api/routing/preview', {
+    kind: 'subagent',
+    model: 'claude-opus-5',
+    agentId: 'Explore-7',
+    config: {
+      ...toClientConfig(config),
+      rules: [defaultRule({ id: 'r-x', match: 'subagent', agentIdGlob: 'Explore*', providerId: 'kimi' })],
+    },
+  })
+  assert.equal(json.agentId, 'Explore-7')
+  assert.equal(json.ruleId, 'r-x')
+  assert.equal(json.target, 'Kimi')
 })
