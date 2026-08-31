@@ -1,0 +1,23 @@
+name: test
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 作者在 Windows 上開發，多數使用者不是 —— 兩邊都跑，路徑與換行的差異才會早點暴露
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # 沒有任何 npm 依賴，所以不裝東西也不需要 lockfile 快取
+      - run: npm test

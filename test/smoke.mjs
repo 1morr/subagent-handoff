@@ -12,7 +12,9 @@ import {
   createPinger,
 } from '../src/proxy.mjs'
 import { globMatch, describeRequest, resolveRoute, resolveModel, resolveRetryPolicy, extractCwd, PASSTHROUGH_ID } from '../src/routing.mjs'
-import { normalizeConfig, defaultProvider, defaultRule, toClientConfig, fromClientConfig, KEEP_SECRET } from '../src/config.mjs'
+import {
+  normalizeConfig, defaultConfig, defaultProvider, defaultRule, toClientConfig, fromClientConfig, KEEP_SECRET,
+} from '../src/config.mjs'
 import { runProbes } from '../src/probe.mjs'
 import { createAdminServer } from '../src/admin.mjs'
 import { createFileSink } from '../src/logfile.mjs'
@@ -483,7 +485,7 @@ test('串流開到一半斷線時，補一個合法的 SSE error 事件收尾', 
   const text = await res.text()
   assert.match(text, /message_start/, '已經送到 client 的部分要保留')
   assert.match(text, /event: error/, '斷掉的串流要有收尾 —— 只是被切斷的話 client 連為什麼都拿不到')
-  assert.match(text, /model-router/)
+  assert.match(text, /subagent-handoff/)
 })
 
 test('findStreamError 吃得下 fetch 吐出來的 Uint8Array', () => {
@@ -534,7 +536,7 @@ test('請求走完才落檔，落下去的 entry 已經是完整的', async () =
 })
 
 test('落檔是一行一筆 NDJSON，超過上限就輪替並只留一份舊的', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'model-router-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'subagent-handoff-'))
   const file = path.join(dir, 'traffic.log')
   try {
     const sink = createFileSink({ file, maxBytes: 200 })
@@ -693,11 +695,11 @@ test('extractCwd 從 system prompt 的 Environment 區段挖出 cwd', () => {
     {
       type: 'text',
       text: '# Environment\nYou have been invoked in the following environment:\n'
-        + ' - Primary working directory: C:\\Users\\Roxy\\orca\\projects\\bridge\n'
+        + ' - Primary working directory: C:\\Users\\dev\\code\\bridge\n'
         + ' - Is a git repository: true\n - Platform: win32\n',
     },
   ]
-  assert.equal(extractCwd({ system }), 'C:\\Users\\Roxy\\orca\\projects\\bridge')
+  assert.equal(extractCwd({ system }), 'C:\\Users\\dev\\code\\bridge')
   assert.equal(extractCwd({ system: '- Primary working directory: /home/x/proj' }), '/home/x/proj')
   assert.equal(extractCwd({ system: [{ type: 'text', text: '沒有環境區段' }] }), null)
   assert.equal(extractCwd({}), null)
@@ -719,6 +721,22 @@ test('describeRequest 抽出 effort 與 thinking 型態', () => {
 test('預設 provider 不剝除任何欄位', () => {
   assert.deepEqual(defaultProvider().dropFields, [], '預設剝除會讓 /effort 靜默失效')
   assert.deepEqual(normalizeConfig({ providers: [{ id: 'p', baseUrl: 'https://x' }] }).providers[0].dropFields, [])
+})
+
+test('開箱的預設設定一筆流量都不改道 —— 分流要等使用者填完 key 自己打開', () => {
+  const cfg = normalizeConfig(defaultConfig())
+  const main = describeRequest({}, { model: 'claude-opus-5' })
+  const sub = describeRequest({ 'x-claude-code-agent-id': 'a' }, { model: 'claude-sonnet-5' })
+
+  assert.equal(resolveRoute(cfg, main).kind, 'passthrough')
+  // 預設 provider 沒有 API key，這條規則要是開著，子 agent 會整批撞 401
+  assert.equal(resolveRoute(cfg, sub).kind, 'passthrough', '預設規則必須是關的')
+  assert.equal(cfg.providers[0].apiKey, '', '預設不得內建任何憑證')
+
+  // 打開之後才分流 —— 確認關的是規則本身，不是規則寫錯了配不上
+  cfg.rules[0].enabled = true
+  assert.equal(resolveRoute(cfg, sub).kind, 'provider')
+  assert.equal(resolveRoute(cfg, main).kind, 'passthrough', '主對話永遠留在訂閱')
 })
 
 test('subagent 規則涵蓋巢狀，nested 規則不涵蓋第一層', () => {

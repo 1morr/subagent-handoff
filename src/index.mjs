@@ -6,6 +6,13 @@ import { createFileSink } from './logfile.mjs'
 
 const HOST = '127.0.0.1'
 
+// package.json 的 engines 只有 npm 在 engine-strict 下才會擋，直接 `node src/index.mjs` 不會。
+// 舊 Node 的失敗點在第一次呼叫 fetch（連通性測試或轉發時）才炸，訊息完全指不回版本。
+if (Number(process.versions.node.split('.')[0]) < 20) {
+  console.error(`✗ subagent-handoff 需要 Node 20 以上，目前是 ${process.version}`)
+  process.exit(1)
+}
+
 let config = await loadConfig()
 
 // 路徑相對於設定檔，而不是啟動時的工作目錄 —— 從哪裡 npm start 都寫到同一個地方
@@ -77,7 +84,7 @@ try {
 }
 
 console.log(`
-  model-router 已啟動
+  subagent-handoff 已啟動
 
   Proxy   http://${HOST}:${config.proxyPort}
   GUI     http://${HOST}:${config.adminPort}

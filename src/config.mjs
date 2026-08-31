@@ -135,7 +135,13 @@ export function defaultConfig() {
      */
     passthrough: { baseUrl: 'https://api.anthropic.com', retry: { retryRateLimit: false } },
     providers: [kimi],
-    rules: [defaultRule({ id: 'r-subagent', match: 'subagent', providerId: 'kimi' })],
+    /**
+     * 預設那條規則**是關的**。首次啟動時 provider 還沒有 API key，開著就等於把每一個
+     * 子 agent 請求送去 Moonshot 拿 401 —— 而且是在使用者剛把 ANTHROPIC_BASE_URL 指過來、
+     * 最不知道該懷疑誰的時候。關著的話開箱狀態是「全部走訂閱」，跟沒裝這個 router 一樣，
+     * 填完 key 再自己把規則打開，分流才開始。
+     */
+    rules: [defaultRule({ id: 'r-subagent', enabled: false, match: 'subagent', providerId: 'kimi' })],
     retry: defaultRetry(),
     trafficLog: defaultTrafficLog(),
   }

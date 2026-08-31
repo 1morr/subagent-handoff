@@ -1,7 +1,17 @@
+# 內含 API key，永遠不要提交
+config.json
+
+# 儲存設定時的暫存檔，正常會被 rename 掉；程式中途被砍才會留下
+config.json.*.tmp
+
+# 流量記錄的落檔，內含專案目錄與 session id
+traffic.log
+traffic.log.1
+
 # Claude Code 本地設定：內含機器專屬的 router 位址，不進版控
 .claude/
 
 # impeccable / design canvas 的產出物：可從 design/*.dc.html 重新 seed 出來
-design/model-router-console.html
+design/subagent-handoff-console.html
 .impeccable/review/
 .impeccable/questions/

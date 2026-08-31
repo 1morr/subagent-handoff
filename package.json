@@ -1,0 +1,32 @@
+{
+  "name": "subagent-handoff",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Route Claude Code subagent traffic to third-party providers while the main session stays on the claude.ai subscription",
+  "keywords": [
+    "claude-code",
+    "anthropic",
+    "llm-gateway",
+    "proxy",
+    "subagent",
+    "model-routing"
+  ],
+  "homepage": "https://github.com/1morr/subagent-handoff#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/1morr/subagent-handoff.git"
+  },
+  "bugs": {
+    "url": "https://github.com/1morr/subagent-handoff/issues"
+  },
+  "license": "MIT",
+  "author": "1morr",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "test": "node --test test/smoke.mjs"
+  }
+}

@@ -1,8 +1,13 @@
-# model-router
+# subagent-handoff
 
 讓 Claude Code 的**主對話留在 claude.ai 訂閱**，同時把**子 agent 的流量分流到第三方 provider**（Kimi、GLM、DeepSeek 或任何提供 Anthropic Messages 格式端點的服務）。附 Web GUI，可以隨時換 base URL / API key，並在切過去之前先測通不通。
 
 主要用途：ultracode / Workflow 一次展開幾十個子 agent，很容易撞到 5 小時限制。把子 agent 丟給便宜的 provider，主對話的推理品質不受影響。
+
+> **非官方工具**，與 Anthropic PBC 無隸屬、未經其背書或贊助。第三方 provider 的用量由你自己的
+> API key 付帳 —— 本工具不修改、不偽造任何計費身分，也不繞過任何一方的用量限制。官方明說
+> **不支援**把 Claude Code 導到非 Claude 模型（見[已知限制](#已知限制)），壞了要自己修。
+> 使用前請自行確認符合你與各 provider 的服務條款。風險自負。
 
 ## 為什麼這行得通
 
@@ -23,14 +28,19 @@ Claude Code 官方 [LLM gateway 文檔](https://code.claude.com/docs/en/llm-gate
 需要 Node 20+（開發時用 v24）。無任何 npm 依賴。
 
 ```bash
-cd model-router
+git clone https://github.com/1morr/subagent-handoff.git
+cd subagent-handoff
 npm start
 ```
 
-首次啟動會生出 `config.json`（已在 `.gitignore`），然後打開 <http://127.0.0.1:8788>：
+首次啟動會生出 `config.json`（已在 `.gitignore`）。**開箱狀態不分流任何東西** ——
+預設那條「所有子 agent」的規則是**關的**，因為 provider 還沒有 key，開著只會讓子 agent
+整批撞 401。填完 key 再自己打開，分流才開始。
+
+打開 <http://127.0.0.1:8788>：
 
 1. **Providers** 分頁填 Base URL、API Key、Model，按「執行測試」確認四項全過
-2. **路由** 分頁確認「所有子 agent → 你的 provider」
+2. **路由** 分頁把「所有子 agent → 你的 provider」那條規則**打勾啟用**（左邊的標記從 `OFF` 變成 `HIT`，代表在預覽條件下就是這條吃下請求）
 3. **接入** 分頁複製 `settings.json` 片段，重開 Claude Code
 4. `/status` 確認 `Login method` 仍指向 claude.ai 帳號
 5. 叫個子 agent 幹活，回 **機架** 分頁看分流帶有沒有分成兩段
@@ -144,7 +154,7 @@ header 裡**沒有** cwd（實測 v2.1.227 的 21 個 header 全查過），唯�
 ```
 # Environment
 You have been invoked in the following environment:
- - Primary working directory: C:\Users\Roxy\orca\projects\bridge
+ - Primary working directory: C:\Users\dev\code\bridge
 ```
 
 router 只用一條 regex 挖出這行路徑，system prompt 的其他內容一概不留 —— 測試裡有一條斷言守著這件事。
@@ -359,6 +369,11 @@ GUI 上每個 provider 都能一鍵測，對應 Claude Code 實際會用到、�
 
 - [`docs/refactor-2026-08.md`](docs/refactor-2026-08.md) —— 2026-08 那次重構的前後對照：
   補上的本機來源守衛、依路由分開的重試策略、以及每項改動背後的實測數據。
+- [`PRODUCT.md`](PRODUCT.md) —— 產品事實：使用者、使用時機、術語、技術約束、已知限制。
+- [`DESIGN.md`](DESIGN.md) —— 視覺系統：色彩、字體、狀態的三個冗餘通道、資訊架構。
+- [`design/`](design/) —— 介面設計稿，`.dc.html` artboard 可以直接用瀏覽器開。
+
+改介面之前先讀 `PRODUCT.md` 與 `DESIGN.md` —— 兩份都是規格，不是筆記。
 
 ## 測試
 
@@ -367,3 +382,8 @@ npm test
 ```
 
 煙霧測試會起一個假上游，驗證路由決策、body 改寫、header 處理與 SSE 串流不被緩衝，不會對外連線。
+CI 在 Linux 與 Windows × Node 20 / 22 / 24 上跑同一份。
+
+## 授權
+
+[MIT](LICENSE)

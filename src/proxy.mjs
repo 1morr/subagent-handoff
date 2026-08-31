@@ -332,7 +332,7 @@ export function createPinger(res, idleMs = PING_IDLE_MS) {
 export function sseError(message) {
   const payload = JSON.stringify({
     type: 'error',
-    error: { type: 'api_error', message: `model-router: ${message}` },
+    error: { type: 'api_error', message: `subagent-handoff: ${message}` },
   })
   return `event: error\ndata: ${payload}\n\n`
 }
@@ -442,7 +442,7 @@ export function createProxyServer(getConfig, log) {
       res.end(
         JSON.stringify({
           type: 'error',
-          error: { type: 'invalid_request_error', message: `model-router: ${tooLarge}` },
+          error: { type: 'invalid_request_error', message: `subagent-handoff: ${tooLarge}` },
         }),
         // 剩下的 body 還在路上，回應 flush 完才切線 —— 早切會連 413 都送不到
         () => req.destroy(),
@@ -606,7 +606,7 @@ export function createProxyServer(getConfig, log) {
         res.end(
           JSON.stringify({
             type: 'error',
-            error: { type: 'api_error', message: `model-router: ${entry.error}` },
+            error: { type: 'api_error', message: `subagent-handoff: ${entry.error}` },
           }),
         )
       } else if (sse && !res.writableEnded) {

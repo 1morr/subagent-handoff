@@ -50,7 +50,7 @@ export function rejectForeignOrigin(res) {
       type: 'error',
       error: {
         type: 'permission_error',
-        message: 'model-router: 只接受本機來源的請求（Origin / Host 檢查未通過）',
+        message: 'subagent-handoff: 只接受本機來源的請求（Origin / Host 檢查未通過）',
       },
     }),
   )

@@ -46,8 +46,8 @@
 <div style="min-height: 1120px; display: flex; flex-direction: column; background: #1b1f26">
 
   <div style="display: flex; align-items: baseline; gap: 22px; padding: 16px 28px 14px; border-bottom: 1px solid #2b323c">
-    <span class="sign" style="font-size: 21px; letter-spacing: .10em; color: #dfe3e8">model-router</span>
-    <span class="num" style="font-size: 11px; color: #8b939f">PROXY 8788 · GUI 8788 · model-router\config.json</span>
+    <span class="sign" style="font-size: 21px; letter-spacing: .10em; color: #dfe3e8">subagent-handoff</span>
+    <span class="num" style="font-size: 11px; color: #8b939f">PROXY 8788 · GUI 8788 · config.json</span>
     <span style="flex: 1"></span>
     <span class="lbl" style="color: #8b939f">每 3 秒更新・只記中繼資料</span>
   </div>
@@ -183,13 +183,13 @@ class Component extends DCLogic {
         status: '200', ms: '1.9s', effort: 'xhigh', state: 'ok',
         lines: [['命中規則', 'rule-2 · 所有子 agent · model * · agent * → kimi'],
                 ['請求形狀', '18 則 messages · 有 system · 串流 · max_tokens 32000'],
-                ['完整目錄', 'C:\\Users\\Roxy\\orca\\projects\\bridge']] },
+                ['完整目錄', 'C:\\Users\\dev\\code\\bridge']] },
       { id: 'q2', margin: '', sector: 'SUB', time: '22:14:05', kind: 'main', cwd: 'bridge',
         reqModel: 'claude-opus-5', sentModel: 'claude-opus-5', rewritten: false,
         status: '200', ms: '3.2s', effort: 'xhigh', state: 'ok',
         lines: [['命中規則', '無規則命中 · 掉回 passthrough，由訂閱付帳'],
                 ['請求形狀', '44 則 messages · 有 system · 串流 · max_tokens 64000'],
-                ['完整目錄', 'C:\\Users\\Roxy\\orca\\projects\\bridge']] },
+                ['完整目錄', 'C:\\Users\\dev\\code\\bridge']] },
       { id: 'q3', margin: '上游擋的・重送 3 次全敗', sector: 'SUB', time: '22:13:58', kind: 'main', cwd: 'bridge',
         reqModel: 'claude-opus-5', sentModel: 'claude-opus-5', rewritten: false,
         status: '429 ×3', ms: '9.4s', effort: 'xhigh', state: 'fail',
@@ -222,19 +222,19 @@ class Component extends DCLogic {
         status: '200', ms: '0.9s', effort: 'low', state: 'ok',
         lines: [['命中規則', 'rule-2 · 這是 agent 開的 agent，帶著 parent header'],
                 ['請求形狀', '6 則 messages · 有 system · 串流 · max_tokens 8192'],
-                ['完整目錄', 'C:\\Users\\Roxy\\orca\\projects\\bridge']] },
+                ['完整目錄', 'C:\\Users\\dev\\code\\bridge']] },
       { id: 'q8', margin: '不是錯誤・Claude Code 自己收手', sector: 'SUB', time: '22:13:04', kind: 'main', cwd: 'bridge',
         reqModel: 'claude-opus-5', sentModel: 'claude-opus-5', rewritten: false,
         status: 'client aborted', ms: '0.4s', effort: 'xhigh', state: 'attn',
         lines: [['不是錯誤', 'Claude Code 自己收手 —— 按了 esc、subagent 被取消，或上一輪結束'],
                 ['已寫出', '尚未寫出任何 byte 給 client'],
-                ['完整目錄', 'C:\\Users\\Roxy\\orca\\projects\\bridge']] },
-      { id: 'q9', margin: '200 但串流裡夾著 error 事件', sector: 'PRV', time: '22:12:47', kind: 'subagent', cwd: 'orca-web',
+                ['完整目錄', 'C:\\Users\\dev\\code\\bridge']] },
+      { id: 'q9', margin: '200 但串流裡夾著 error 事件', sector: 'PRV', time: '22:12:47', kind: 'subagent', cwd: 'web-app',
         reqModel: 'claude-sonnet-5', sentModel: 'kimi-k3', rewritten: true,
         status: '200 ⚠', ms: '4.1s', effort: 'xhigh', state: 'attn',
         lines: [['看起來成功、其實沒有', '狀態 200，但串流裡夾著 error 事件 —— 這種不塗綠'],
                 ['串流內容', 'event: error · overloaded_error 出現在第 41 個事件之後'],
-                ['完整目錄', 'C:\\Users\\Roxy\\orca\\projects\\orca-web']] },
+                ['完整目錄', 'C:\\Users\\dev\\code\\web-app']] },
     ]
   }
 

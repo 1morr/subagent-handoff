@@ -69,8 +69,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 
   <!-- 標題塊：席位名牌與綁定資訊，不是導覽列 -->
   <div style="display: flex; align-items: baseline; gap: 22px; padding: 16px 28px 14px; border-bottom: 1px solid #2b323c">
-    <span class="sign" style="font-size: 21px; letter-spacing: .10em; color: #dfe3e8">model-router</span>
-    <span class="num" style="font-size: 11px; color: #8b939f">PROXY 8788 · GUI 8788 · model-router\config.json</span>
+    <span class="sign" style="font-size: 21px; letter-spacing: .10em; color: #dfe3e8">subagent-handoff</span>
+    <span class="num" style="font-size: 11px; color: #8b939f">PROXY 8788 · GUI 8788 · config.json</span>
     <span style="flex: 1"></span>
     <span class="lbl" style="color: #8b939f">設定已儲存</span>
   </div>
@@ -245,12 +245,12 @@ class Component extends DCLogic {
         status: '200', ms: '1.9s', effort: 'xhigh', state: 'ok',
         lines: [['命中規則', 'rule-2 · 所有子 agent → kimi'],
                 ['請求形狀', '18 則 messages · 有 system · 串流 · max_tokens 32000'],
-                ['完整目錄', 'C:\\Users\\Roxy\\orca\\projects\\bridge']] },
+                ['完整目錄', 'C:\\Users\\dev\\code\\bridge']] },
       { id: 'r2', margin: '', sector: 'SUB', time: '22:14:05', kind: 'main', cwd: 'bridge', model: 'claude-opus-5',
         status: '200', ms: '3.2s', effort: 'xhigh', state: 'ok',
         lines: [['命中規則', '無規則命中 · 掉回 passthrough'],
                 ['請求形狀', '44 則 messages · 有 system · 串流 · max_tokens 64000'],
-                ['完整目錄', 'C:\\Users\\Roxy\\orca\\projects\\bridge']] },
+                ['完整目錄', 'C:\\Users\\dev\\code\\bridge']] },
       { id: 'r3', margin: '上游擋的・3586s 後重置', sector: 'SUB', time: '22:13:58', kind: 'main', cwd: 'bridge', model: 'claude-opus-5',
         status: '429', ms: '9.4s', effort: 'xhigh', state: 'fail',
         lines: [['上游說法', 'rate_limit_error: This request would exceed your organization rate limit'],

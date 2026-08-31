@@ -1,5 +1,5 @@
 {
-  "title": "選一個視覺世界：model-router",
+  "title": "選一個視覺世界：subagent-handoff",
   "question": "這是一次「替換視覺世界」的重設計，不是打磨現有外觀。骰子指派了「航管進程條」。鎖定它、換一張、或重擲。",
   "options": [
     {

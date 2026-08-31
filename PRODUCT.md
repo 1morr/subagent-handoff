@@ -55,14 +55,14 @@ web
 
 ## Brand Commitments
 
-- 名稱 `model-router`，全小寫。
+- 名稱 `subagent-handoff`，全小寫。
 - 介面語言繁體中文，技術術語（`passthrough`、`subagent`、`max_tokens`、header 名）保留原文不翻。
 - 語氣：實測導向、講原因不講口號。現有文案大量出現「實測」「原因是」「代價是」，並且會主動說出取捨與已知空窗，例如「router 啟動後某個 session 的主對話還沒發過請求就先冒出子 agent 流量，那幾筆的目錄欄會是 –」。這個誠實的語氣是產品的一部分。
 
 ## Evidence on Hand
 
-- `model-router/README.md`（27KB，繁體中文）：完整的機制說明、實測數據、每個欄位的理由。
-- `model-router/traffic.log`（1.6MB NDJSON）：真實流量樣本，含 `target` / `status` / `attempts` / `rateLimit` / `effort` 等實際欄位形狀。
+- `README.md`（27KB，繁體中文）：完整的機制說明、實測數據、每個欄位的理由。
+- `traffic.log`（1.6MB NDJSON）：真實流量樣本，含 `target` / `status` / `attempts` / `rateLimit` / `effort` 等實際欄位形狀。
 - 實測數據（README 記載，可引用）：一份 2711 筆的流量記錄裡 22 筆觸發重試，全部在訂閱線、全部是 429、全部三次都失敗、`retry-after` 一個都沒有；同期第三方線 1668 筆，0 個 5xx、0 個連線錯誤。
 - header 行為實測基準版本：Claude Code v2.1.227。
 
