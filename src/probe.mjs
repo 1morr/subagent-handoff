@@ -66,7 +66,7 @@ async function testConnectivity(provider, model) {
   return {
     ok: true,
     ms: Date.now() - started,
-    detail: `上游回報 model=${json.model ?? '?'}・回覆 ${JSON.stringify(text.slice(0, 40))}・in ${
+    detail: `upstream reported model=${json.model ?? '?'} · reply ${JSON.stringify(text.slice(0, 40))} · in ${
       json.usage?.input_tokens ?? '?'
     } / out ${json.usage?.output_tokens ?? '?'} tokens`,
   }
@@ -86,7 +86,7 @@ async function testStreaming(provider, model) {
     return {
       ok: false,
       ms: Date.now() - started,
-      error: `content-type 是 ${contentType || '(空)'}，不是 text/event-stream，上游沒有真的串流`,
+      error: `content-type is ${contentType || '(empty)'}, not text/event-stream — upstream did not actually stream`,
     }
   }
 
@@ -117,8 +117,8 @@ async function testStreaming(provider, model) {
   return {
     ok: sawDelta && sawStop,
     ms: Date.now() - started,
-    detail: `首位元組 ${firstByteMs}ms・${bytes} bytes・events: ${[...events].join(', ') || '(無)'}`,
-    error: sawDelta && sawStop ? undefined : '缺少 content_block_delta 或 message_stop 事件',
+    detail: `first byte ${firstByteMs}ms · ${bytes} bytes · events: ${[...events].join(', ') || '(none)'}`,
+    error: sawDelta && sawStop ? undefined : 'missing content_block_delta or message_stop event',
   }
 }
 
@@ -147,9 +147,9 @@ async function testTools(provider, model) {
     ok: Boolean(toolUse),
     ms: Date.now() - started,
     detail: toolUse
-      ? `呼叫了 ${toolUse.name}(${JSON.stringify(toolUse.input)})・stop_reason=${json.stop_reason}`
-      : `stop_reason=${json.stop_reason}，沒有 tool_use block`,
-    error: toolUse ? undefined : '上游沒有發出工具呼叫，Claude Code 在這個 provider 上會無法運作',
+      ? `called ${toolUse.name}(${JSON.stringify(toolUse.input)}) · stop_reason=${json.stop_reason}`
+      : `stop_reason=${json.stop_reason}, no tool_use block`,
+    error: toolUse ? undefined : 'upstream did not issue a tool call — Claude Code will not work on this provider',
   }
 }
 
@@ -183,7 +183,7 @@ async function testEffort(provider, model) {
     return {
       ok: false,
       ms: Date.now() - started,
-      error: 'dropFields 含 output_config，/effort 會在送出前被剝掉，對這個 provider 完全失效',
+      error: 'dropFields includes output_config, so /effort gets stripped before sending — it is fully disabled for this provider',
     }
   }
 
@@ -203,29 +203,31 @@ async function testEffort(provider, model) {
     return {
       ok: false,
       ms,
-      detail: `${EFFORT_LEVELS.length - rejected.length}/${EFFORT_LEVELS.length} 個檔位可用`,
+      detail: `${EFFORT_LEVELS.length - rejected.length}/${EFFORT_LEVELS.length} levels usable`,
       error: rejected[0],
     }
   }
-  return { ok: true, ms, detail: `五個檔位全數接受（${EFFORT_LEVELS.join(' / ')}）` }
+  return { ok: true, ms, detail: `all five levels accepted (${EFFORT_LEVELS.join(' / ')})` }
 }
 
+// label 是英文預設值；GUI 是雙語的，實際顯示時 app.js 會照這裡的 id 去 i18n 目錄查表，
+// 不吃這個欄位 —— label 只是給還沒套用 i18n 的呼叫端（例如日後的 CLI）當保底。
 const TESTS = {
-  connectivity: { label: '基本推論', run: testConnectivity },
-  streaming: { label: 'SSE 串流', run: testStreaming },
-  tools: { label: '工具呼叫', run: testTools },
-  effort: { label: '思考檔位', run: testEffort },
+  connectivity: { label: 'Basic inference', run: testConnectivity },
+  streaming: { label: 'SSE streaming', run: testStreaming },
+  tools: { label: 'Tool calling', run: testTools },
+  effort: { label: 'Thinking effort', run: testEffort },
 }
 
 export const TEST_IDS = Object.keys(TESTS)
 
 export async function runProbes(provider, { model, tests = TEST_IDS } = {}) {
   const target = (model ?? '').trim() || provider.model
-  if (!provider.baseUrl) return { model: target, results: [{ id: 'config', label: '設定', ok: false, error: '沒有填 Base URL' }] }
+  if (!provider.baseUrl) return { model: target, results: [{ id: 'config', label: 'Config', ok: false, error: 'Base URL is not set' }] }
   if (!target) {
     return {
       model: target,
-      results: [{ id: 'config', label: '設定', ok: false, error: '沒有 model 名可測，請在 provider 或測試欄位填一個' }],
+      results: [{ id: 'config', label: 'Config', ok: false, error: 'no model name to test — fill one in on the provider or the test field' }],
     }
   }
 
@@ -237,7 +239,7 @@ export async function runProbes(provider, { model, tests = TEST_IDS } = {}) {
       const outcome = await test.run(provider, target)
       results.push({ id, label: test.label, ...outcome })
     } catch (err) {
-      const message = err.name === 'TimeoutError' ? `逾時（>${TIMEOUT_MS / 1000}s）` : String(err.message ?? err)
+      const message = err.name === 'TimeoutError' ? `timed out (>${TIMEOUT_MS / 1000}s)` : String(err.message ?? err)
       results.push({ id, label: test.label, ok: false, error: message })
     }
   }
