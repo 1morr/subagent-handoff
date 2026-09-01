@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { once } from 'node:events'
-import { describeRequest, resolveModel, resolveRetryPolicy, resolveRoute } from './routing.mjs'
+import { describeRequest, resolveModel, resolveRetryPolicy, resolveRoute, PASSTHROUGH_LABEL, NOT_SENT_LABEL } from './routing.mjs'
 import { isLocalRequest, rejectForeignOrigin } from './guard.mjs'
 
 /** fetch 會自動解壓，所以 content-encoding 一定要拿掉，否則 client 會二次解壓。 */
@@ -192,9 +192,12 @@ export function findStreamError(chunk) {
  * 兩條線都值得重送的狀態：上游自己出錯（5xx）或明講「現在別來」（503 / 529）。
  * 其餘 4xx 是請求本身的問題，重送幾次都一樣。
  *
+ * 409 刻意不在這裡：那是狀態衝突，重送通常解決不了同一個衝突，而且實測 Anthropic
+ * Messages API 根本不會回這個狀態碼。
+ *
  * 節流（429）不在這裡，因為它該不該重送取決於是誰擋的 —— 見 isRetryable。
  */
-export const RETRYABLE_STATUS = new Set([408, 409, 500, 502, 503, 504, 529])
+export const RETRYABLE_STATUS = new Set([408, 500, 502, 503, 504, 529])
 
 /**
  * 這個狀態在這條路由上該不該重送。
@@ -343,7 +346,7 @@ async function readBody(req, limit) {
   for await (const chunk of req) {
     size += chunk.length
     // 超過就當場停手，不要先收完再抱怨 —— 那樣記憶體已經被吃掉了
-    if (size > limit) throw Object.assign(new Error(`request body 超過上限 ${limit} bytes`), { code: 'BODY_TOO_LARGE' })
+    if (size > limit) throw Object.assign(new Error(`request body exceeds the ${limit} byte limit`), { code: 'BODY_TOO_LARGE' })
     chunks.push(chunk)
   }
   return Buffer.concat(chunks)
@@ -385,240 +388,314 @@ function baseEntry(req, ctx, over) {
 }
 
 /**
- * @param {() => object} getConfig 每次請求都重新取，所以 GUI 改完設定即時生效（改 port 除外）
+ * 所有並發請求疊起來的 body 量體上限。單筆已經有 `config.maxRequestBytes` 把關，
+ * 但那只擋得住一個壞掉的 client；十個並發的 15MB 子 agent 請求疊起來，
+ * 讀進來的 body、JSON.parse 出的物件圖、重新序列化的 Buffer 加總照樣有機會把
+ * 記憶體吃到見底。這裡用宣告的 `content-length` 提前把關，超過就直接 503，
+ * 連 body 都不讀 —— 不像單筆上限那樣要先收完一部分才能判斷。
  */
-export function createProxyServer(getConfig, log) {
+const DEFAULT_MAX_IN_FLIGHT_BYTES = 256 * 1024 * 1024
+
+/**
+ * @param {() => object} getConfig 每次請求都重新取，所以 GUI 改完設定即時生效（改 port 除外）
+ * @param {import('./proxy.mjs').TrafficLog} log
+ * @param {object} [options]
+ * @param {() => { boundProxyPort: number }} [options.getRuntime] 回報**實際綁定**的埠；
+ *   不給的話退回讀 `config.proxyPort`，但那在使用者改埠又還沒重啟時會跟真正綁定的埠不一致。
+ * @param {number} [options.pingIdleMs] 覆寫 PING_IDLE_MS，測試用來不必真的等 60 秒
+ * @param {number} [options.maxInFlightBytes] 覆寫並發量體上限，測試用
+ */
+export function createProxyServer(getConfig, log, options = {}) {
+  const {
+    getRuntime = () => ({ boundProxyPort: getConfig().proxyPort }),
+    pingIdleMs = PING_IDLE_MS,
+    maxInFlightBytes = DEFAULT_MAX_IN_FLIGHT_BYTES,
+  } = options
   const sessionCwd = new SessionCwd()
+  // 這台 server 收到的所有請求共用同一個量體預算，不是每筆各自的上限
+  let inFlightBytes = 0
 
   return http.createServer(async (req, res) => {
-    const config = getConfig()
-
-    // 這條線握有第三方的 API key。DNS rebinding 之後網頁就能自己補上 agent-id header
-    // 命中分流規則，拿你的額度去跑推論，所以來源檢查要在做任何事之前
-    if (!isLocalRequest(req, config.proxyPort)) {
-      rejectForeignOrigin(res)
-      return
-    }
-
-    // Claude Code 的連線預熱探針，回什麼都行
-    if (req.method === 'HEAD' && req.url.startsWith('/api/hello')) {
-      res.writeHead(200).end()
-      return
-    }
-
-    const started = Date.now()
-
-    let raw = Buffer.alloc(0)
-    let tooLarge = null
+    let reserved = 0
     try {
-      raw = await readBody(req, config.maxRequestBytes)
-    } catch (err) {
-      if (err.code !== 'BODY_TOO_LARGE') {
-        // client 在送 body 的途中就走了。拿一個空 body 往上游打一次註定 400 的請求
-        // 只是白費一次來回 —— 已經沒有人在等這個回應了
-        const ctx = describeRequest(req.headers, null)
-        log.finish(log.start(baseEntry(req, ctx, {
-          cwd: sessionCwd.lookup(ctx.sessionId),
-          target: '未送出',
-          ms: Date.now() - started,
-          error: `讀取 request body 失敗：${err.message}`,
-        })))
-        res.destroy()
-        return
-      }
-      tooLarge = err.message
-    }
+      const config = getConfig()
 
-    if (tooLarge) {
-      const ctx = describeRequest(req.headers, null)
-      log.finish(log.start(baseEntry(req, ctx, {
-        cwd: sessionCwd.lookup(ctx.sessionId),
-        target: '未送出',
-        status: 413,
-        ms: Date.now() - started,
-        error: tooLarge,
-      })))
-      res.writeHead(413, { 'content-type': 'application/json' })
-      res.end(
-        JSON.stringify({
-          type: 'error',
-          error: { type: 'invalid_request_error', message: `subagent-handoff: ${tooLarge}` },
-        }),
-        // 剩下的 body 還在路上，回應 flush 完才切線 —— 早切會連 413 都送不到
-        () => req.destroy(),
-      )
-      return
-    }
-
-    let payload = null
-    if (raw.length) {
-      try {
-        payload = JSON.parse(raw.toString('utf8'))
-      } catch {
-        payload = null
-      }
-    }
-
-    const ctx = describeRequest(req.headers, payload)
-    sessionCwd.remember(ctx.sessionId, ctx.cwd)
-    const cwd = ctx.cwd ?? sessionCwd.lookup(ctx.sessionId)
-    // 只有 messages 類請求值得改寫；其餘（/v1/models 等）一律原樣過去
-    const routable = req.url.startsWith('/v1/messages') && payload !== null
-    const route = routable ? resolveRoute(config, ctx) : { kind: 'passthrough', rule: null }
-    const sentModel = routable ? resolveModel(route, ctx.model) : ctx.model
-
-    let target
-    let headers
-    let outBody = raw
-    let changes = []
-    // 實際送出去的 effort。被 dropFields 拿掉時會是 null，跟 ctx.effort 一比就知道降級了
-    let sentEffort = ctx.effort
-
-    if (route.kind === 'provider') {
-      const rewritten = rewriteBodyForProvider(payload, route.provider, sentModel)
-      changes = rewritten.changes
-      sentEffort = rewritten.body?.output_config?.effort ?? null
-      outBody = Buffer.from(JSON.stringify(rewritten.body))
-      headers = buildProviderHeaders(req.headers, route.provider)
-      target = route.provider.baseUrl + req.url
-    } else {
-      // 訂閱這條線預設連 JSON 都不重新序列化，只有規則指名要換 model 時才動 body
-      const rewritten = rewriteModel(payload, sentModel)
-      changes = rewritten.changes
-      if (changes.length) outBody = Buffer.from(JSON.stringify(rewritten.body))
-      headers = buildPassthroughHeaders(req.headers)
-      target = config.passthrough.baseUrl + req.url
-    }
-
-    // sessionId：cwd 認不出來時，它是唯一還能分辨「這筆是誰送的」的線索
-    const entry = log.start(baseEntry(req, ctx, {
-      cwd,
-      target: route.kind === 'provider' ? route.provider.label : 'passthrough（訂閱）',
-      // label 會被使用者改名，分類要看 id。null = 走訂閱那條線
-      providerId: route.kind === 'provider' ? route.provider.id : null,
-      ruleId: route.rule?.id ?? null,
-      sentModel,
-      sentEffort,
-      changes,
-    }))
-
-    const ac = new AbortController()
-    // client 斷線時 res 會 close 而此時還沒 end，這是唯一需要的訊號。
-    // req 的 'aborted' 在 Node 20+ 已 deprecated，而且講的是同一件事。
-    res.on('close', () => {
-      if (!res.writableEnded) ac.abort()
-    })
-
-    // 每條路由各自的 retry policy：全域打底，provider / passthrough 的覆寫蓋上去
-    const policy = resolveRetryPolicy(config, route)
-    // 上游是不是串流：串流斷掉時的收尾方式跟一般回應不一樣
-    let sse = false
-    let pinger = null
-
-    try {
-      const init = {
-        method: req.method,
-        headers,
-        body: req.method === 'GET' || req.method === 'HEAD' ? undefined : outBody,
-        signal: ac.signal,
-        redirect: 'manual',
-      }
-
-      /**
-       * 重送只可能發生在這個迴圈裡：請求 body 完整留在 outBody，而且一個 byte 都還沒寫給 client，
-       * 所以重送是安全的。出了迴圈就開始寫回應，寫下去就不能重來了。
-       */
-      let upstream = null
-      for (let attempt = 1; ; attempt++) {
-        entry.attempts = attempt
-        let failure = null
-        let retryAfter = null
-
-        try {
-          upstream = await fetch(target, init)
-          if (!isRetryable(upstream.status, policy)) break
-          failure = String(upstream.status)
-          retryAfter = upstream.headers.get('retry-after')
-        } catch (err) {
-          if (err.name === 'AbortError') throw err
-          upstream = null
-          failure = String(err.message ?? err)
-        }
-
-        const wait = attempt > policy.attempts ? null : retryDelay(retryAfter, attempt, policy)
-        if (wait == null) {
-          // 不再重送：拿得到回應就原樣交回去，連回應都沒有就只能讓外層合成 502
-          if (!upstream) throw new Error(failure)
-          break
-        }
-
-        // 失敗回應的 body 一定要排掉，否則這條連線不會被回收
-        await upstream?.body?.cancel().catch(() => {})
-        entry.retries.push(failure)
-        await sleep(wait, ac.signal)
-      }
-
-      entry.status = upstream.status
-      entry.retryAfter = upstream.headers.get('retry-after')
-      entry.rateLimit = collectRateLimit(upstream.headers)
-      entry.requestId = upstream.headers.get('request-id') ?? upstream.headers.get('x-request-id')
-
-      const outHeaders = {}
-      upstream.headers.forEach((value, key) => {
-        if (!HOP_BY_HOP.has(key.toLowerCase())) outHeaders[key] = value
-      })
-      sse = (upstream.headers.get('content-type') ?? '').includes('event-stream')
-      res.writeHead(upstream.status, outHeaders)
-      res.flushHeaders()
-
-      // 錯誤回應不是串流，而且一定很小。整包收下來才記得住「為什麼失敗」，再原樣轉出去
-      if (upstream.status >= 400) {
-        const failure = Buffer.from(await upstream.arrayBuffer())
-        entry.detail = summarizeUpstreamError(failure)
-        res.end(failure)
+      // 這條線握有第三方的 API key。DNS rebinding 之後網頁就能自己補上 agent-id header
+      // 命中分流規則，拿你的額度去跑推論，所以來源檢查要在做任何事之前。
+      // 用的是實際綁定的埠，不是 config.proxyPort —— 使用者在 GUI 改埠但還沒重啟時，
+      // 兩者會不一樣，這裡要信的是真正在監聽的那個。
+      if (!isLocalRequest(req, getRuntime().boundProxyPort)) {
+        rejectForeignOrigin(res)
         return
       }
 
-      // 逐塊寫出，不緩衝：Claude Code 會數 SSE 位元組，靜默 300 秒就中斷串流
-      // 標記有可能被切在兩塊之間，所以每塊都帶上一塊的尾巴一起看
-      let carry = Buffer.alloc(0)
-      if (sse && route.kind === 'provider') pinger = createPinger(res)
-      if (upstream.body) {
-        for await (const chunk of upstream.body) {
-          pinger?.saw(chunk)
-          if (sse && entry.detail === null) {
-            const window = carry.length ? Buffer.concat([carry, chunk]) : chunk
-            entry.detail = findStreamError(window)
-            // 留夠長的尾巴，讓跨塊的標記還找得到它所屬事件的開頭大括號
-            carry = window.subarray(Math.max(0, window.length - CARRY_BYTES))
-          }
-          if (res.destroyed) break
-          // 一定要帶 signal：client 中途離開時 res 不見得會發 error，
-          // 沒有 signal 的話這個 await 永遠等不到 drain，上游那條串流就跟著卡著不放
-          if (!res.write(chunk)) await once(res, 'drain', { signal: ac.signal })
-        }
+      // Claude Code 的連線預熱探針，回什麼都行
+      if (req.method === 'HEAD' && req.url.startsWith('/api/hello')) {
+        res.writeHead(200).end()
+        return
       }
-      res.end()
-    } catch (err) {
-      entry.error = err.name === 'AbortError' ? 'client aborted' : String(err.message ?? err)
-      if (!res.headersSent) {
-        res.writeHead(502, { 'content-type': 'application/json' })
+
+      // 總量閘門：宣告的長度會讓這台 server 的在途量體超過預算就直接拒收，
+      // 不讀 body 就能判斷，不必先把記憶體吃下去才發現太多。
+      const declared = Number(req.headers['content-length'])
+      reserved = Number.isFinite(declared) && declared > 0 ? declared : 0
+      if (inFlightBytes + reserved > maxInFlightBytes) {
+        res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5' })
         res.end(
           JSON.stringify({
             type: 'error',
-            error: { type: 'api_error', message: `subagent-handoff: ${entry.error}` },
+            error: {
+              type: 'overloaded_error',
+              message: 'subagent-handoff: too much in-flight request data, try again shortly',
+            },
           }),
         )
-      } else if (sse && !res.writableEnded) {
-        res.write(sseError(entry.error))
-        res.end()
+        req.destroy()
+        reserved = 0
+        return
+      }
+      inFlightBytes += reserved
+
+      const started = Date.now()
+
+      let raw = Buffer.alloc(0)
+      let tooLarge = null
+      try {
+        raw = await readBody(req, config.maxRequestBytes)
+      } catch (err) {
+        if (err.code !== 'BODY_TOO_LARGE') {
+          // client 在送 body 的途中就走了。拿一個空 body 往上游打一次註定 400 的請求
+          // 只是白費一次來回 —— 已經沒有人在等這個回應了
+          const ctx = describeRequest(req.headers, null)
+          log.finish(log.start(baseEntry(req, ctx, {
+            cwd: sessionCwd.lookup(ctx.sessionId),
+            target: NOT_SENT_LABEL,
+            ms: Date.now() - started,
+            error: `failed to read request body: ${err.message}`,
+          })))
+          res.destroy()
+          return
+        }
+        tooLarge = err.message
+      }
+
+      if (tooLarge) {
+        const ctx = describeRequest(req.headers, null)
+        log.finish(log.start(baseEntry(req, ctx, {
+          cwd: sessionCwd.lookup(ctx.sessionId),
+          target: NOT_SENT_LABEL,
+          status: 413,
+          ms: Date.now() - started,
+          error: tooLarge,
+        })))
+        res.writeHead(413, { 'content-type': 'application/json' })
+        res.end(
+          JSON.stringify({
+            type: 'error',
+            error: { type: 'invalid_request_error', message: `subagent-handoff: ${tooLarge}` },
+          }),
+          // 剩下的 body 還在路上，回應 flush 完才切線 —— 早切會連 413 都送不到
+          () => req.destroy(),
+        )
+        return
+      }
+
+      let payload = null
+      if (raw.length) {
+        try {
+          payload = JSON.parse(raw.toString('utf8'))
+        } catch {
+          payload = null
+        }
+      }
+
+      const ctx = describeRequest(req.headers, payload)
+      sessionCwd.remember(ctx.sessionId, ctx.cwd)
+      const cwd = ctx.cwd ?? sessionCwd.lookup(ctx.sessionId)
+      // 只有 messages 類請求值得改寫；其餘（/v1/models 等）一律原樣過去
+      const routable = req.url.startsWith('/v1/messages') && payload !== null
+      const route = routable ? resolveRoute(config, ctx) : { kind: 'passthrough', rule: null }
+      const sentModel = routable ? resolveModel(route, ctx.model) : ctx.model
+
+      let target
+      let headers
+      let outBody = raw
+      let changes = []
+      // 實際送出去的 effort。被 dropFields 拿掉時會是 null，跟 ctx.effort 一比就知道降級了
+      let sentEffort = ctx.effort
+
+      if (route.kind === 'provider') {
+        const rewritten = rewriteBodyForProvider(payload, route.provider, sentModel)
+        changes = rewritten.changes
+        sentEffort = rewritten.body?.output_config?.effort ?? null
+        outBody = Buffer.from(JSON.stringify(rewritten.body))
+        headers = buildProviderHeaders(req.headers, route.provider)
+        target = route.provider.baseUrl + req.url
       } else {
+        // 訂閱這條線預設連 JSON 都不重新序列化，只有規則指名要換 model 時才動 body
+        const rewritten = rewriteModel(payload, sentModel)
+        changes = rewritten.changes
+        if (changes.length) outBody = Buffer.from(JSON.stringify(rewritten.body))
+        headers = buildPassthroughHeaders(req.headers)
+        target = config.passthrough.baseUrl + req.url
+      }
+
+      // sessionId：cwd 認不出來時，它是唯一還能分辨「這筆是誰送的」的線索
+      const entry = log.start(baseEntry(req, ctx, {
+        cwd,
+        target: route.kind === 'provider' ? route.provider.label : PASSTHROUGH_LABEL,
+        // label 會被使用者改名，分類要看 id。null = 走訂閱那條線
+        providerId: route.kind === 'provider' ? route.provider.id : null,
+        ruleId: route.rule?.id ?? null,
+        sentModel,
+        sentEffort,
+        changes,
+      }))
+
+      const ac = new AbortController()
+      // client 斷線時 res 會 close 而此時還沒 end，這是唯一需要的訊號。
+      // req 的 'aborted' 在 Node 20+ 已 deprecated，而且講的是同一件事。
+      res.on('close', () => {
+        if (!res.writableEnded) ac.abort()
+      })
+
+      // 每條路由各自的 retry policy：全域打底，provider / passthrough 的覆寫蓋上去
+      const policy = resolveRetryPolicy(config, route)
+      // 上游是不是串流：串流斷掉時的收尾方式跟一般回應不一樣
+      let sse = false
+      let pinger = null
+
+      try {
+        const init = {
+          method: req.method,
+          headers,
+          body: req.method === 'GET' || req.method === 'HEAD' ? undefined : outBody,
+          signal: ac.signal,
+          redirect: 'manual',
+        }
+
+        /**
+         * 重送只可能發生在這個迴圈裡：請求 body 完整留在 outBody，而且一個 byte 都還沒寫給 client，
+         * 所以重送是安全的。出了迴圈就開始寫回應，寫下去就不能重來了。
+         */
+        let upstream = null
+        for (let attempt = 1; ; attempt++) {
+          entry.attempts = attempt
+          let failure = null
+          let retryAfter = null
+
+          try {
+            upstream = await fetch(target, init)
+            if (!isRetryable(upstream.status, policy)) break
+            failure = String(upstream.status)
+            retryAfter = upstream.headers.get('retry-after')
+          } catch (err) {
+            if (err.name === 'AbortError') throw err
+            upstream = null
+            failure = String(err.message ?? err)
+          }
+
+          const wait = attempt > policy.attempts ? null : retryDelay(retryAfter, attempt, policy)
+          if (wait == null) {
+            // 不再重送了：這次失敗也要留底，不然重送鏈的記錄會少最後一筆
+            entry.retries.push(failure)
+            // 拿得到回應就原樣交回去，連回應都沒有就只能讓外層合成 502
+            if (!upstream) throw new Error(failure)
+            break
+          }
+
+          // 失敗回應的 body 一定要排掉，否則這條連線不會被回收
+          await upstream?.body?.cancel().catch(() => {})
+          entry.retries.push(failure)
+          await sleep(wait, ac.signal)
+        }
+
+        entry.status = upstream.status
+        entry.retryAfter = upstream.headers.get('retry-after')
+        entry.rateLimit = collectRateLimit(upstream.headers)
+        entry.requestId = upstream.headers.get('request-id') ?? upstream.headers.get('x-request-id')
+
+        const outHeaders = {}
+        upstream.headers.forEach((value, key) => {
+          if (!HOP_BY_HOP.has(key.toLowerCase())) outHeaders[key] = value
+        })
+        sse = (upstream.headers.get('content-type') ?? '').includes('event-stream')
+        res.writeHead(upstream.status, outHeaders)
+        res.flushHeaders()
+
+        // 錯誤回應不是串流，而且一定很小。整包收下來才記得住「為什麼失敗」，再原樣轉出去
+        if (upstream.status >= 400) {
+          const failure = Buffer.from(await upstream.arrayBuffer())
+          entry.detail = summarizeUpstreamError(failure)
+          res.end(failure)
+          return
+        }
+
+        // 逐塊寫出，不緩衝：Claude Code 會數 SSE 位元組，靜默 300 秒就中斷串流
+        // 標記有可能被切在兩塊之間，所以每塊都帶上一塊的尾巴一起看
+        let carry = Buffer.alloc(0)
+        if (sse && route.kind === 'provider') pinger = createPinger(res, pingIdleMs)
+        if (upstream.body) {
+          for await (const chunk of upstream.body) {
+            pinger?.saw(chunk)
+            if (sse && entry.detail === null) {
+              const window = carry.length ? Buffer.concat([carry, chunk]) : chunk
+              entry.detail = findStreamError(window)
+              // 留夠長的尾巴，讓跨塊的標記還找得到它所屬事件的開頭大括號。
+              // 複製一份小的，不要 subarray 整塊上游 chunk —— 那會讓幾 MB 的
+              // 底層記憶體只因為留著 ~1KB 尾巴就一路活到下一個標記出現。
+              carry = Buffer.from(window.subarray(Math.max(0, window.length - CARRY_BYTES)))
+            }
+            if (res.destroyed) break
+            // 一定要帶 signal：client 中途離開時 res 不見得會發 error，
+            // 沒有 signal 的話這個 await 永遠等不到 drain，上游那條串流就跟著卡著不放
+            if (!res.write(chunk)) await once(res, 'drain', { signal: ac.signal })
+          }
+        }
+        res.end()
+      } catch (err) {
+        entry.error = err.name === 'AbortError' ? 'client aborted' : String(err.message ?? err)
+        if (!res.headersSent) {
+          res.writeHead(502, { 'content-type': 'application/json' })
+          res.end(
+            JSON.stringify({
+              type: 'error',
+              error: { type: 'api_error', message: `subagent-handoff: ${entry.error}` },
+            }),
+          )
+        } else if (sse && !res.writableEnded) {
+          res.write(sseError(entry.error))
+          res.end()
+        } else {
+          res.destroy()
+        }
+      } finally {
+        entry.pings = pinger?.stop() ?? 0
+        entry.ms = Date.now() - started
+        log.finish(entry)
+      }
+    } catch (err) {
+      // 保底：這條線服務機器上**所有**的 Claude Code session，上面任何一段沒接住的例外
+      // 都會變成 unhandled rejection，Node 20+ 預設會直接砍掉整個process —— 一次意外
+      // 就切斷所有還在跑的 session。這裡接住，記一筆錯誤，讓 process 活著。
+      console.error(`✗ unexpected proxy error: ${err?.stack ?? err}`)
+      try {
+        if (!res.headersSent) {
+          res.writeHead(500, { 'content-type': 'application/json' })
+          res.end(
+            JSON.stringify({
+              type: 'error',
+              error: { type: 'api_error', message: 'subagent-handoff: unexpected internal error, check the server log' },
+            }),
+          )
+        } else if (!res.writableEnded) {
+          res.destroy()
+        }
+      } catch {
         res.destroy()
       }
     } finally {
-      entry.pings = pinger?.stop() ?? 0
-      entry.ms = Date.now() - started
-      log.finish(entry)
+      inFlightBytes -= reserved
     }
   })
 }
