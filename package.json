@@ -27,6 +27,7 @@
   },
   "scripts": {
     "start": "node src/index.mjs",
-    "test": "node --test test/smoke.mjs"
+    "test": "node --test test/admin.test.mjs test/config.test.mjs test/guard.test.mjs test/logfile.test.mjs test/probe.test.mjs test/proxy-retry.test.mjs test/proxy-streaming.test.mjs test/routing.test.mjs",
+    "demo": "node scripts/demo.mjs"
   }
 }
