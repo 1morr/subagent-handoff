@@ -356,12 +356,14 @@ function toast(message, kind = '') {
 
 function markDirty() {
   S.dirty = true
+  S.preview = null
   $('#save').disabled = false
   $('#dirty-note').textContent = '有未儲存的變更'
 }
 
 function applyState(payload) {
   S.config = payload.config
+  S.preview = null
   S.runtime = payload.runtime
   S.dirty = false
   $('#save').disabled = true
@@ -901,13 +903,7 @@ const MATCH_LABELS = {
   nested: '只有巢狀子 agent',
 }
 
-/** 這一筆會不會命中這條規則。跟 routing.mjs 同一套語意，用來在機架上標出被遮住的規則。 */
-function globHit(pattern, value) {
-  if (!pattern || pattern === '*') return true
-  if (!value) return false
-  const rx = new RegExp('^' + pattern.split('*').map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$')
-  return rx.test(value)
-}
+const KIND_LABELS = { main: '主對話', subagent: '子 agent', nested: '巢狀子 agent' }
 
 function renderRules() {
   const targetOpts = (sel) => `
@@ -916,15 +912,13 @@ function renderRules() {
     ${S.config.providers.map((p) =>
       `<option value="${esc(p.id)}" ${p.id === sel ? 'selected' : ''}>PRV ${esc(p.label)}</option>`).join('')}`
 
-  // 預覽條件下，第一條命中的規則吃下這筆，它下面的全部被遮住
-  const agentId = S.pvKind === 'main' ? '' : S.pvAgent
-  let hitAt = -1
-  const hits = S.config.rules.map((r, i) => {
-    const ok = r.enabled && (r.match === 'any' || r.match === S.pvKind)
-      && globHit(r.modelGlob, S.pvModel) && globHit(r.agentIdGlob ?? '*', agentId)
-    if (ok && hitAt < 0) hitAt = i
-    return ok
-  })
+  // 機架上的 HIT / SHDW 是「跑過一次預覽」的結果，不是規則自身的狀態 —— 沒預覽過就一條都不標，
+  // 否則一進來就看到第一條被點亮、其餘壓暗，會讀成「下面那幾條不會生效」。
+  // 命中哪一條交給後端的預覽端點（跟真正轉發同一份 resolveRoute），前端不另寫一份比對邏輯。
+  const sim = S.preview
+  const hitAt = sim ? S.config.rules.findIndex((r) => r.id === sim.ruleId) : -1
+  // 一條都沒命中，這一筆就是落在底板上 —— 那時候被標起來的是底板
+  const baseHit = !!sim && hitAt < 0
 
   const rows = S.config.rules.map((r, i) => {
     const isHit = i === hitAt
@@ -934,7 +928,7 @@ function renderRules() {
     <div class="clearance ${isHit ? 'hit' : ''} ${shadowed ? 'shadowed' : ''}" data-rid="${esc(r.id)}">
       <div class="ord">
         <b>${i + 1}</b>
-        <span>${isHit ? 'HIT' : shadowed ? 'SHDW' : r.enabled ? 'PASS' : 'OFF'}</span>
+        <span>${!r.enabled ? 'OFF' : isHit ? 'HIT' : shadowed ? 'SHDW' : sim ? 'PASS' : 'ON'}</span>
       </div>
       <div class="say">
         <div class="line">
@@ -968,16 +962,24 @@ function renderRules() {
     <section class="fld" style="gap:12px">
       <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
         <span class="lbl">排程順序</span>
-        <span class="hint">由上而下取第一條命中的；下面被遮住的那幾條這一筆用不到</span>
+        <span class="hint">${!sim ? '由上而下取第一條命中的。想知道某一筆走哪條，跑一次下面的排程預覽'
+          : baseHit ? '這一筆沒有任何規則吃下，落到最底下的機架底板'
+          : '這一筆由 HIT 那條吃下，SHDW 那幾條這一筆用不到'}</span>
         <span class="spacer"></span>
+        ${sim ? `
+        <span class="sign" style="font-size:10px;color:var(--on-bay);border:1px solid var(--rail-lit);padding:3px 7px">模擬中</span>
+        <span class="hint">${esc(KIND_LABELS[sim.kind] ?? sim.kind)}・<code>${esc(sim.requestedModel)}</code>${
+          sim.agentId ? `・<code>${esc(sim.agentId)}</code>` : ''}</span>
+        <button class="btn tiny" data-act="clear-preview">清除模擬</button>` : ''}
         <button class="btn" data-act="add-rule">${ICON.plus} 新增規則</button>
       </div>
       <div class="rack" style="padding:4px 20px 4px 4px">
         ${rows || '<div class="empty">沒有規則，所有流量都走訂閱。</div>'}
-        <div class="clearance" style="opacity:${hitAt < 0 ? 1 : .4}">
-          <div class="ord" style="background:var(--rail)">
+        <div class="clearance ${baseHit ? 'hit' : ''}" style="opacity:${hitAt < 0 ? 1 : .4}">
+          <div class="ord" style="background:${baseHit ? 'var(--sub)' : 'var(--rail)'}">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M2 11h12M8 2v7M5 6l3 3 3-3" stroke="var(--on-bay-dim)" stroke-width="1.4" stroke-linecap="square"/>
+              <path d="M2 11h12M8 2v7M5 6l3 3 3-3" stroke="${baseHit ? '#10161a' : 'var(--on-bay-dim)'}"
+                    stroke-width="1.4" stroke-linecap="square"/>
             </svg>
           </div>
           <div style="background:#20262e;border:1px dashed var(--rail-lit);border-left:0;display:flex;
@@ -1006,10 +1008,11 @@ function renderRules() {
     </section>
 
     <section class="panel">
-      <div class="panel-head"><span class="lbl">排程預覽</span><span class="hint">不必真的 spawn 一個</span></div>
+      <div class="panel-head"><span class="lbl">排程預覽</span><span class="hint">${
+        pv ? '上面的排程順序已標出這一筆走哪條' : '不必真的 spawn 一個'}</span></div>
       <div class="panel-body" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
         <label class="fld"><span class="lbl">請求來源</span>
-          <select id="pv-kind">${[['main', '主對話'], ['subagent', '子 agent'], ['nested', '巢狀子 agent']]
+          <select id="pv-kind">${Object.entries(KIND_LABELS)
             .map(([k, v]) => `<option value="${k}" ${S.pvKind === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
         </label>
         <label class="fld" style="flex:1;min-width:180px"><span class="lbl">請求的 model</span>
@@ -1026,7 +1029,8 @@ function renderRules() {
           <span class="tab ${pv.providerId ? 'prv' : 'sub'}"><span class="code">${pv.providerId ? 'PRV' : 'SUB'}</span></span>
           <span class="body" style="padding:10px 13px">
             <dl style="margin:0;display:grid;grid-template-columns:80px 1fr;gap:3px 10px">
-              <dt class="lbl" style="color:#8f8878">判定為</dt><dd style="margin:0;font:11.5px var(--data);color:#3c4149">${esc(pv.kind)}</dd>
+              <dt class="lbl" style="color:#8f8878">判定為</dt><dd style="margin:0;font:11.5px var(--data);color:#3c4149">${
+                esc(KIND_LABELS[pv.kind] ?? pv.kind)}</dd>
               <dt class="lbl" style="color:#8f8878">導向</dt><dd style="margin:0;font:11.5px var(--data);color:var(--ink)">${esc(pv.target)}</dd>
               <dt class="lbl" style="color:#8f8878">實送 model</dt><dd style="margin:0;font:11.5px var(--data);color:var(--ink)">${
                 pv.requestedModel === pv.sentModel ? esc(pv.sentModel) : `${esc(pv.requestedModel)} → ${esc(pv.sentModel)}`}</dd>
@@ -1287,7 +1291,7 @@ function applyRetryInput(owner, key, el) {
   owner.retry = Object.keys(next).length ? next : null
 }
 
-// 導向、啟用、比對條件改了要重繪：機架上的 HIT / SHDW 標記跟著變
+// 導向、啟用、比對條件改了要重繪：markDirty 已經把模擬收掉，機架上的標記要跟著清乾淨
 document.addEventListener('change', (ev) => {
   const f = ev.target.dataset.f
   if (!f || !ev.target.closest('[data-rid]')) return
@@ -1378,6 +1382,9 @@ document.addEventListener('click', async (ev) => {
       S.preview = await api('POST', '/api/routing/preview', {
         kind: S.pvKind, model: S.pvModel, agentId: S.pvAgent, config: S.config,
       })
+      render()
+    } else if (act === 'clear-preview') {
+      S.preview = null
       render()
     } else if (act === 'clear-logs') {
       await api('POST', '/api/logs/clear'); S.logs = []; S.open = null; render()
