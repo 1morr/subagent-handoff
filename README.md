@@ -112,6 +112,28 @@ the subscription. And `modelOverride` is the only way to give subagents a
 different model from the main conversation, since `agent()` inherits the main
 model when none is specified and you cannot change that from Claude Code's side.
 
+## What the router changes
+
+Every request takes exactly one of two lines. There are no settings for any of
+this.
+
+| | Subscription line | Provider line |
+|---|---|---|
+| Which requests | The main conversation, anything no rule matches, rules pointing at `passthrough`, and anything that is not a JSON `/v1/messages*` request | Requests matched by a rule that points at a provider |
+| Sent to | `https://api.anthropic.com` + the original path and query | `{baseUrl}` + the original path and query |
+| Headers | Forwarded as-is, minus `host`, hop-by-hop headers and `accept-encoding` | Rebuilt from scratch: `content-type`, the provider's own key, and `anthropic-version`, `anthropic-beta`, `accept` copied from Claude Code. Your OAuth token, cookies and `x-claude-code-*` headers are never sent |
+| Body | The original bytes. Only a rule's `modelOverride` rewrites `model` | `model` rewritten (rule `modelOverride`, then provider `model`), `metadata` removed. Everything else is untouched: `thinking`, `output_config`, `context_management`, `cache_control`, mid-conversation `system` messages |
+| Response | Passed through as it streams | Passed through as it streams, except one error: a context overflow in OpenAI wording is reworded to `prompt is too long: <requested> tokens > <limit> maximum`, numbers kept, so Claude Code compacts instead of failing |
+
+On both lines the router never retries — Claude Code already does. If the
+upstream cannot be reached it answers `502`; if a stream breaks midway it drops
+the connection so Claude Code resends; a body over 64 MiB gets `413`. None of
+the rewrites touch the cached prompt prefix, and removing `metadata` lets
+DeepSeek reuse its cache across sessions. Every rewrite shows up per request
+under **Rewritten before sending** in the traffic log. Details:
+[docs/providers.md](docs/providers.md#router-對請求改了什麼),
+[docs/reliability.md](docs/reliability.md).
+
 ## Security model
 
 - Both servers bind to `127.0.0.1` only.
