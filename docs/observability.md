@@ -90,11 +90,12 @@ network` 只說了「在等」，沒說是誰擋的。答案在流量記錄的**
   被推出機架整格、加一圈朱紅框，批註欄寫著「上游擋的」；點開看上游自己的說法
   （`rate_limit_error: …`、`overloaded_error: …`），以及 `retry-after` 與
   `request-id`。
-- 狀態欄直接寫著 `fetch failed` 這類文字 → **router 連不上上游**，client 收到的
-  是 router 合成的 502，Claude Code 會照它自己的退避重試。
-- 狀態欄寫著 `terminated` → **串流送到一半上游斷了**，router 也把 client 那頭的
-  連線切斷，讓 Claude Code 當成連線錯誤重送（為什麼不補 error 事件見
-  [reliability.md](reliability.md)）。
+- 狀態欄直接寫著 `fetch failed` 這類文字、批註欄寫「router 連不上上游」→ 上游
+  連回應都沒給，client 收到的是 router 合成的 502，Claude Code 會照它自己的退避
+  重試。
+- 狀態欄寫著 `terminated`、批註欄寫「串流中途斷線」→ **上游回了 200、串流送到
+  一半才斷**，router 也把 client 那頭的連線切斷，讓 Claude Code 當成連線錯誤重送
+  （為什麼不補 error 事件見 [reliability.md](reliability.md)）。
 - `client aborted` → 是 Claude Code 自己收手（按了 esc、subagent 被取消、上一輪
   結束）。這不是錯誤。
 - **完全沒有對應的那一筆** → 請求根本沒送到 router，問題在 Claude Code 到
