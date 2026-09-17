@@ -32,7 +32,7 @@ test('沒設檔名就不落檔', () => {
   assert.equal(createFileSink({ file: '', maxBytes: 100 }), null)
 })
 
-/** item 1：config.json / traffic.log 內含第三方 API key，落檔權限要是 0600。Windows 上這個位元被忽略，無害。 */
+/** 同機的其他帳號不該讀得到流量記錄，落檔權限要是 0600。Windows 上這個位元被忽略，無害。 */
 test('落檔的權限是 0600（POSIX）', { skip: process.platform === 'win32' }, () => {
   const { dir, file } = tmpFile()
   try {
@@ -46,7 +46,6 @@ test('落檔的權限是 0600（POSIX）', { skip: process.platform === 'win32' 
 })
 
 /**
- * item 9：舊版一次落檔失敗就永久 `broken = true`，之後整個 process 生命週期都不再寫。
  * Windows 上 tail／編輯器暫時鎖住檔案是很常見、會自己解除的情況，應該冷卻後重試，
  * 而不是永久放棄。這裡用一個會失敗兩次、第三次成功的假時鐘與極短的 baseRetryMs 來驗證。
  */

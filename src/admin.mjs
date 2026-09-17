@@ -3,7 +3,8 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  CONFIG_PATH, KEEP_SECRET, fromClientConfig, toClientConfig, validateBaseUrl, isValidHeaderName, describeConfigProblems,
+  CONFIG_PATH, KEEP_SECRET, MASKED_KEY_MOVED, fromClientConfig, toClientConfig, validateBaseUrl, isValidHeaderName,
+  describeConfigProblems, restoreMaskedKey,
 } from './config.mjs'
 import { describeRequest, resolveModel, resolveRoute, PASSTHROUGH_LABEL } from './routing.mjs'
 import { runProbes } from './probe.mjs'
@@ -82,10 +83,11 @@ export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
       return
     }
 
-    const url = new URL(req.url, 'http://127.0.0.1')
-    const route = `${req.method} ${url.pathname}`
-
     try {
+      // 放在 try 裡面：`GET //[` 這種請求行會讓 new URL 拋錯，接不住就是 unhandled rejection，整個 process 跟著死
+      const url = new URL(req.url, 'http://127.0.0.1')
+      const route = `${req.method} ${url.pathname}`
+
       if (STATIC_ROUTES[route]) {
         const { file, type } = STATIC_ROUTES[route]
         const body = await readFile(path.join(UI_DIR, file), 'utf8')
@@ -106,7 +108,7 @@ export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
         const incoming = await readJson(req)
         // 驗證送進來的原始資料（還沒被 normalizeConfig 悄悄修正之前），
         // 壞的 baseUrl / header 名稱要讓使用者看到明確原因，不是被靜默清空
-        const problems = describeConfigProblems(incoming)
+        const problems = describeConfigProblems(incoming, getConfig())
         if (problems.length) return send(res, 400, { error: problems.join('；') })
         const saved = await setConfig(fromClientConfig(incoming, getConfig()))
         send(res, 200, { config: toClientConfig(saved), runtime: { ...getRuntime(), configPath: CONFIG_PATH } })
@@ -122,17 +124,12 @@ export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
         const badHeader = Object.keys(provider?.extraHeaders ?? {}).find((k) => !isValidHeaderName(k))
         if (badHeader) return send(res, 400, { error: `extraHeaders has an invalid header name: ${JSON.stringify(badHeader)}` })
 
-        // 前端只拿得到遮罩，測試未儲存的設定時要把真 key 補回來 ——
-        // 但只有在 baseUrl 跟已存的完全一樣時才這麼做，否則就是「把 baseUrl 換成
-        // 自己的網域，順便把已存的 API key 偷送過去」的原始問題
+        // 前端只拿得到遮罩，測試未儲存的設定時要把真 key 補回來（baseUrl 沒換才行）
         const resolved = { ...provider, baseUrl: baseUrlCheck.value }
         if (resolved.apiKey === KEEP_SECRET) {
-          const stored = getConfig().providers.find((p) => p.id === resolved.id)
-          if (stored && stored.baseUrl === resolved.baseUrl) {
-            resolved.apiKey = stored.apiKey ?? ''
-          } else {
-            return send(res, 400, { error: 'baseUrl differs from the stored value — provide the API key directly, the masked value cannot be reused' })
-          }
+          const key = restoreMaskedKey(resolved, getConfig())
+          if (key === null) return send(res, 400, { error: MASKED_KEY_MOVED })
+          resolved.apiKey = key
         }
         send(res, 200, await runProbes(resolved, { model, tests }))
         return

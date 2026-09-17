@@ -2,7 +2,7 @@ import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { createProxyServer, TrafficLog, findStreamError, sseError, createPinger, createUsageTap } from '../src/proxy.mjs'
+import { createProxyServer, TrafficLog, findStreamError, createPinger, createUsageTap } from '../src/proxy.mjs'
 import { NOT_SENT_LABEL } from '../src/routing.mjs'
 import { createHarness, makePost, listen, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
 import { USAGE_STREAM } from './fixtures/fake-upstream.mjs'
@@ -63,23 +63,21 @@ test('findStreamError 吃得下 fetch 吐出來的 Uint8Array', () => {
   assert.equal(findStreamError(new Uint8Array(Buffer.from(evt))), 'api_error: boom')
 })
 
-test('串流開到一半斷線時，補一個合法的 SSE error 事件收尾', async () => {
-  const res = await post(SUBSCRIPTION_HEADERS, { ...BASE_BODY, stream: true }, 'fail=midstream')
-  assert.equal(res.status, 200)
+test('串流開到一半上游斷線時，client 這頭也照樣斷線，不補合成的 error 事件', async () => {
+  for (const headers of [SUBSCRIPTION_HEADERS, { ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }]) {
+    const res = await post(headers, { ...BASE_BODY, stream: true }, 'fail=midstream')
+    assert.equal(res.status, 200)
 
-  const text = await res.text()
-  assert.match(text, /message_start/, '已經送到 client 的部分要保留')
-  assert.match(text, /event: error/, '斷掉的串流要有收尾 —— 只是被切斷的話 client 連為什麼都拿不到')
-  assert.match(text, /subagent-handoff/)
-})
-
-test('sseError 產生合法的 SSE 事件框', () => {
-  const frame = sseError('boom')
-  assert.ok(frame.startsWith('event: error'))
-  assert.ok(frame.endsWith(String.fromCharCode(10, 10)), 'SSE 事件要用空行收尾，少一個 client 就不會處理')
-  const payload = JSON.parse(frame.split(String.fromCharCode(10))[1].replace('data: ', ''))
-  assert.equal(payload.error.type, 'api_error')
-  assert.match(payload.error.message, /boom/)
+    const received = []
+    // 實測 Claude Code 2.1.274：斷線會被當成連線錯誤、重送串流；收到 api_error 事件卻會改發非串流請求
+    await assert.rejects(async () => {
+      for await (const chunk of res.body) received.push(Buffer.from(chunk))
+    }, 'client 要看到連線中斷，而不是一個正常結束的串流')
+    const text = Buffer.concat(received).toString('utf8')
+    assert.match(text, /message_start/, '已經送到 client 的部分要保留')
+    assert.doesNotMatch(text, /event: error/)
+    assert.ok(harness.logStore.list()[0].error, '流量記錄要留下斷線原因')
+  }
 })
 
 test('連線預熱探針有回應', async () => {
@@ -118,7 +116,6 @@ test('請求走完才落檔，落下去的 entry 已經是完整的', async () =
   const entry = harness.finished[0]
   assert.equal(entry.status, 200)
   assert.ok(entry.ms != null, '耗時是在 finally 才補的，太早落檔就會是 null')
-  assert.ok(entry.attempts >= 1)
 })
 
 test('讀 request body 途中斷線就收手，不拿空 body 往上游打', async () => {
@@ -228,11 +225,7 @@ test('訂閱線的串流一個合成 byte 都不加', async () => {
   assert.equal(harness.logStore.list()[0].pings, 0)
 })
 
-/**
- * item 22：PING_IDLE_MS 過去是寫死的模組常數，只能靠 createPinger 的單元測試間接驗證。
- * 這裡透過 createProxyServer 的 `pingIdleMs` 選項，端到端驗證 provider 線在上游安靜
- * 超過設定值之後真的會補 ping —— 不必等真正的 60 秒。
- */
+/** 透過 createProxyServer 的 `pingIdleMs` 選項端到端驗證補 ping，不必等真正的 60 秒。 */
 test('端到端：provider 線安靜超過 pingIdleMs 就補 ping（不必等 60 秒）', async () => {
   const upstream = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })

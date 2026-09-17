@@ -65,9 +65,8 @@ test('送去 provider 的請求不帶 metadata：claude.ai 帳號識別不能流
 })
 
 /**
- * item 19：整個工具存在的理由就是「第三方拿不到你的訂閱憑證」。這是最重要的一條
- * 性質斷言，之前完全沒有測試守著 —— 只驗證過 provider 收到「正確」的 header，
- * 從沒明確驗證過 client 帶來的 authorization / cookie / 自訂 x-api-key 不會被轉發。
+ * 整個工具存在的理由就是「第三方拿不到你的訂閱憑證」。只驗證 provider 收到「正確」的
+ * header 不夠，還要明確驗證 client 帶來的 authorization / cookie / x-api-key 不會被轉發。
  */
 test('provider 收不到 client 帶來的 authorization／x-api-key／cookie —— buildProviderHeaders 是從零組出來的', async () => {
   const res = await post(

@@ -160,7 +160,6 @@ function stateOf(e) {
   if (isAborted(e)) return 'chk'
   if (e.detail) return 'chk'                    // 200 但串流裡夾著 error 事件
   if (effortStripped(e)) return 'chk'
-  if (e.attempts > 1) return 'chk'
   if (e.pings) return 'chk'
   if (!e.cwd) return 'chk'
   return 'clr'
@@ -195,7 +194,6 @@ function marginNote(e) {
   }
   if (e.detail) return t('rack.note.streamError')
   if (effortStripped(e)) return t('rack.note.effortStripped')
-  if (e.attempts > 1) return t('rack.note.retried', { attempts: e.attempts })
   if (e.pings) return t('rack.note.pings', { pings: e.pings })
   if (!e.cwd && e.status != null) return e.sessionId ? t('rack.note.cwdUnknown') : t('rack.note.noSession')
   return ''
@@ -210,11 +208,6 @@ function annotation(e) {
   rows.push([t('rack.ann.ruleHit'), e.ruleId
     ? `${e.ruleId} → ${displayTarget(e.target)}`
     : t('rack.ann.noRuleHit', { target: displayTarget(e.target ?? NOT_SENT_TARGET) })])
-  if (e.attempts > 1) {
-    rows.push([t('rack.ann.retried'), t('rack.ann.retriedValue', {
-      attempts: e.attempts, chain: (e.retries || []).join(' → ') || t('rack.ann.noReasonRecorded'),
-    }), true])
-  }
   if (e.retryAfter) rows.push(['retry-after', `${e.retryAfter}s`, true])
   if (e.rateLimit) {
     rows.push([t('rack.ann.rateLimited'), Object.entries(e.rateLimit).map(([k, v]) => `${k}=${v}`).join(' · '), true])
@@ -256,7 +249,6 @@ function statusHtml(e) {
   if (e.status == null) return '…'
   let out = esc(String(e.status))
   if (e.status < 400 && e.detail) out += ' ' + ICON.warn
-  if (e.attempts > 1) out += esc(` ×${e.attempts}`)
   return out
 }
 
@@ -461,8 +453,7 @@ function renderBay() {
           ${rlBar}
         </div>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid var(--rail);padding-top:12px">
-          <span class="hint" style="flex:1;min-width:200px"><code>${esc(S.config.passthrough.baseUrl)}</code> · ${t('bay.credentialsPassthrough')}${
-            S.config.passthrough.retry?.retryRateLimit === false ? ` · ${t('bay.noRetryOnThrottle')}` : ''}</span>
+          <span class="hint" style="flex:1;min-width:200px"><code>${esc(S.config.passthrough.baseUrl)}</code> · ${t('bay.credentialsPassthrough')}</span>
         </div>
       </div></div>
 
@@ -543,41 +534,6 @@ function filteredLogs() {
 }
 
 // ── Providers ─────────────────────────────────────────────────────
-const RETRY_FIELDS = () => [
-  ['attempts', t('providers.retry.attempts'), t('providers.retry.attemptsHint')],
-  ['baseDelayMs', t('providers.retry.baseDelay'), ''],
-  ['maxDelayMs', t('providers.retry.maxDelay'), ''],
-  ['maxRetryAfterMs', t('providers.retry.maxRetryAfter'), t('providers.retry.maxRetryAfterHint')],
-]
-
-/**
- * 路由層的 retry 覆寫。欄位留空＝繼承全域，所以不需要另一個「要不要覆寫」的開關 ——
- * 空 / 有值這兩態跟 config 的稀疏語意一對一，看得到的就是存下去的。
- */
-function retryTune(retry, scopeAttr = '') {
-  const r = retry ?? {}
-  const count = Object.keys(r).length
-  return `
-    <details class="wide"${scopeAttr} style="border:1px solid var(--rail);padding:9px 12px">
-      <summary class="lbl" style="cursor:pointer">${t('providers.retryOverride')}${
-        count ? t('providers.retryOverrideCount', { count }) : t('providers.retryOverrideEmpty')}</summary>
-      <div class="grid" style="margin-top:11px">
-        ${RETRY_FIELDS().map(([key, label, hint]) => `
-          <label class="fld"><span class="lbl">${label}</span>
-            <input type="number" min="0" data-f="retry.${key}" value="${r[key] ?? ''}" placeholder="${t('common.inheritGlobal')}">
-            ${hint ? `<span class="hint">${hint}</span>` : ''}
-          </label>`).join('')}
-        <label class="fld"><span class="lbl">${t('providers.retry.throttle')}</span>
-          <select data-f="retry.retryRateLimit">
-            <option value="" ${r.retryRateLimit == null ? 'selected' : ''}>${t('common.inheritGlobal')}</option>
-            <option value="true" ${r.retryRateLimit === true ? 'selected' : ''}>${t('common.retry')}</option>
-            <option value="false" ${r.retryRateLimit === false ? 'selected' : ''}>${t('common.noRetry')}</option>
-          </select>
-        </label>
-      </div>
-    </details>`
-}
-
 // probe.mjs 送回來的 label 是英文保底值；GUI 是雙語的，這裡改用穩定的 id 去 i18n
 // 目錄查表，查不到（例如日後新增的測項）才退回伺服器給的 label。
 const PROBE_LABEL_KEY = {
@@ -684,7 +640,6 @@ function providerCard(p) {
         <label class="check"><input type="checkbox" data-f="dropBeta" ${p.dropBeta ? 'checked' : ''}> ${t('providers.dropBetaLabel')}</label>
         <span class="hint">${t('providers.dropBetaHint')}</span>
       </div>
-      ${retryTune(p.retry)}
     </div>
 
     <div class="panel-body" style="border-top:1px solid var(--rail);display:flex;flex-direction:column;gap:12px">
@@ -908,37 +863,11 @@ function renderLogs() {
 
 // ── 進階 ───────────────────────────────────────────────────────────
 function renderAdvanced() {
-  const r = S.config.retry
   const trafficLog = S.config.trafficLog
   return `
     <div class="marginal"><i></i><div>
       ${t('advanced.intro')}
     </div></div>
-
-    <section class="panel">
-      <div class="panel-head"><span class="lbl">${t('advanced.retryGlobalTitle')}</span></div>
-      <div class="panel-body">
-        <p class="hint" style="margin:0 0 14px">${t('advanced.retryGlobalHint')}</p>
-        <div class="grid">
-          <label class="fld"><span class="lbl">${t('providers.retry.attempts')}</span>
-            <input type="number" min="0" max="10" data-g="retry.attempts" value="${r.attempts}">
-            <span class="hint">${t('advanced.retryAttemptsHint')}</span>
-          </label>
-          <label class="fld"><span class="lbl">${t('providers.retry.baseDelay')}</span>
-            <input type="number" min="0" data-g="retry.baseDelayMs" value="${r.baseDelayMs}"></label>
-          <label class="fld"><span class="lbl">${t('providers.retry.maxDelay')}</span>
-            <input type="number" min="0" data-g="retry.maxDelayMs" value="${r.maxDelayMs}"></label>
-          <label class="fld"><span class="lbl">${t('providers.retry.maxRetryAfter')}</span>
-            <input type="number" min="0" data-g="retry.maxRetryAfterMs" value="${r.maxRetryAfterMs}">
-            <span class="hint">${t('advanced.maxRetryAfterHint')}</span>
-          </label>
-          <div class="fld wide">
-            <label class="check"><input type="checkbox" data-g="retry.retryRateLimit" ${r.retryRateLimit ? 'checked' : ''}> ${t('advanced.retryRateLimitLabel')}</label>
-            <span class="hint">${t('advanced.retryRateLimitHint')}</span>
-          </div>
-        </div>
-      </div>
-    </section>
 
     <section class="panel">
       <div class="panel-head"><span class="lbl">${t('advanced.passthroughTitle')}</span></div>
@@ -947,7 +876,6 @@ function renderAdvanced() {
           <input type="text" id="pt-base" value="${esc(S.config.passthrough.baseUrl)}">
           <span class="hint">${t('advanced.passthroughHint')}</span>
         </label>
-        ${retryTune(S.config.passthrough.retry, ' data-scope="passthrough"')}
       </div>
     </section>
 
@@ -1089,13 +1017,6 @@ document.addEventListener('input', (ev) => {
   const f = el.dataset.f
   if (!f) return
 
-  // passthrough 的 retry 覆寫不在任何 provider 卡片裡，要先認出來
-  if (f.startsWith('retry.') && el.closest('[data-scope="passthrough"]')) {
-    applyRetryInput(S.config.passthrough, f.slice(6), el)
-    markDirty()
-    return
-  }
-
   const card = el.closest('[data-pid]')
   const row = el.closest('[data-rid]')
 
@@ -1103,8 +1024,7 @@ document.addEventListener('input', (ev) => {
     if (f === 'testModel') { (S.tests[card.dataset.pid] ??= {}).model = el.value; return }
     const p = S.config.providers.find((x) => x.id === card.dataset.pid)
     if (!p) return
-    if (f.startsWith('retry.')) applyRetryInput(p, f.slice(6), el)
-    else if (f === 'dropFields') p.dropFields = el.value.split(',').map((s) => s.trim()).filter(Boolean)
+    if (f === 'dropFields') p.dropFields = el.value.split(',').map((s) => s.trim()).filter(Boolean)
     else if (f === 'extraHeaders') p.extraHeaders = parseHeaders(el.value)
     else if (f === 'maxOutputTokens') p.maxOutputTokens = el.value ? Number(el.value) : null
     else if (el.type === 'checkbox') p[f] = el.checked
@@ -1117,15 +1037,6 @@ document.addEventListener('input', (ev) => {
     markDirty()
   }
 })
-
-/** 把一格 retry 覆寫的輸入寫回稀疏物件；清空就把那個鍵拿掉，全空就回到 null。 */
-function applyRetryInput(owner, key, el) {
-  const next = { ...(owner.retry ?? {}) }
-  if (el.value === '') delete next[key]
-  else if (key === 'retryRateLimit') next[key] = el.value === 'true'
-  else next[key] = Number(el.value)
-  owner.retry = Object.keys(next).length ? next : null
-}
 
 // 導向、啟用、比對條件改了要重繪：markDirty 已經把模擬收掉，機架上的標記要跟著清乾淨
 document.addEventListener('change', (ev) => {
@@ -1163,7 +1074,7 @@ document.addEventListener('click', async (ev) => {
         id: 'p-' + Math.random().toString(36).slice(2, 10),
         label: t('providers.newLabel'), baseUrl: '', apiKey: '', model: '', authStyle: 'bearer',
         dropFields: [],
-        dropBeta: true, maxOutputTokens: null, retry: null, extraHeaders: {},
+        dropBeta: true, maxOutputTokens: null, extraHeaders: {},
       })
       markDirty(); render()
     } else if (act === 'del-provider') {

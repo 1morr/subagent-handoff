@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { once } from 'node:events'
-import { describeRequest, resolveModel, resolveRetryPolicy, resolveRoute, PASSTHROUGH_LABEL, NOT_SENT_LABEL } from './routing.mjs'
+import { describeRequest, resolveModel, resolveRoute, PASSTHROUGH_LABEL, NOT_SENT_LABEL } from './routing.mjs'
 import { isLocalRequest, rejectForeignOrigin } from './guard.mjs'
 
 /** fetch 會自動解壓，所以 content-encoding 一定要拿掉，否則 client 會二次解壓。 */
@@ -274,36 +274,12 @@ export function createUsageTap() {
 }
 
 /**
- * 兩條線都值得重送的狀態：上游自己出錯（5xx）或明講「現在別來」（503 / 529）。
- * 其餘 4xx 是請求本身的問題，重送幾次都一樣。
- *
- * 409 刻意不在這裡：那是狀態衝突，重送通常解決不了同一個衝突，而且實測 Anthropic
- * Messages API 根本不會回這個狀態碼。
- *
- * 節流（429）不在這裡，因為它該不該重送取決於是誰擋的 —— 見 isRetryable。
- */
-export const RETRYABLE_STATUS = new Set([408, 500, 502, 503, 504, 529])
-
-/**
- * 這個狀態在這條路由上該不該重送。
- *
- * 429 是唯一需要分線判斷的：訂閱的節流是 5 小時額度窗，不是瞬時擁塞。實測 21 筆
- * 全部沒帶 retry-after，退避幾百毫秒重送三次，三次都失敗 —— 只是對已經被擋下的
- * 端點多打兩次，還在 Claude Code 顯示倒數之前多壓 3.5～9.4 秒。第三方的 429
- * 通常等一下就過，所以 policy.retryRateLimit 預設留著，只有 passthrough 關掉。
- */
-export function isRetryable(status, policy) {
-  if (RETRYABLE_STATUS.has(status)) return true
-  return status === 429 && policy.retryRateLimit === true
-}
-
-/**
  * 上游的限流狀態。
  *
- * 實測那 21 筆訂閱線的 429 一個都沒帶 retry-after，所以只記那一個 header 等於
- * 流量記錄答不出「什麼時候會恢復」。Anthropic 把額度與重置時間放在
- * anthropic-ratelimit-* 這組上，這裡照前綴整組收下來 —— 不寫死名字，因為這組
- * header 會隨 API 版本增減，寫死就會在下一次改名時靜靜漏掉。
+ * 訂閱線的 429 實測不帶 retry-after，所以只記那一個 header 等於流量記錄答不出
+ * 「什麼時候會恢復」。Anthropic 把額度與重置時間放在 anthropic-ratelimit-* 這組上，
+ * 這裡照前綴整組收下來 —— 不寫死名字，因為這組 header 會隨 API 版本增減，寫死就會
+ * 在下一次改名時靜靜漏掉。
  */
 export function collectRateLimit(headers) {
   const prefix = 'anthropic-ratelimit-'
@@ -313,51 +289,6 @@ export function collectRateLimit(headers) {
     if (name.startsWith(prefix)) out[name.slice(prefix.length)] = value
   })
   return Object.keys(out).length ? out : null
-}
-
-export function parseRetryAfter(raw) {
-  if (raw == null || raw === '') return null
-  const seconds = Number(raw)
-  if (Number.isFinite(seconds)) return Math.max(0, Math.round(seconds * 1000))
-  const at = Date.parse(raw)
-  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null
-}
-
-/**
- * 這次失敗要等多久再重送。上游有講 retry-after 就聽它的，沒講就指數退避加抖動 ——
- * 一個 session 的一批 subagent 常常同時被擋，不抖開就會一起回來再被擋一次。
- *
- * @returns {number|null} null ＝ 這個等待不該由 router 扛，把回應原樣交回去讓 Claude Code 決定
- */
-export function retryDelay(retryAfter, attempt, policy) {
-  const ceiling = Math.min(policy.baseDelayMs * 2 ** (attempt - 1), policy.maxDelayMs)
-  const backoff = Math.round(ceiling * (0.5 + Math.random() / 2))
-
-  const asked = parseRetryAfter(retryAfter)
-  if (asked == null) return backoff
-  if (asked > policy.maxRetryAfterMs) return null
-  // 實測 Anthropic 過載時回的是 retry-after: 0。照著 0 毫秒重送等於沒有退避，
-  // 在對方正在過載的時候連送三次只是加重它的負擔，所以至少等一次退避的時間。
-  return Math.max(asked, backoff)
-}
-
-function sleep(ms, signal) {
-  return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', onAbort)
-    }
-    const onAbort = () => {
-      cleanup()
-      reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
-    }
-    const timer = setTimeout(() => {
-      cleanup()
-      resolve()
-    }, ms)
-    if (signal?.aborted) onAbort()
-    else signal?.addEventListener('abort', onAbort, { once: true })
-  })
 }
 
 /**
@@ -413,18 +344,6 @@ export function createPinger(res, idleMs = PING_IDLE_MS) {
   }
 }
 
-/**
- * 串流中途斷掉時的收尾。Claude Code 收到被切斷的串流只會說「回應可能不完整」，
- * 收到合法的 error 事件才知道發生了什麼事。
- */
-export function sseError(message) {
-  const payload = JSON.stringify({
-    type: 'error',
-    error: { type: 'api_error', message: `subagent-handoff: ${message}` },
-  })
-  return `event: error\ndata: ${payload}\n\n`
-}
-
 async function readBody(req, limit) {
   const chunks = []
   let size = 0
@@ -468,20 +387,9 @@ function baseEntry(req, ctx, over) {
     // token 用量，只有串流回應才有；非串流的回應 router 不緩衝，讀不到
     usage: null,
     detail: null,
-    attempts: 0,
-    retries: [],
     ...over,
   }
 }
-
-/**
- * 所有並發請求疊起來的 body 量體上限。單筆已經有 `config.maxRequestBytes` 把關，
- * 但那只擋得住一個壞掉的 client；十個並發的 15MB 子 agent 請求疊起來，
- * 讀進來的 body、JSON.parse 出的物件圖、重新序列化的 Buffer 加總照樣有機會把
- * 記憶體吃到見底。這裡用宣告的 `content-length` 提前把關，超過就直接 503，
- * 連 body 都不讀 —— 不像單筆上限那樣要先收完一部分才能判斷。
- */
-const DEFAULT_MAX_IN_FLIGHT_BYTES = 256 * 1024 * 1024
 
 /**
  * @param {() => object} getConfig 每次請求都重新取，所以 GUI 改完設定即時生效（改 port 除外）
@@ -490,20 +398,15 @@ const DEFAULT_MAX_IN_FLIGHT_BYTES = 256 * 1024 * 1024
  * @param {() => { boundProxyPort: number }} [options.getRuntime] 回報**實際綁定**的埠；
  *   不給的話退回讀 `config.proxyPort`，但那在使用者改埠又還沒重啟時會跟真正綁定的埠不一致。
  * @param {number} [options.pingIdleMs] 覆寫 PING_IDLE_MS，測試用來不必真的等 60 秒
- * @param {number} [options.maxInFlightBytes] 覆寫並發量體上限，測試用
  */
 export function createProxyServer(getConfig, log, options = {}) {
   const {
     getRuntime = () => ({ boundProxyPort: getConfig().proxyPort }),
     pingIdleMs = PING_IDLE_MS,
-    maxInFlightBytes = DEFAULT_MAX_IN_FLIGHT_BYTES,
   } = options
   const sessionCwd = new SessionCwd()
-  // 這台 server 收到的所有請求共用同一個量體預算，不是每筆各自的上限
-  let inFlightBytes = 0
 
   return http.createServer(async (req, res) => {
-    let reserved = 0
     try {
       const config = getConfig()
 
@@ -521,27 +424,6 @@ export function createProxyServer(getConfig, log, options = {}) {
         res.writeHead(200).end()
         return
       }
-
-      // 總量閘門：宣告的長度會讓這台 server 的在途量體超過預算就直接拒收，
-      // 不讀 body 就能判斷，不必先把記憶體吃下去才發現太多。
-      const declared = Number(req.headers['content-length'])
-      reserved = Number.isFinite(declared) && declared > 0 ? declared : 0
-      if (inFlightBytes + reserved > maxInFlightBytes) {
-        res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5' })
-        res.end(
-          JSON.stringify({
-            type: 'error',
-            error: {
-              type: 'overloaded_error',
-              message: 'subagent-handoff: too much in-flight request data, try again shortly',
-            },
-          }),
-        )
-        req.destroy()
-        reserved = 0
-        return
-      }
-      inFlightBytes += reserved
 
       const started = Date.now()
 
@@ -646,57 +528,20 @@ export function createProxyServer(getConfig, log, options = {}) {
         if (!res.writableEnded) ac.abort()
       })
 
-      // 每條路由各自的 retry policy：全域打底，provider / passthrough 的覆寫蓋上去
-      const policy = resolveRetryPolicy(config, route)
-      // 上游是不是串流：串流斷掉時的收尾方式跟一般回應不一樣
       let sse = false
       let pinger = null
       let usageTap = null
 
       try {
-        const init = {
+        // 不自己重送：Claude Code 對 408 / 409 / 5xx / 529 / 連線錯誤本來就會退避重試最多 10 次，
+        // 這裡再扛一層只會把打上游的次數乘上去（實測紀錄見 docs/measurements.md）
+        const upstream = await fetch(target, {
           method: req.method,
           headers,
           body: req.method === 'GET' || req.method === 'HEAD' ? undefined : outBody,
           signal: ac.signal,
           redirect: 'manual',
-        }
-
-        /**
-         * 重送只可能發生在這個迴圈裡：請求 body 完整留在 outBody，而且一個 byte 都還沒寫給 client，
-         * 所以重送是安全的。出了迴圈就開始寫回應，寫下去就不能重來了。
-         */
-        let upstream = null
-        for (let attempt = 1; ; attempt++) {
-          entry.attempts = attempt
-          let failure = null
-          let retryAfter = null
-
-          try {
-            upstream = await fetch(target, init)
-            if (!isRetryable(upstream.status, policy)) break
-            failure = String(upstream.status)
-            retryAfter = upstream.headers.get('retry-after')
-          } catch (err) {
-            if (err.name === 'AbortError') throw err
-            upstream = null
-            failure = String(err.message ?? err)
-          }
-
-          const wait = attempt > policy.attempts ? null : retryDelay(retryAfter, attempt, policy)
-          if (wait == null) {
-            // 不再重送了：這次失敗也要留底，不然重送鏈的記錄會少最後一筆
-            entry.retries.push(failure)
-            // 拿得到回應就原樣交回去，連回應都沒有就只能讓外層合成 502
-            if (!upstream) throw new Error(failure)
-            break
-          }
-
-          // 失敗回應的 body 一定要排掉，否則這條連線不會被回收
-          await upstream?.body?.cancel().catch(() => {})
-          entry.retries.push(failure)
-          await sleep(wait, ac.signal)
-        }
+        })
 
         entry.status = upstream.status
         entry.retryAfter = upstream.headers.get('retry-after')
@@ -763,10 +608,9 @@ export function createProxyServer(getConfig, log, options = {}) {
               error: { type: 'api_error', message: `subagent-handoff: ${entry.error}` },
             }),
           )
-        } else if (sse && !res.writableEnded) {
-          res.write(sseError(entry.error))
-          res.end()
         } else {
+          // 串流開始後斷掉就照樣斷線，不補合成的 error 事件：實測 Claude Code 把斷線當連線錯誤、
+          // 重送串流；收到 api_error 事件卻會改發非串流請求，長輸出沒有 ping 可以撐。
           res.destroy()
         }
       } finally {
@@ -796,8 +640,6 @@ export function createProxyServer(getConfig, log, options = {}) {
       } catch {
         res.destroy()
       }
-    } finally {
-      inFlightBytes -= reserved
     }
   })
 }

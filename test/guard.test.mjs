@@ -85,9 +85,8 @@ test('proxy：外來 Host 被擋下', async () => {
 })
 
 /**
- * item 10：guard 原本比對的是 `config.proxyPort`（即時設定），而不是實際綁定的埠
- * （`getRuntime().boundProxyPort`）。使用者在 GUI 改了 proxyPort 又還沒重啟時，
- * 這兩個值會不一樣 —— guard 應該信「真正在監聽的那個」，不是「設定檔現在寫的那個」。
+ * 使用者在 GUI 改了 proxyPort 又還沒重啟時，`config.proxyPort` 跟實際綁定的埠
+ * （`getRuntime().boundProxyPort`）會不一樣 —— guard 應該信「真正在監聽的那個」。
  */
 test('proxy 的 Origin 檢查看的是實際綁定的埠，不是即時的 config.proxyPort', async () => {
   const config = normalizeConfig({ passthrough: { baseUrl: harness.upstreamUrl }, proxyPort: 8787 })

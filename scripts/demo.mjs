@@ -5,11 +5,11 @@
  *
  * 做的事：
  *   1. 起一個假上游（test/fixtures/fake-upstream.mjs，跟整合測試共用同一份劇本）。
- *   2. 用**目前沒有寫在 README 裡的 `ROUTER_CONFIG` 環境變數**（見 src/config.mjs:9-11）
- *      把一份指向假上游的暫存設定檔餵給 router，不會碰到使用者真正的 config.json。
+ *   2. 用 `ROUTER_CONFIG` 環境變數把一份指向假上游的暫存設定檔餵給 router，
+ *      不會碰到使用者真正的 config.json。
  *   3. 用 `node src/index.mjs` 真的把 router 啟動起來（跟使用者平常啟動的方式一模一樣）。
  *   4. 依照固定的劇本打進 30 幾筆流量，混合 main / subagent / nested 三種來源、
- *      200 / 429 / 529 / 串流中途 error / client 中途放棄五種結局，並且用不同的
+ *      200 / 429 / 529 / 串流裡夾 error 事件 / 串流中途斷線 / client 中途放棄六種結局，並且用不同的
  *      `x-claude-code-session-id` 與 system prompt 的 Environment 區段讓「機架」
  *      分頁的目錄欄有東西可看。
  *   5. 全部打完之後留著 router 繼續跑，讓人接著開瀏覽器截圖；Ctrl+C 結束。
@@ -79,10 +79,10 @@ const SCRIPT = [
   { kind: 'subagent', agentId: 'Explore-1', outcome: 'ok' },
   { kind: 'subagent', agentId: 'general-purpose-1', outcome: 'ok-stream' },
   { kind: 'nested', agentId: 'teammate-reviewer', parentAgentId: 'Plan-1', outcome: 'ok' },
-  { kind: 'subagent', agentId: 'Explore-2', outcome: '429-retry' },
-  { kind: 'subagent', agentId: 'general-purpose-2', outcome: '529-retry-success' },
-  { kind: 'subagent', agentId: 'general-purpose-3', outcome: '529-exhausted' },
+  { kind: 'subagent', agentId: 'Explore-2', outcome: '429' },
+  { kind: 'subagent', agentId: 'general-purpose-2', outcome: '529' },
   { kind: 'subagent', agentId: 'Explore-3', outcome: 'midstream-error' },
+  { kind: 'subagent', agentId: 'general-purpose-3', outcome: 'midstream-drop' },
   { kind: 'main', outcome: '429-sub' },
 ]
 
@@ -117,11 +117,11 @@ async function fireOne(proxyUrl, upstream, session, step) {
   })
 
   let query = ''
-  if (step.outcome === '429-retry') query = '?fail=429'
+  if (step.outcome === '429') query = '?fail=429'
   if (step.outcome === '429-sub') query = '?fail=ratelimit'
   if (step.outcome === 'midstream-error') query = '?fail=stream'
-  if (step.outcome === '529-retry-success') upstream.state.failPlan.push({ status: 529 })
-  if (step.outcome === '529-exhausted') upstream.state.failPlan.push({ status: 529 }, { status: 529 }, { status: 529 })
+  if (step.outcome === 'midstream-drop') query = '?fail=midstream'
+  if (step.outcome === '529') upstream.state.failPlan.push({ status: 529 })
 
   const label = `${step.kind}/${step.outcome}${step.agentId ? ` (${step.agentId})` : ''}`
 
@@ -153,7 +153,7 @@ async function main() {
   await rm(DEMO_DIR, { recursive: true, force: true })
   await mkdir(DEMO_DIR, { recursive: true })
   const config = normalizeConfig({
-    passthrough: { baseUrl: upstreamUrl, retry: { retryRateLimit: false } },
+    passthrough: { baseUrl: upstreamUrl },
     providers: [
       defaultProvider({
         id: 'demo-provider', label: 'Demo Provider (fake)', baseUrl: upstreamUrl,
@@ -161,8 +161,6 @@ async function main() {
       }),
     ],
     rules: [defaultRule({ id: 'r-demo', enabled: true, match: 'subagent', providerId: 'demo-provider' })],
-    // 真的等退避沒必要，這裡不是在測時序，縮短一點讓腳本跑快一些
-    retry: { attempts: 2, baseDelayMs: 80, maxDelayMs: 200 },
     trafficLog: { file: 'traffic.log', maxBytes: 5_000_000 },
   })
   await writeFile(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, 'utf8')

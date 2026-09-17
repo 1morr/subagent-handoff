@@ -13,6 +13,8 @@ export const CONFIG_PATH = process.env.ROUTER_CONFIG
 /** 前端拿到的 apiKey 是遮罩過的；存回來時若仍是這個值，代表使用者沒改，保留原 key。 */
 export const KEEP_SECRET = '__keep__'
 
+export const MASKED_KEY_MOVED = 'baseUrl differs from the stored value — enter the API key again, the masked value cannot be reused'
+
 export const MATCH_KINDS = ['any', 'main', 'subagent', 'nested']
 
 /**
@@ -43,8 +45,6 @@ export function defaultProvider(over = {}) {
     dropBeta: true,
     /** 上游 max_tokens 上限，超過就夾住。null = 不夾。 */
     maxOutputTokens: null,
-    /** 這個 provider 專屬的 retry 覆寫。null = 全部繼承全域；物件 = 只有寫出來的鍵生效。 */
-    retry: null,
     extraHeaders: {},
     ...over,
   }
@@ -74,32 +74,6 @@ export function defaultRule(over = {}) {
 }
 
 /**
- * 上游暫時性失敗時，router 自己重送幾次再說。
- *
- * 重送只發生在「一個 byte 都還沒寫給 client」的階段：請求 body 完整留在記憶體，
- * 重送是安全的。串流一旦開始就不能重來，那時候重送會讓 client 收到兩段接不起來的回應。
- */
-export function defaultRetry(over = {}) {
-  return {
-    /** 最多額外重送幾次。0 = 關掉，所有錯誤原樣交回 Claude Code。 */
-    attempts: 2,
-    baseDelayMs: 600,
-    maxDelayMs: 5000,
-    /** 上游 retry-after 要求等超過這麼久就不自己扛 —— 交回去讓 Claude Code 顯示倒數，它才知道發生什麼事。 */
-    maxRetryAfterMs: 10000,
-    /**
-     * 節流（429）算不算可重送。
-     *
-     * 訂閱線要關掉：它的 429 是 5 小時額度窗，不是瞬時擁塞，退避幾百毫秒再送三次
-     * 只是對已經被擋下的端點多打兩次，還在 Claude Code 顯示倒數之前多壓幾秒。
-     * 第三方的 429 通常等一下就過，預設留著。
-     */
-    retryRateLimit: true,
-    ...over,
-  }
-}
-
-/**
  * 流量記錄的落檔設定。記憶體裡只留最近 300 筆且重啟就沒了，
  * 但要查的問題常常橫跨重啟，所以預設寫一份到磁碟。只有中繼資料，沒有 prompt。
  */
@@ -124,16 +98,12 @@ export function defaultConfig() {
     proxyPort: 8787,
     adminPort: 8788,
     /**
-     * 單一請求 body 的上限。router 為了能重送會把整包留在記憶體，沒有上限的話
+     * 單一請求 body 的上限。router 要讀完整包才能判斷路由與改寫，沒有上限的話
      * 一個壞掉的 client 就能把記憶體吃光。1M context 的請求實測十幾 MB，這是防呆不是限流。
      */
     maxRequestBytes: 64 * 1024 * 1024,
-    /**
-     * 沒有規則命中時的去向。不帶憑證，原樣轉發 Claude Code 的訂閱 OAuth。
-     *
-     * retry 預設就把節流重送關掉：訂閱的 429 是額度窗，等不到退避結束（見 defaultRetry）。
-     */
-    passthrough: { baseUrl: 'https://api.anthropic.com', retry: { retryRateLimit: false } },
+    /** 沒有規則命中時的去向。不帶憑證，原樣轉發 Claude Code 的訂閱 OAuth。 */
+    passthrough: { baseUrl: 'https://api.anthropic.com' },
     providers: [kimi],
     /**
      * 預設那條規則**是關的**。首次啟動時 provider 還沒有 API key，開著就等於把每一個
@@ -142,7 +112,6 @@ export function defaultConfig() {
      * 填完 key 再自己把規則打開，分流才開始。
      */
     rules: [defaultRule({ id: 'r-subagent', enabled: false, match: 'subagent', providerId: 'kimi' })],
-    retry: defaultRetry(),
     trafficLog: defaultTrafficLog(),
   }
 }
@@ -157,40 +126,9 @@ export function normalizeTrafficLog(raw) {
   })
 }
 
-function asPositive(v, fallback, max = 120_000) {
+function asPositive(v, fallback, max) {
   const n = Number(v)
   return Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), max) : fallback
-}
-
-export function normalizeRetry(raw, base = defaultRetry()) {
-  const cfg = raw && typeof raw === 'object' ? raw : {}
-  const attempts = Number(cfg.attempts)
-  const baseDelayMs = asPositive(cfg.baseDelayMs, base.baseDelayMs, 30_000)
-  return defaultRetry({
-    attempts: Number.isInteger(attempts) && attempts >= 0 ? Math.min(attempts, 10) : base.attempts,
-    baseDelayMs,
-    // 上限比起跳值還小是設定寫錯了，夾回去而不是讓退避變成不會增加
-    maxDelayMs: Math.max(baseDelayMs, asPositive(cfg.maxDelayMs, base.maxDelayMs, 60_000)),
-    maxRetryAfterMs: asPositive(cfg.maxRetryAfterMs, base.maxRetryAfterMs, 120_000),
-    retryRateLimit: typeof cfg.retryRateLimit === 'boolean' ? cfg.retryRateLimit : base.retryRateLimit,
-  })
-}
-
-export const RETRY_KEYS = ['attempts', 'baseDelayMs', 'maxDelayMs', 'maxRetryAfterMs', 'retryRateLimit']
-
-/**
- * 路由層的 retry 覆寫。**稀疏**：只留使用者真的寫了的鍵，其餘留給全域。
- *
- * 整組取代的話，只想關掉 429 重送的人會連 attempts / 退避一起凍在當下的值，
- * 之後調全域就不會傳播過去。回傳 null 代表完全繼承。
- */
-export function normalizeRetryOverride(raw) {
-  if (!raw || typeof raw !== 'object') return null
-  const present = RETRY_KEYS.filter((k) => raw[k] != null)
-  if (!present.length) return null
-  // 借 normalizeRetry 做值域檢查，再把沒寫的鍵丟掉
-  const checked = normalizeRetry(raw)
-  return Object.fromEntries(present.map((k) => [k, checked[k]]))
 }
 
 function asPort(v, fallback) {
@@ -271,14 +209,28 @@ function normalizeHeaders(raw, label) {
 }
 
 /**
+ * 前端拿到的 apiKey 是遮罩值；把它換回真 key 只能在 baseUrl 跟已存的完全一樣時做。
+ * baseUrl 換了還沿用遮罩，等於把已存的 key 綁到新目的地 —— 要使用者明著重填，
+ * 不能悄悄還原，也不能悄悄清空（清空的話使用者存完檔才發現 key 不見了）。
+ *
+ * @returns {string | null} 已存的 key；null ＝ 不能還原
+ */
+export function restoreMaskedKey(submitted, current) {
+  const stored = current.providers.find((p) => p.id === submitted.id)
+  const url = validateBaseUrl(submitted.baseUrl)
+  return stored && url.ok && url.value === stored.baseUrl ? stored.apiKey : null
+}
+
+/**
  * `PUT /api/config` 存檔前的把關。normalizeConfig 遇到壞資料是「修掉」而不是拋錯
  * （config.json 被手改壞掉時，載入不該讓整個 proxy 起不來），但使用者從 GUI 主動送出
  * 壞資料時應該看到明確的錯誤，而不是被靜默清空、或者送出去才炸成一個看不懂的 502。
  * 這裡驗證的是**送進來的原始資料**，在還沒被 normalizeConfig 悄悄修正之前。
  *
+ * @param {object} current 目前生效的設定，用來判斷遮罩值能不能換回真 key
  * @returns {string[]} 問題清單；空陣列＝可以存
  */
-export function describeConfigProblems(raw) {
+export function describeConfigProblems(raw, current) {
   const problems = []
   const cfg = raw && typeof raw === 'object' ? raw : {}
 
@@ -292,6 +244,9 @@ export function describeConfigProblems(raw) {
     const label = String(p.label ?? p.id ?? 'Unnamed')
     const result = validateBaseUrl(p.baseUrl)
     if (!result.ok) problems.push(`provider "${label}" baseUrl: ${result.error}`)
+    if (result.ok && p.apiKey === KEEP_SECRET && restoreMaskedKey(p, current) === null) {
+      problems.push(`provider "${label}": ${MASKED_KEY_MOVED}`)
+    }
     for (const key of Object.keys(p.extraHeaders && typeof p.extraHeaders === 'object' ? p.extraHeaders : {})) {
       if (!isValidHeaderName(key)) {
         problems.push(`provider "${label}" has an invalid extraHeaders header name: ${JSON.stringify(key)}`)
@@ -322,7 +277,6 @@ export function normalizeConfig(raw) {
             : [],
           dropBeta: p.dropBeta !== false,
           maxOutputTokens: Number.isInteger(p.maxOutputTokens) && p.maxOutputTokens > 0 ? p.maxOutputTokens : null,
-          retry: normalizeRetryOverride(p.retry),
           extraHeaders: normalizeHeaders(p.extraHeaders, String(p.label ?? p.id ?? 'Unnamed')),
         }),
       )
@@ -350,15 +304,9 @@ export function normalizeConfig(raw) {
     maxRequestBytes: Math.max(1_000_000, asPositive(cfg.maxRequestBytes, base.maxRequestBytes, 1_000_000_000)),
     passthrough: {
       baseUrl: normalizePassthroughBaseUrl(cfg.passthrough?.baseUrl, base.passthrough.baseUrl),
-      // 完全沒有這個鍵＝舊版設定檔，套用新預設把節流重送關掉 —— 載入就直接修好
-      retry:
-        cfg.passthrough?.retry === undefined
-          ? base.passthrough.retry
-          : normalizeRetryOverride(cfg.passthrough.retry),
     },
     providers,
     rules,
-    retry: normalizeRetry(cfg.retry),
     trafficLog: normalizeTrafficLog(cfg.trafficLog),
   }
 }
@@ -406,24 +354,17 @@ export function toClientConfig(cfg) {
 }
 
 /**
- * 收到瀏覽器的版本：把 KEEP_SECRET 還原成現存的 key。
+ * 收到瀏覽器的版本：把 KEEP_SECRET 還原成現存的 key（規則見 restoreMaskedKey）。
  *
- * 只有在送回來的 baseUrl 跟已存的完全一樣時才還原：否則 `PUT /api/config` 就能一邊把
- * baseUrl 換成攻擊者的網域、一邊用 KEEP_SECRET 把已存的真 key 綁過去 —— 這正是
- * `POST /api/test` 那個「拿 baseUrl 換 API key」原始問題的另一種寫法。baseUrl 對不上
- * 時不還原，逼使用者直接帶入新 key，而不是讓遮罩值悄悄失效變成空字串以外的東西。
+ * 存檔路徑已經先被 describeConfigProblems 擋過，走到這裡還還原不了的只剩規則預覽，
+ * 它用不到 key，所以給空字串就好。
  */
 export function fromClientConfig(incoming, current) {
-  const byId = new Map(current.providers.map((p) => [p.id, p]))
   return normalizeConfig({
     ...incoming,
     providers: (incoming.providers ?? []).map((p) => {
       const { apiKeyHint, ...rest } = p
-      if (rest.apiKey === KEEP_SECRET) {
-        const stored = byId.get(rest.id)
-        const submitted = validateBaseUrl(rest.baseUrl)
-        rest.apiKey = stored && submitted.ok && submitted.value === stored.baseUrl ? stored.apiKey : ''
-      }
+      if (rest.apiKey === KEEP_SECRET) rest.apiKey = restoreMaskedKey(rest, current) ?? ''
       return rest
     }),
   })

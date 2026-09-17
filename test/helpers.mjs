@@ -38,8 +38,6 @@ export async function createHarness(overrides = {}) {
       }),
     ],
     rules: [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })],
-    // 測試不需要真的等退避，只驗證重送的次數與時機
-    retry: { attempts: 2, baseDelayMs: 10, maxDelayMs: 20 },
     ...overrides,
   })
 

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   normalizeConfig, defaultProvider, toClientConfig, fromClientConfig, KEEP_SECRET,
-  validateBaseUrl, isValidHeaderName, describeConfigProblems,
+  validateBaseUrl, isValidHeaderName, describeConfigProblems, restoreMaskedKey,
 } from '../src/config.mjs'
 
 test('API key 不外流到前端，且未修改時不會被清掉', () => {
@@ -19,15 +19,17 @@ test('API key 不外流到前端，且未修改時不會被清掉', () => {
   assert.equal(fromClientConfig(client, cfg).providers[0].apiKey, 'sk-new', '前端改了就要採用新值')
 })
 
-/** item 2：換 baseUrl 卻沿用遮罩值，不該把已存的 key 悄悄綁到新目的地。 */
-test('fromClientConfig：baseUrl 跟已存的不一樣時，KEEP_SECRET 不還原', () => {
-  const cfg = normalizeConfig({ providers: [defaultProvider({ id: 'k', baseUrl: 'https://x', apiKey: 'sk-secret-1234' })] })
+test('遮罩值只換得回同一個 baseUrl 底下的 key；baseUrl 換了要明講，不能悄悄還原或清空', () => {
+  const cfg = normalizeConfig({ providers: [defaultProvider({ id: 'k', label: 'Moved', baseUrl: 'https://x', apiKey: 'sk-secret-1234' })] })
   const client = toClientConfig(cfg)
-  client.providers[0].baseUrl = 'https://attacker.example'
+  assert.equal(restoreMaskedKey(client.providers[0], cfg), 'sk-secret-1234')
+  assert.equal(restoreMaskedKey({ ...client.providers[0], baseUrl: 'https://x/' }, cfg), 'sk-secret-1234', '結尾斜線不算換了目的地')
 
-  const round = fromClientConfig(client, cfg)
-  assert.notEqual(round.providers[0].apiKey, 'sk-secret-1234', 'baseUrl 換了就不能沿用已存的 key')
-  assert.equal(round.providers[0].apiKey, '')
+  client.providers[0].baseUrl = 'https://attacker.example'
+  assert.equal(restoreMaskedKey(client.providers[0], cfg), null, 'baseUrl 換了就不能沿用已存的 key')
+  const [problem] = describeConfigProblems(client, cfg)
+  assert.match(problem, /Moved.*baseUrl differs/, '存檔要被擋下，並講出是哪個 provider')
+  assert.equal(fromClientConfig(client, cfg).providers[0].apiKey, '', '規則預覽也走這條路，拿不到 key 也不能拿到舊的')
 })
 
 test('normalizeConfig 修掉壞資料而不是拋錯', () => {
@@ -38,7 +40,7 @@ test('normalizeConfig 修掉壞資料而不是拋錯', () => {
   assert.equal(cfg.passthrough.baseUrl, 'https://api.anthropic.com')
 })
 
-// ── item 5：SSRF 表面 —— baseUrl scheme 檢查 ──────────────────────
+// ── SSRF 表面：baseUrl scheme 檢查 ─────────────────────────────────
 test('validateBaseUrl：空字串合法（尚未設定），http/https 合法，其餘 scheme 不合法', () => {
   assert.deepEqual(validateBaseUrl(''), { ok: true, value: '' })
   assert.deepEqual(validateBaseUrl('  '), { ok: true, value: '' })
@@ -85,12 +87,12 @@ test('describeConfigProblems：baseUrl 與 extraHeaders 的問題都講得出是
       { id: 'p2', label: 'Bad Header', baseUrl: 'https://ok.example', extraHeaders: { 'x-fine': 'v', 'bad name': 'v' } },
       { id: 'p3', label: 'Fine', baseUrl: 'https://ok.example', extraHeaders: { 'x-fine': 'v' } },
     ],
-  })
+  }, normalizeConfig({}))
   assert.equal(problems.length, 2)
   assert.match(problems[0], /Bad Base/)
   assert.match(problems[1], /Bad Header/)
 })
 
 test('describeConfigProblems：都合法時回空陣列', () => {
-  assert.deepEqual(describeConfigProblems({ passthrough: { baseUrl: 'https://api.anthropic.com' }, providers: [] }), [])
+  assert.deepEqual(describeConfigProblems({ passthrough: { baseUrl: 'https://api.anthropic.com' }, providers: [] }, normalizeConfig({})), [])
 })

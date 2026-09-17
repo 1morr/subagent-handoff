@@ -55,19 +55,6 @@ async function setConfig(next) {
 const proxy = createProxyServer(getConfig, log, { getRuntime })
 const admin = createAdminServer({ getConfig, setConfig, log, getRuntime })
 
-/**
- * 最後一道防線。proxy 這條線服務機器上所有的 Claude Code session，一個意外的例外
- * 不該讓整個 process 死掉、切斷所有還在跑的 session —— 但這只是保底，不是常態；
- * proxy.mjs 自己的請求處理已經包了一層 try/catch，這裡接的是那層之外、理論上
- * 不該發生的東西（例如某個第三方套件在 process 層級丟出的例外）。
- */
-process.on('unhandledRejection', (reason) => {
-  console.error(`✗ unhandled rejection (the process stays up): ${reason?.stack ?? reason}`)
-})
-process.on('uncaughtException', (err) => {
-  console.error(`✗ uncaught exception (the process stays up): ${err?.stack ?? err}`)
-})
-
 function listen(server, port, label) {
   return new Promise((resolve, reject) => {
     server.once('error', (err) => {
