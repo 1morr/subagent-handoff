@@ -35,7 +35,7 @@ test('主對話原樣轉發，訂閱憑證與 anthropic-beta 完整保留', asyn
   assert.deepEqual(hit.body, BASE_BODY, '主對話的 body 一個字都不能動')
 })
 
-test('子 agent 改導向 provider 並改寫 model，但預設不動任何 body 欄位', async () => {
+test('子 agent 改導向 provider 並改寫 model，其餘 body 欄位與 anthropic-beta 原樣送過去', async () => {
   const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'agent-1' }, BASE_BODY)
   assert.equal(res.status, 200)
   await res.text()
@@ -43,8 +43,8 @@ test('子 agent 改導向 provider 並改寫 model，但預設不動任何 body 
   const [hit] = harness.upstream.state.received
   assert.equal(hit.body.model, 'kimi-k3')
   assert.equal(hit.headers.authorization, 'Bearer sk-moonshot', '要換成 provider 自己的 key')
-  assert.equal(hit.headers['anthropic-beta'], undefined, 'dropBeta 開著就不該帶過去')
-  // 剝掉 output_config 會讓 /effort 靜默失效，請求照樣 200 —— 預設絕不能這樣做
+  assert.equal(hit.headers['anthropic-beta'], SUBSCRIPTION_HEADERS['anthropic-beta'], 'body 裡的欄位要有成對的 beta header')
+  // 剝掉 output_config 會讓 /effort 靜默失效，請求照樣 200
   assert.deepEqual(hit.body.output_config, { effort: 'high' }, 'effort 必須原封不動送到 provider')
   assert.deepEqual(hit.body.thinking, { type: 'adaptive' })
   assert.deepEqual(hit.body.context_management, { edits: [] })
@@ -116,7 +116,6 @@ test('流量記錄帶上 cwd 與 effort，但不留 prompt 內容', async () => 
   assert.equal(entry.sessionId, 'sess-1', 'cwd 認不出來時只剩 session id 能分辨來源')
   assert.equal(entry.cwd, '/srv/app')
   assert.equal(entry.effort, 'high')
-  assert.equal(entry.sentEffort, 'high')
   assert.ok(!JSON.stringify(entry).includes('Environment'), 'system prompt 不能被記進流量記錄')
 })
 
@@ -158,19 +157,7 @@ test('SessionCwd 到達上限時丟掉最久沒用到的', () => {
   assert.equal(s.lookup(null), null)
 })
 
-test('明確設定 dropFields 的 provider 才剝除欄位', async () => {
-  harness.getConfig().rules = [defaultRule({ match: 'subagent', providerId: 'strict' })]
-  const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'agent-1' }, BASE_BODY)
-  await res.text()
-
-  const [hit] = harness.upstream.state.received
-  assert.equal(hit.body.model, 'picky-1')
-  for (const field of ['thinking', 'context_management', 'output_config']) {
-    assert.ok(!(field in hit.body), `${field} 應該被剝除`)
-  }
-})
-
-test('x-api-key 認證與保留 anthropic-beta 的 provider', async () => {
+test('x-api-key 認證的 provider', async () => {
   harness.getConfig().rules = [defaultRule({ match: 'subagent', providerId: 'other' })]
   const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY)
   await res.text()
@@ -178,7 +165,6 @@ test('x-api-key 認證與保留 anthropic-beta 的 provider', async () => {
   const [hit] = harness.upstream.state.received
   assert.equal(hit.headers['x-api-key'], 'sk-other')
   assert.equal(hit.headers.authorization, undefined)
-  assert.equal(hit.headers['anthropic-beta'], SUBSCRIPTION_HEADERS['anthropic-beta'])
 })
 
 test('modelGlob 沒命中就落回訂閱', async () => {
@@ -210,7 +196,7 @@ test('規則指向 passthrough 時走訂閱線，不帶 provider 憑證', async 
 
   const [hit] = harness.upstream.state.received
   assert.equal(hit.headers.authorization, 'Bearer sk-ant-oat-fake', '訂閱 OAuth token 必須原樣送達')
-  assert.equal(hit.headers['anthropic-beta'], SUBSCRIPTION_HEADERS['anthropic-beta'], 'passthrough 不受 dropBeta 影響')
+  assert.equal(hit.headers['anthropic-beta'], SUBSCRIPTION_HEADERS['anthropic-beta'])
   assert.deepEqual(hit.body, BASE_BODY, '沒設 modelOverride 就一個字都不能動')
   assert.equal(harness.logStore.list()[0].ruleId, 'back', '要看得出是規則命中，不是沒命中掉下來的')
 })
@@ -235,7 +221,6 @@ test('passthrough + modelOverride 只換 model，其餘 body 欄位原封不動'
 
   const entry = harness.logStore.list()[0]
   assert.equal(entry.sentModel, 'claude-opus-5')
-  assert.equal(entry.sentEffort, 'high', '沒有靜默降級')
   assert.deepEqual(entry.changes, ['model claude-fable-5 → claude-opus-5'])
 })
 
@@ -351,11 +336,6 @@ test('describeRequest 抽出 effort 與 thinking 型態', () => {
   assert.equal(describeRequest({}, { model: 'x' }).effort, null)
 })
 
-test('預設 provider 不剝除任何欄位', () => {
-  assert.deepEqual(defaultProvider().dropFields, [], '預設剝除會讓 /effort 靜默失效')
-  assert.deepEqual(normalizeConfig({ providers: [{ id: 'p', baseUrl: 'https://x' }] }).providers[0].dropFields, [])
-})
-
 test('開箱的預設設定一筆流量都不改道 —— 分流要等使用者填完 key 自己打開', () => {
   const cfg = normalizeConfig(defaultConfig())
   const main = describeRequest({}, { model: 'claude-opus-5' })
@@ -435,16 +415,11 @@ test('rewriteModel 不改動原物件，也不會無故重建 body', () => {
   assert.deepEqual(rewriteModel(null, 'x'), { body: null, changes: [] })
 })
 
-test('rewriteBodyForProvider 不改動原物件', () => {
-  const original = { model: 'claude-opus-5', max_tokens: 9999, thinking: {} }
+test('rewriteBodyForProvider 只換 model、拿掉 metadata，而且不改動原物件', () => {
+  const original = { model: 'claude-opus-5', max_tokens: 9999, thinking: {}, metadata: { user_id: 'x' } }
   const snapshot = structuredClone(original)
-  const { body, changes } = rewriteBodyForProvider(
-    original,
-    defaultProvider({ model: 'kimi-k3', maxOutputTokens: 8192, dropFields: ['thinking'] }),
-  )
+  const { body, changes } = rewriteBodyForProvider(original, 'kimi-k3')
   assert.deepEqual(original, snapshot, '輸入必須維持不變')
-  assert.equal(body.model, 'kimi-k3')
-  assert.equal(body.max_tokens, 8192)
-  assert.ok(!('thinking' in body))
-  assert.ok(changes.length >= 3)
+  assert.deepEqual(body, { model: 'kimi-k3', max_tokens: 9999, thinking: {} })
+  assert.deepEqual(changes, ['model claude-opus-5 → kimi-k3', '-metadata'])
 })

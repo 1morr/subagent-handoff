@@ -118,20 +118,6 @@ function applyState(payload) {
   renderRestartNote()
 }
 
-// ── headers 文字 ⇄ 物件 ────────────────────────────────────────────
-function parseHeaders(text) {
-  const out = {}
-  for (const line of String(text).split('\n')) {
-    const i = line.indexOf(':')
-    if (i > 0) {
-      const name = line.slice(0, i).trim()
-      if (name) out[name] = line.slice(i + 1).trim()
-    }
-  }
-  return out
-}
-const formatHeaders = (obj) => Object.entries(obj ?? {}).map(([k, v]) => `${k}: ${v}`).join('\n')
-
 // ── 進條的判讀 ────────────────────────────────────────────────────
 // 這一組函式的答案都印在條上，不塞進 title tooltip：tooltip 鍵盤取不到、觸控取不到，
 // 選不起來也複製不了。
@@ -146,7 +132,6 @@ function sectorOf(e) {
 const isAborted = (e) => !!e.error && /abort/i.test(e.error)
 /** 有狀態碼又有錯誤＝回應已經開始轉給 client 才斷掉，不是連不上上游 */
 const isStreamCut = (e) => !!e.error && !isAborted(e) && e.status != null
-const effortStripped = (e) => !!e.effort && e.sentEffort !== e.effort
 
 /** 進行中 / 順利 / 有事發生 / 被擋下。顏色不是唯一訊號 —— 每一級都有機架位置與印字旗標。 */
 function stateOf(e) {
@@ -155,7 +140,6 @@ function stateOf(e) {
   if (e.status == null && !e.error) return 'live'
   if (isAborted(e)) return 'chk'
   if (e.detail) return 'chk'                    // 200 但串流裡夾著 error 事件
-  if (effortStripped(e)) return 'chk'
   if (!e.cwd) return 'chk'
   return 'clr'
 }
@@ -188,7 +172,6 @@ function marginNote(e) {
     return t('rack.note.blocked')
   }
   if (e.detail) return t('rack.note.streamError')
-  if (effortStripped(e)) return t('rack.note.effortStripped')
   if (!e.cwd && e.status != null) return e.sessionId ? t('rack.note.cwdUnknown') : t('rack.note.noSession')
   return ''
 }
@@ -209,10 +192,6 @@ function annotation(e) {
   if (e.rateLimit) {
     rows.push([t('rack.ann.rateLimited'), Object.entries(e.rateLimit).map(([k, v]) => `${k}=${v}`).join(' · '), true])
     if (!e.retryAfter) rows.push([t('rack.ann.countdown'), t('rack.ann.countdownValue')])
-  }
-  if (effortStripped(e)) {
-    rows.push([t('rack.ann.silentDowngrade'), t('rack.ann.silentDowngradeValue', { effort: e.effort }), true])
-    rows.push([t('rack.ann.fix'), t('rack.ann.fixValue')])
   }
   if (e.usage) {
     const u = e.usage
@@ -273,8 +252,7 @@ function stripRow(e, withRequested) {
     `<span class="cell ${e.sentModel && e.sentModel !== e.requestedModel ? '' : 'dimink'}">${esc(e.sentModel ?? '–')}</span>`,
     `<span class="cell ${statusCls}">${statusHtml(e)}</span>`,
     `<span class="cell">${e.ms != null ? e.ms + 'ms' : '…'}</span>`,
-    `<span class="cell ${effortStripped(e) ? 'bad' : 'dimink'}">${
-      e.effort ? esc(effortStripped(e) ? t('rack.effortRemoved', { effort: e.effort }) : e.effort) : '–'}</span>`,
+    `<span class="cell dimink">${e.effort ? esc(e.effort) : '–'}</span>`,
     `<span class="cell han ${st === 'hold' ? 'bad' : 'dimink'}">${esc(note)}</span>`,
   ].join('')
 
@@ -580,7 +558,6 @@ function probeSummary(results) {
 function providerCard(p) {
   const t2 = S.tests[p.id]
   const busy = S.busy[p.id]
-  const dropsEffort = (p.dropFields || []).includes('output_config')
   return `
   <section class="panel" data-pid="${esc(p.id)}">
     <div class="panel-head" style="background:var(--prv);border-bottom:0">
@@ -616,26 +593,6 @@ function providerCard(p) {
           <option value="x-api-key" ${p.authStyle === 'x-api-key' ? 'selected' : ''}>x-api-key</option>
         </select>
       </label>
-      <label class="fld"><span class="lbl">${t('providers.maxTokensLabel')}</span>
-        <input type="number" min="1" data-f="maxOutputTokens" value="${p.maxOutputTokens ?? ''}">
-      </label>
-
-      <div class="fld wide">
-        <label class="fld"><span class="lbl" ${dropsEffort ? 'style="color:var(--alarm)"' : ''}>${t('providers.dropFieldsLabel')}</span>
-          <input type="text" data-f="dropFields" value="${esc((p.dropFields || []).join(', '))}" placeholder="${t('common.blankMeansForwardAsIs')}">
-        </label>
-        <div class="marginal ${dropsEffort ? 'alarm' : ''}" style="margin-top:5px"><i></i><div>${
-          dropsEffort ? t('providers.dropsEffortWarning') : t('providers.dropFieldsGuidance')
-        }</div></div>
-      </div>
-
-      <label class="fld wide"><span class="lbl">${t('providers.extraHeadersLabel')}</span>
-        <textarea data-f="extraHeaders" placeholder="X-Tenant: acme">${esc(formatHeaders(p.extraHeaders))}</textarea>
-      </label>
-      <div class="fld wide">
-        <label class="check"><input type="checkbox" data-f="dropBeta" ${p.dropBeta ? 'checked' : ''}> ${t('providers.dropBetaLabel')}</label>
-        <span class="hint">${t('providers.dropBetaHint')}</span>
-      </div>
     </div>
 
     <div class="panel-body" style="border-top:1px solid var(--rail);display:flex;flex-direction:column;gap:12px">
@@ -1020,11 +977,7 @@ document.addEventListener('input', (ev) => {
     if (f === 'testModel') { (S.tests[card.dataset.pid] ??= {}).model = el.value; return }
     const p = S.config.providers.find((x) => x.id === card.dataset.pid)
     if (!p) return
-    if (f === 'dropFields') p.dropFields = el.value.split(',').map((s) => s.trim()).filter(Boolean)
-    else if (f === 'extraHeaders') p.extraHeaders = parseHeaders(el.value)
-    else if (f === 'maxOutputTokens') p.maxOutputTokens = el.value ? Number(el.value) : null
-    else if (el.type === 'checkbox') p[f] = el.checked
-    else p[f] = el.value
+    p[f] = el.value
     markDirty()
   } else if (row) {
     const r = S.config.rules.find((x) => x.id === row.dataset.rid)
@@ -1080,8 +1033,6 @@ document.addEventListener('click', async (ev) => {
       S.config.providers.push({
         id: 'p-' + Math.random().toString(36).slice(2, 10),
         label: t('providers.newLabel'), baseUrl: '', apiKey: '', model: '', authStyle: 'bearer',
-        dropFields: [],
-        dropBeta: true, maxOutputTokens: null, extraHeaders: {},
       })
       markDirty(); render()
     } else if (act === 'del-provider') {

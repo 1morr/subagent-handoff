@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   normalizeConfig, defaultProvider, toClientConfig, fromClientConfig, KEEP_SECRET,
-  validateBaseUrl, isValidHeaderName, describeConfigProblems, restoreMaskedKey,
+  validateBaseUrl, describeConfigProblems, restoreMaskedKey,
 } from '../src/config.mjs'
 
 test('API key 不外流到前端，且未修改時不會被清掉', () => {
@@ -62,35 +62,23 @@ test('normalizeConfig：passthrough 的 baseUrl scheme 不合法就退回預設�
   assert.equal(cfg.passthrough.baseUrl, 'https://api.anthropic.com', 'passthrough 一定要有個可用的值')
 })
 
-test('isValidHeaderName：只認 HTTP token 字元集', () => {
-  assert.ok(isValidHeaderName('x-api-key'))
-  assert.ok(isValidHeaderName('X-Custom-Header'))
-  assert.ok(!isValidHeaderName('bad header'), '空白不合法')
-  assert.ok(!isValidHeaderName('x-api-key: evil\r\nHost: x'), 'CRLF 不合法')
-  assert.ok(!isValidHeaderName(''))
-})
-
-test('normalizeConfig：extraHeaders 標頭名稱不合法就整條略過，其餘合法的保留', () => {
+test('normalizeConfig：已經拿掉的 provider 欄位不會被留下來', () => {
   const cfg = normalizeConfig({
-    providers: [defaultProvider({
-      id: 'p', baseUrl: 'https://x', extraHeaders: { 'x-ok': 'v1', 'bad header': 'v2' },
-    })],
+    providers: [{ id: 'p', baseUrl: 'https://x', dropFields: ['thinking'], dropBeta: true, extraHeaders: { 'x-a': 'b' }, retry: null }],
   })
-  assert.deepEqual(cfg.providers[0].extraHeaders, { 'x-ok': 'v1' })
+  assert.deepEqual(Object.keys(cfg.providers[0]).sort(), ['apiKey', 'authStyle', 'baseUrl', 'id', 'label', 'model'])
 })
 
-test('describeConfigProblems：baseUrl 與 extraHeaders 的問題都講得出是哪個 provider', () => {
+test('describeConfigProblems：baseUrl 的問題講得出是哪個 provider', () => {
   const problems = describeConfigProblems({
     passthrough: { baseUrl: 'https://api.anthropic.com' },
     providers: [
       { id: 'p1', label: 'Bad Base', baseUrl: 'ftp://evil.example' },
-      { id: 'p2', label: 'Bad Header', baseUrl: 'https://ok.example', extraHeaders: { 'x-fine': 'v', 'bad name': 'v' } },
-      { id: 'p3', label: 'Fine', baseUrl: 'https://ok.example', extraHeaders: { 'x-fine': 'v' } },
+      { id: 'p2', label: 'Fine', baseUrl: 'https://ok.example' },
     ],
   }, normalizeConfig({}))
-  assert.equal(problems.length, 2)
+  assert.equal(problems.length, 1)
   assert.match(problems[0], /Bad Base/)
-  assert.match(problems[1], /Bad Header/)
 })
 
 test('describeConfigProblems：都合法時回空陣列', () => {

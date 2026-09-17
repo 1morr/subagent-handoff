@@ -82,16 +82,6 @@ test('PUT /api/config：baseUrl scheme 不合法時 400，且不寫入設定', a
   assert.equal(JSON.stringify(harness.getConfig().providers), before, '驗證沒過就不該動到任何已存設定')
 })
 
-test('PUT /api/config：extraHeaders 標頭名稱不合法時 400', async () => {
-  const { json: state } = await adminApi('GET', '/api/state')
-  const incoming = structuredClone(state.config)
-  incoming.providers.find((p) => p.id === 'kimi').extraHeaders = { 'x-ok': 'v', 'bad header': 'v' }
-
-  const { status, json } = await adminApi('PUT', '/api/config', incoming)
-  assert.equal(status, 400)
-  assert.match(json.error, /extraHeaders/)
-})
-
 /**
  * `POST /api/test` 會真的把 key 送出去：body 裡 apiKey 填遮罩值、baseUrl 填別的網域，
  * 就能把已存的 key 送到那裡。只有 baseUrl 跟已存的完全一樣才還原。
@@ -124,19 +114,6 @@ test('POST /api/test：baseUrl scheme 不合法時 400', async () => {
   })
   assert.equal(status, 400)
   assert.match(json.error, /http/)
-})
-
-test('POST /api/test：extraHeaders 標頭名稱不合法時 400，不會送去 fetch 才炸出一個看不懂的錯誤', async () => {
-  const stored = harness.getConfig().providers.find((p) => p.id === 'kimi')
-  const { status, json } = await adminApi('POST', '/api/test', {
-    provider: {
-      id: 'kimi', apiKey: 'sk-explicit', baseUrl: stored.baseUrl, authStyle: 'bearer', model: stored.model,
-      extraHeaders: { 'bad header': 'v' },
-    },
-    tests: ['connectivity'],
-  })
-  assert.equal(status, 400)
-  assert.match(json.error, /extraHeaders/)
 })
 
 test('POST /api/routing/preview 用前端當下的規則試算，不必先儲存', async () => {

@@ -11,8 +11,8 @@ export function listen(server) {
 
 /**
  * 起一組完整的測試環境：假上游 + proxy + admin，設定檔只在記憶體裡（絕不寫到真的
- * config.json）。三個 provider（bearer / x-api-key / 全欄位剝除）對應大部分測試需要
- * 的組合；個別測試檔可以再用 `harness.setConfig(...)` 換整份設定。
+ * config.json）。兩個 provider（bearer / x-api-key）對應兩種認證 header；
+ * 個別測試檔可以再用 `harness.setConfig(...)` 換整份設定。
  *
  * `getRuntime` 回報固定的 boundProxyPort/boundAdminPort（8787/8788，跟 defaultConfig
  * 的預設埠一致），不是隨機分配到的實際埠 —— guard 測試比的是「送出去的 Origin 埠」
@@ -29,12 +29,7 @@ export async function createHarness(overrides = {}) {
     providers: [
       defaultProvider({ id: 'kimi', label: 'Kimi', baseUrl: upstreamUrl, apiKey: 'sk-moonshot', model: 'kimi-k3' }),
       defaultProvider({
-        id: 'other', label: 'Other', baseUrl: upstreamUrl, apiKey: 'sk-other', model: 'glm-5',
-        authStyle: 'x-api-key', dropBeta: false,
-      }),
-      defaultProvider({
-        id: 'strict', label: 'Strict', baseUrl: upstreamUrl, apiKey: 'sk-strict', model: 'picky-1',
-        dropFields: ['thinking', 'context_management', 'output_config'],
+        id: 'other', label: 'Other', baseUrl: upstreamUrl, apiKey: 'sk-other', model: 'glm-5', authStyle: 'x-api-key',
       }),
     ],
     rules: [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })],

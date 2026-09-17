@@ -98,10 +98,9 @@ function buildProviderHeaders(incoming, provider) {
     if (provider.authStyle === 'x-api-key') headers['x-api-key'] = provider.apiKey
     else headers.authorization = `Bearer ${provider.apiKey}`
   }
-  if (!provider.dropBeta && incoming['anthropic-beta']) {
-    headers['anthropic-beta'] = incoming['anthropic-beta']
-  }
-  for (const [k, v] of Object.entries(provider.extraHeaders ?? {})) headers[k] = v
+  // gateway protocol 要求原樣轉發，body 裡對應的欄位（context_management、effort⋯⋯）才有成對的 header。
+  // 實測 DeepSeek 收下 Claude Code 完整的 beta 清單照常回 200，快取命中跟不帶時一樣（2026-09）
+  if (incoming['anthropic-beta']) headers['anthropic-beta'] = incoming['anthropic-beta']
   return headers
 }
 
@@ -115,33 +114,18 @@ export function rewriteModel(payload, model) {
 }
 
 /**
- * 把 Anthropic 格式的 body 調整成第三方相容層吃得下的樣子。
- * @param {string} [model] 規則算出來的最終 model 名；省略時退回 provider 自己的設定
+ * provider 線的 body：換 model、拿掉 metadata，其餘一個字不動。
+ * @param {string} [model] resolveModel 算出來的最終 model 名
  */
-export function rewriteBodyForProvider(payload, provider, model) {
-  const renamed = rewriteModel(payload, model || provider.model)
-  const body = { ...renamed.body }
-  const changes = [...renamed.changes]
-
+export function rewriteBodyForProvider(payload, model) {
+  const renamed = rewriteModel(payload, model)
+  if (renamed.body?.metadata === undefined) return renamed
   // Claude Code 把 claude.ai 的 account_uuid 與 device_id 塞在 metadata.user_id（實測 v2.1.274）。
   // 那是訂閱帳號的識別資訊，不該跟著子 agent 的請求出門。DeepSeek 會拿 user_id 做 KV cache 與排程隔離，
   // 但那是給「一把 key 服務很多終端使用者」的情境；這裡只有一個人，拿掉只是所有請求落在同一個分區。
-  if (body.metadata !== undefined) {
-    delete body.metadata
-    changes.push('-metadata')
-  }
-
-  for (const field of provider.dropFields ?? []) {
-    if (field in body) {
-      delete body[field]
-      changes.push(`-${field}`)
-    }
-  }
-  if (provider.maxOutputTokens && Number(body.max_tokens) > provider.maxOutputTokens) {
-    changes.push(`max_tokens ${body.max_tokens} → ${provider.maxOutputTokens}`)
-    body.max_tokens = provider.maxOutputTokens
-  }
-  return { body, changes }
+  const body = { ...renamed.body }
+  delete body.metadata
+  return { body, changes: [...renamed.changes, '-metadata'] }
 }
 
 /** 錯誤摘要留這麼長就夠認出是哪一種錯，再長只是把流量記錄撐爛。 */
@@ -321,7 +305,6 @@ function baseEntry(req, ctx, over) {
     ruleId: null,
     sentModel: null,
     effort: ctx.effort,
-    sentEffort: ctx.effort,
     thinking: ctx.thinking,
     changes: [],
     shape: ctx.shape,
@@ -433,13 +416,10 @@ export function createProxyServer(getConfig, log, options = {}) {
       let headers
       let outBody = raw
       let changes = []
-      // 實際送出去的 effort。被 dropFields 拿掉時會是 null，跟 ctx.effort 一比就知道降級了
-      let sentEffort = ctx.effort
 
       if (route.kind === 'provider') {
-        const rewritten = rewriteBodyForProvider(payload, route.provider, sentModel)
+        const rewritten = rewriteBodyForProvider(payload, sentModel)
         changes = rewritten.changes
-        sentEffort = rewritten.body?.output_config?.effort ?? null
         outBody = Buffer.from(JSON.stringify(rewritten.body))
         headers = buildProviderHeaders(req.headers, route.provider)
         target = route.provider.baseUrl + req.url
@@ -460,7 +440,6 @@ export function createProxyServer(getConfig, log, options = {}) {
         providerId: route.kind === 'provider' ? route.provider.id : null,
         ruleId: route.rule?.id ?? null,
         sentModel,
-        sentEffort,
         changes,
       }))
 

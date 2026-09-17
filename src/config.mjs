@@ -17,15 +17,6 @@ export const MASKED_KEY_MOVED = 'baseUrl differs from the stored value — enter
 
 export const MATCH_KINDS = ['any', 'main', 'subagent', 'nested']
 
-/**
- * 遇到 400 時最可能是元凶的欄位，給 GUI 當「一鍵填入」的候選清單用，**不是預設值**。
- *
- * 預設不移除任何欄位。移除是靜默降級：拿掉 `output_config` 會讓 `/effort` 完全失效，
- * 但請求照樣成功，只是模型變笨，很難察覺。留著頂多換來一個看得見的 400。
- * 實測 cliproxyapi 與 Moonshot 官方 Anthropic 端點三個欄位全收。
- */
-export const COMMON_DROP_FIELDS = ['thinking', 'context_management', 'output_config']
-
 export function newId(prefix) {
   return `${prefix}-${randomUUID().slice(0, 8)}`
 }
@@ -40,12 +31,6 @@ export function defaultProvider(over = {}) {
     model: '',
     /** bearer → Authorization: Bearer；x-api-key → x-api-key。 */
     authStyle: 'bearer',
-    dropFields: [],
-    /** anthropic-beta 帶的是 Anthropic 專屬 capability，多數第三方會拒收。 */
-    dropBeta: true,
-    /** 上游 max_tokens 上限，超過就夾住。null = 不夾。 */
-    maxOutputTokens: null,
-    extraHeaders: {},
     ...over,
   }
 }
@@ -183,32 +168,6 @@ function normalizePassthroughBaseUrl(raw, fallback) {
 }
 
 /**
- * HTTP header 名稱允許的字元集（RFC 7230 token）。CR/LF 之類的字元 undici 的 Headers
- * 本來就會拒收，但拒收的時機是送出去的那一刻，那時候只剩一個看不出原因的 502。
- * 這裡提前擋，直接講是哪個名字不合法。
- */
-const HEADER_TOKEN_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
-
-export function isValidHeaderName(name) {
-  return typeof name === 'string' && HEADER_TOKEN_RE.test(name)
-}
-
-function normalizeHeaders(raw, label) {
-  if (!raw || typeof raw !== 'object') return {}
-  const out = {}
-  for (const [k, v] of Object.entries(raw)) {
-    const name = String(k).trim()
-    if (!name || typeof v !== 'string') continue
-    if (!isValidHeaderName(name)) {
-      console.error(`✗ provider "${label}" has an invalid extraHeaders name; skipping ${JSON.stringify(name)}`)
-      continue
-    }
-    out[name] = v
-  }
-  return out
-}
-
-/**
  * 前端拿到的 apiKey 是遮罩值；把它換回真 key 只能在 baseUrl 跟已存的完全一樣時做。
  * baseUrl 換了還沿用遮罩，等於把已存的 key 綁到新目的地 —— 要使用者明著重填，
  * 不能悄悄還原，也不能悄悄清空（清空的話使用者存完檔才發現 key 不見了）。
@@ -247,11 +206,6 @@ export function describeConfigProblems(raw, current) {
     if (result.ok && p.apiKey === KEEP_SECRET && restoreMaskedKey(p, current) === null) {
       problems.push(`provider "${label}": ${MASKED_KEY_MOVED}`)
     }
-    for (const key of Object.keys(p.extraHeaders && typeof p.extraHeaders === 'object' ? p.extraHeaders : {})) {
-      if (!isValidHeaderName(key)) {
-        problems.push(`provider "${label}" has an invalid extraHeaders header name: ${JSON.stringify(key)}`)
-      }
-    }
   }
 
   return problems
@@ -261,25 +215,17 @@ export function normalizeConfig(raw) {
   const base = defaultConfig()
   const cfg = raw && typeof raw === 'object' ? raw : {}
 
+  // 逐欄挑出來，不整包展開：設定檔裡已經不認得的舊欄位（例如拿掉的 dropFields）下次存檔就消失
   const providers = Array.isArray(cfg.providers)
-    ? cfg.providers.filter((p) => p && typeof p === 'object').map((p) =>
-        defaultProvider({
-          ...p,
-          // PASSTHROUGH_ID 是規則用來指回訂閱的保留值，不能讓 provider 佔走
-          id: typeof p.id === 'string' && p.id && p.id !== PASSTHROUGH_ID ? p.id : newId('p'),
-          label: String(p.label ?? '').trim() || 'Unnamed',
-          baseUrl: normalizeProviderBaseUrl(p.baseUrl, String(p.label ?? p.id ?? 'Unnamed')),
-          apiKey: typeof p.apiKey === 'string' ? p.apiKey : '',
-          model: String(p.model ?? '').trim(),
-          authStyle: p.authStyle === 'x-api-key' ? 'x-api-key' : 'bearer',
-          dropFields: Array.isArray(p.dropFields)
-            ? [...new Set(p.dropFields.filter((f) => typeof f === 'string' && f.trim()).map((f) => f.trim()))]
-            : [],
-          dropBeta: p.dropBeta !== false,
-          maxOutputTokens: Number.isInteger(p.maxOutputTokens) && p.maxOutputTokens > 0 ? p.maxOutputTokens : null,
-          extraHeaders: normalizeHeaders(p.extraHeaders, String(p.label ?? p.id ?? 'Unnamed')),
-        }),
-      )
+    ? cfg.providers.filter((p) => p && typeof p === 'object').map((p) => ({
+        // PASSTHROUGH_ID 是規則用來指回訂閱的保留值，不能讓 provider 佔走
+        id: typeof p.id === 'string' && p.id && p.id !== PASSTHROUGH_ID ? p.id : newId('p'),
+        label: String(p.label ?? '').trim() || 'Unnamed',
+        baseUrl: normalizeProviderBaseUrl(p.baseUrl, String(p.label ?? p.id ?? 'Unnamed')),
+        apiKey: typeof p.apiKey === 'string' ? p.apiKey : '',
+        model: String(p.model ?? '').trim(),
+        authStyle: p.authStyle === 'x-api-key' ? 'x-api-key' : 'bearer',
+      }))
     : base.providers
 
   const rules = Array.isArray(cfg.rules)

@@ -63,19 +63,6 @@ test('SSE 測試：連 event 行都沒換行、串流就此結束，也要讀得
   )
 })
 
-test('思考檔位：dropFields 含 output_config 時直接判失敗，不必打上游', async () => {
-  await withUpstream(
-    (_body, res) => replyJson(res, {}),
-    async (url, seen) => {
-      const provider = defaultProvider({ baseUrl: url, model: 'm', dropFields: ['output_config'] })
-      const [result] = (await runProbes(provider, { tests: ['effort'] })).results
-      assert.equal(result.ok, false)
-      assert.match(result.error, /output_config/)
-      assert.equal(seen.length, 0, '本地就能判定的事情不該浪費一次上游呼叫')
-    },
-  )
-})
-
 test('思考檔位：上游拒收任一檔位就判失敗，並把上游的錯誤訊息帶出來', async () => {
   await withUpstream(
     (body, res) => {

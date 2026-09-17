@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  CONFIG_PATH, KEEP_SECRET, MASKED_KEY_MOVED, fromClientConfig, toClientConfig, validateBaseUrl, isValidHeaderName,
+  CONFIG_PATH, KEEP_SECRET, MASKED_KEY_MOVED, fromClientConfig, toClientConfig, validateBaseUrl,
   describeConfigProblems, restoreMaskedKey,
 } from './config.mjs'
 import { describeRequest, resolveModel, resolveRoute, PASSTHROUGH_LABEL } from './routing.mjs'
@@ -121,8 +121,6 @@ export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
 
         const baseUrlCheck = validateBaseUrl(provider?.baseUrl)
         if (!baseUrlCheck.ok) return send(res, 400, { error: `baseUrl: ${baseUrlCheck.error}` })
-        const badHeader = Object.keys(provider?.extraHeaders ?? {}).find((k) => !isValidHeaderName(k))
-        if (badHeader) return send(res, 400, { error: `extraHeaders has an invalid header name: ${JSON.stringify(badHeader)}` })
 
         // 前端只拿得到遮罩，測試未儲存的設定時要把真 key 補回來（baseUrl 沒換才行）
         const resolved = { ...provider, baseUrl: baseUrlCheck.value }

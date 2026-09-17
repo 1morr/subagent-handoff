@@ -38,17 +38,7 @@ function headersFor(provider) {
     if (provider.authStyle === 'x-api-key') headers['x-api-key'] = provider.apiKey
     else headers.authorization = `Bearer ${provider.apiKey}`
   }
-  for (const [k, v] of Object.entries(provider.extraHeaders ?? {})) headers[k] = v
   return headers
-}
-
-function stripDropped(payload, provider) {
-  const body = { ...payload }
-  for (const field of provider.dropFields ?? []) delete body[field]
-  if (provider.maxOutputTokens && body.max_tokens > provider.maxOutputTokens) {
-    body.max_tokens = provider.maxOutputTokens
-  }
-  return body
 }
 
 async function errorDetail(response) {
@@ -61,7 +51,7 @@ async function call(provider, model, payload) {
   const response = await fetch(`${provider.baseUrl}/v1/messages`, {
     method: 'POST',
     headers: headersFor(provider),
-    body: JSON.stringify(stripDropped({ model, ...payload }, provider)),
+    body: JSON.stringify({ model, ...payload }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   })
   return response
@@ -393,15 +383,6 @@ async function testToolLoop(provider, model) {
  */
 async function testEffort(provider, model) {
   const started = Date.now()
-
-  if ((provider.dropFields ?? []).includes('output_config')) {
-    return {
-      ok: false,
-      ms: Date.now() - started,
-      error: 'dropFields includes output_config, so /effort gets stripped before sending — it is fully disabled for this provider',
-    }
-  }
-
   const rejected = []
   for (const effort of EFFORT_LEVELS) {
     const response = await call(provider, model, {
