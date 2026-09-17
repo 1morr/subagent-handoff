@@ -2,8 +2,8 @@ import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { findStreamError, createUsageTap } from '../src/proxy.mjs'
-import { createHarness, makePost, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
+import { createProxyServer, TrafficLog, findStreamError, createUsageTap } from '../src/proxy.mjs'
+import { createHarness, makePost, listen, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
 import { USAGE_STREAM } from './fixtures/fake-upstream.mjs'
 
 let harness, post
@@ -85,10 +85,14 @@ test('連線預熱探針有回應', async () => {
 })
 
 test('body 超過上限時當場擋下來，一個 byte 都不往上游送', async () => {
-  const original = harness.getConfig()
-  harness.setConfig({ ...original, maxRequestBytes: 2000 })
+  const logStore = new TrafficLog(10)
+  const proxy = createProxyServer(harness.getConfig, logStore, {
+    getRuntime: () => ({ boundProxyPort: 8787 }),
+    passthroughBaseUrl: harness.upstreamUrl,
+    maxRequestBytes: 2000,
+  })
   try {
-    const res = await post(SUBSCRIPTION_HEADERS, {
+    const res = await makePost(await listen(proxy), harness.upstream)(SUBSCRIPTION_HEADERS, {
       ...BASE_BODY,
       messages: [{ role: 'user', content: 'x'.repeat(8000) }],
     })
@@ -97,14 +101,14 @@ test('body 超過上限時當場擋下來，一個 byte 都不往上游送', asy
     assert.equal((await res.json()).error.type, 'invalid_request_error')
     assert.equal(harness.upstream.state.received.length, 0, '收不完的請求絕不能往上游送')
 
-    const entry = harness.logStore.list()[0]
+    const entry = logStore.list()[0]
     assert.equal(entry.status, 413)
     assert.equal(entry.target, null, '沒送出去就沒有去向')
     assert.equal(entry.providerId, null)
     assert.match(entry.error, /exceeds the .* byte limit/)
     assert.equal(entry.kind, 'main', 'kind 只看 header，body 收不完也判得出來')
   } finally {
-    harness.setConfig(original)
+    proxy.close()
   }
 })
 

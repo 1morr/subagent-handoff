@@ -8,6 +8,7 @@ import {
 } from './config.mjs'
 import { describeRequest, resolveModel, resolveRoute, PASSTHROUGH_LABEL } from './routing.mjs'
 import { runProbes } from './probe.mjs'
+import { PASSTHROUGH_BASE_URL } from './proxy.mjs'
 import { isLocalRequest, rejectForeignOrigin } from './guard.mjs'
 
 const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'ui')
@@ -74,6 +75,8 @@ async function readJson(req) {
  * @param {() => object} deps.getRuntime
  */
 export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
+  const runtimeState = () => ({ ...getRuntime(), configPath: CONFIG_PATH, passthroughBaseUrl: PASSTHROUGH_BASE_URL })
+
   return http.createServer(async (req, res) => {
     applySecurityHeaders(res)
 
@@ -97,10 +100,7 @@ export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
       }
 
       if (route === 'GET /api/state') {
-        send(res, 200, {
-          config: toClientConfig(getConfig()),
-          runtime: { ...getRuntime(), configPath: CONFIG_PATH },
-        })
+        send(res, 200, { config: toClientConfig(getConfig()), runtime: runtimeState() })
         return
       }
 
@@ -111,7 +111,7 @@ export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
         const problems = describeConfigProblems(incoming, getConfig())
         if (problems.length) return send(res, 400, { error: problems.join('；') })
         const saved = await setConfig(fromClientConfig(incoming, getConfig()))
-        send(res, 200, { config: toClientConfig(saved), runtime: { ...getRuntime(), configPath: CONFIG_PATH } })
+        send(res, 200, { config: toClientConfig(saved), runtime: runtimeState() })
         return
       }
 

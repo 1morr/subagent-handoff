@@ -31,7 +31,6 @@ export default {
   'common.blockedByUpstream': 'Blocked by upstream',
   'common.claudeBackedOff': "Claude Code backed off on its own",
   'common.routerRelayed': 'router just relayed it as-is',
-  'common.restartRequiredBadge': 'restart required',
   'common.moveUp': 'Move up',
   'common.moveDown': 'Move down',
   'common.langLabel': 'Language',
@@ -41,16 +40,8 @@ export default {
   'nav.providers': 'Providers',
   'nav.rules': 'Routing',
   'nav.logs': 'Traffic',
-  'nav.advanced': 'Advanced',
   'nav.setup': 'Connect',
 
-  // ── 重啟提示 ──────────────────────────────────────────────────
-  'restart.required': '{reasons} changed — restart <code>npm start</code> for it to take effect.',
-  'restart.note': 'Everything else is read fresh on every request and takes effect as soon as you save.',
-  'restart.reasonFallback': 'Settings',
-  'restart.reason.port': 'Port',
-  'restart.reason.trafficLog': 'Traffic log file',
-  'restart.listSep': ', ',
 
   // ── 進條共用 ──────────────────────────────────────────────────
   'rack.col.seat': 'Seat',
@@ -226,18 +217,6 @@ export default {
   'logs.pollHint': 'Refreshes every 3s · records metadata only, never prompt content',
   'logs.clear': 'Clear',
 
-  // ── Advanced 分頁 ─────────────────────────────────────────────
-  'advanced.intro': "The router's own settings. Except for <strong>the traffic log's filename and cap</strong> (the file sink is only created once at startup, so changing this needs a restart), everything else is read fresh on every request and takes effect as soon as you save.",
-  'advanced.passthroughTitle': 'Default target · passthrough',
-  'advanced.passthroughHint': "Where requests go when no rule matches, and when a rule explicitly points at passthrough. Credentials and headers are forwarded as-is; nothing in the body changes except a rule-specified model rewrite — this line is your subscription. Don't change it unless you've put another Anthropic-compatible front end in place.",
-  'advanced.trafficLogTitle': 'Traffic log file',
-  'advanced.trafficLogFileLabel': "Filename · relative to the config.json directory · blank = don't write to disk",
-  'advanced.trafficLogFileHint': 'Metadata only, never prompts — but it does include project directories and session ids, so it is already in .gitignore by default',
-  'advanced.maxBytesLabel': 'Rotation cap (bytes)',
-  'advanced.maxBytesHint': 'Past this it rotates to <code>.1</code>, keeping only one old copy — at most double the disk usage',
-  'advanced.requestLimitTitle': 'Request limit',
-  'advanced.maxRequestBytesLabel': 'Single request body cap (bytes)',
-  'advanced.maxRequestBytesHint': "The router reads the whole body before it can route or rewrite it. This is a safety cap, not a throttle — a 1M-context request measured in the tens of MB.",
 
   // ── Connect 分頁 ──────────────────────────────────────────────
   'setup.step1Title': '1 · Configure Claude Code',

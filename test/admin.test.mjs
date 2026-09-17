@@ -28,7 +28,7 @@ test('GET /api/state 給前端遮罩過的設定，真 key 不出門', async () 
   const kimi = json.config.providers.find((p) => p.id === 'kimi')
   assert.equal(kimi.apiKey, KEEP_SECRET, '真 key 不能離開 router')
   assert.match(kimi.apiKeyHint, /^sk-m/)
-  assert.equal(json.runtime.restartRequired, false)
+  assert.equal(json.runtime.passthroughBaseUrl, 'https://api.anthropic.com', 'GUI 顯示的訂閱線去向')
   assert.ok(json.runtime.configPath, '前端要能顯示設定檔在哪')
 })
 
@@ -261,7 +261,7 @@ test('PUT /api/config 的 body 超過上限時 413，而不是被整包吃進記
   const res = await fetch(`${harness.adminUrl}/api/config`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ passthrough: { baseUrl: 'https://x' }, note: 'x'.repeat(2 * 1024 * 1024) }),
+    body: JSON.stringify({ rules: [], note: 'x'.repeat(2 * 1024 * 1024) }),
   })
   assert.equal(res.status, 413)
 })

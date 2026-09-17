@@ -38,7 +38,6 @@ test('normalizeConfig 修掉壞資料而不是拋錯', () => {
   assert.ok(Array.isArray(cfg.providers))
   assert.equal(cfg.rules[0].match, 'subagent')
   assert.equal(cfg.rules[0].enabled, false, '認不得的 match 要關掉，不能變成一條生效的 subagent 規則')
-  assert.equal(cfg.passthrough.baseUrl, 'https://api.anthropic.com')
 })
 
 // ── SSRF 表面：baseUrl scheme 檢查 ─────────────────────────────────
@@ -58,9 +57,11 @@ test('normalizeConfig：provider 的 baseUrl scheme 不合法就清空，不會�
   assert.equal(cfg.providers[0].baseUrl, '', '驗證失敗就清空，未設定狀態下這個 provider 不會生效')
 })
 
-test('normalizeConfig：passthrough 的 baseUrl scheme 不合法就退回預設值', () => {
-  const cfg = normalizeConfig({ passthrough: { baseUrl: 'ftp://evil.example' } })
-  assert.equal(cfg.passthrough.baseUrl, 'https://api.anthropic.com', 'passthrough 一定要有個可用的值')
+test('normalizeConfig：已經拿掉的頂層設定（passthrough、trafficLog、maxRequestBytes、retry）不會被留下來', () => {
+  const cfg = normalizeConfig({
+    passthrough: { baseUrl: 'https://gateway.example' }, trafficLog: { file: 'x.log' }, maxRequestBytes: 1, retry: { attempts: 2 },
+  })
+  assert.deepEqual(Object.keys(cfg).sort(), ['adminPort', 'providers', 'proxyPort', 'rules'])
 })
 
 test('normalizeConfig：已經拿掉的 provider 欄位不會被留下來', () => {
@@ -72,7 +73,6 @@ test('normalizeConfig：已經拿掉的 provider 欄位不會被留下來', () =
 
 test('describeConfigProblems：baseUrl 的問題講得出是哪個 provider', () => {
   const problems = describeConfigProblems({
-    passthrough: { baseUrl: 'https://api.anthropic.com' },
     providers: [
       { id: 'p1', label: 'Bad Base', baseUrl: 'ftp://evil.example' },
       { id: 'p2', label: 'Fine', baseUrl: 'https://ok.example' },
@@ -83,5 +83,5 @@ test('describeConfigProblems：baseUrl 的問題講得出是哪個 provider', ()
 })
 
 test('describeConfigProblems：都合法時回空陣列', () => {
-  assert.deepEqual(describeConfigProblems({ passthrough: { baseUrl: 'https://api.anthropic.com' }, providers: [] }, normalizeConfig({})), [])
+  assert.deepEqual(describeConfigProblems({ providers: [] }, normalizeConfig({})), [])
 })

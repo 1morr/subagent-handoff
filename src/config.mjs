@@ -50,20 +50,6 @@ export function defaultRule(over = {}) {
   }
 }
 
-/**
- * 流量記錄的落檔設定。記憶體裡只留最近 300 筆且重啟就沒了，
- * 但要查的問題常常橫跨重啟，所以預設寫一份到磁碟。只有中繼資料，沒有 prompt。
- */
-export function defaultTrafficLog(over = {}) {
-  return {
-    /** 空字串 = 不落檔。相對路徑以 config.json 所在目錄為準。 */
-    file: 'traffic.log',
-    /** 超過就輪替成 <file>.1，只留一份舊的，所以磁碟最多佔兩倍。 */
-    maxBytes: 5_000_000,
-    ...over,
-  }
-}
-
 export function defaultConfig() {
   const kimi = defaultProvider({
     id: 'kimi',
@@ -74,13 +60,6 @@ export function defaultConfig() {
   return {
     proxyPort: 8787,
     adminPort: 8788,
-    /**
-     * 單一請求 body 的上限。router 要讀完整包才能判斷路由與改寫，沒有上限的話
-     * 一個壞掉的 client 就能把記憶體吃光。1M context 的請求實測十幾 MB，這是防呆不是限流。
-     */
-    maxRequestBytes: 64 * 1024 * 1024,
-    /** 沒有規則命中時的去向。不帶憑證，原樣轉發 Claude Code 的訂閱 OAuth。 */
-    passthrough: { baseUrl: 'https://api.anthropic.com' },
     providers: [kimi],
     /**
      * 預設那條規則**是關的**。首次啟動時 provider 還沒有 API key，開著就等於把每一個
@@ -89,23 +68,7 @@ export function defaultConfig() {
      * 填完 key 再自己把規則打開，分流才開始。
      */
     rules: [defaultRule({ id: 'r-subagent', enabled: false, match: 'subagent', providerId: 'kimi' })],
-    trafficLog: defaultTrafficLog(),
   }
-}
-
-export function normalizeTrafficLog(raw) {
-  const base = defaultTrafficLog()
-  const cfg = raw && typeof raw === 'object' ? raw : {}
-  return defaultTrafficLog({
-    file: typeof cfg.file === 'string' ? cfg.file.trim() : base.file,
-    // 太小的上限會讓每一筆都在輪替，等於只留最後一行
-    maxBytes: Math.max(10_000, asPositive(cfg.maxBytes, base.maxBytes, 1_000_000_000)),
-  })
-}
-
-function asPositive(v, fallback, max) {
-  const n = Number(v)
-  return Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), max) : fallback
 }
 
 function asPort(v, fallback) {
@@ -147,18 +110,6 @@ function normalizeProviderBaseUrl(raw, label) {
   return ''
 }
 
-/** passthrough 的 baseUrl：一定要有個值可用，驗證失敗就退回預設。 */
-function normalizePassthroughBaseUrl(raw, fallback) {
-  const trimmed = typeof raw === 'string' ? raw.trim() : ''
-  if (!trimmed) return fallback
-  const result = validateBaseUrl(trimmed)
-  if (!result.ok) {
-    console.error(`✗ passthrough.baseUrl is invalid (${result.error}); falling back to ${fallback}`)
-    return fallback
-  }
-  return result.value
-}
-
 /**
  * 前端拿到的 apiKey 是遮罩值；把它換回真 key 只能在 baseUrl 跟已存的完全一樣時做。
  * baseUrl 換了還沿用遮罩，等於把已存的 key 綁到新目的地 —— 要使用者明著重填，
@@ -184,11 +135,6 @@ export function restoreMaskedKey(submitted, current) {
 export function describeConfigProblems(raw, current) {
   const problems = []
   const cfg = raw && typeof raw === 'object' ? raw : {}
-
-  if (cfg.passthrough) {
-    const result = validateBaseUrl(cfg.passthrough.baseUrl)
-    if (!result.ok) problems.push(`passthrough.baseUrl: ${result.error}`)
-  }
 
   for (const p of Array.isArray(cfg.providers) ? cfg.providers : []) {
     if (!p || typeof p !== 'object') continue
@@ -238,14 +184,8 @@ export function normalizeConfig(raw) {
   return {
     proxyPort: asPort(cfg.proxyPort, base.proxyPort),
     adminPort: asPort(cfg.adminPort, base.adminPort),
-    // 下限抓 1MB：比這還小的上限只會把正常請求全部擋掉
-    maxRequestBytes: Math.max(1_000_000, asPositive(cfg.maxRequestBytes, base.maxRequestBytes, 1_000_000_000)),
-    passthrough: {
-      baseUrl: normalizePassthroughBaseUrl(cfg.passthrough?.baseUrl, base.passthrough.baseUrl),
-    },
     providers,
     rules,
-    trafficLog: normalizeTrafficLog(cfg.trafficLog),
   }
 }
 

@@ -29,7 +29,6 @@ export default {
   'common.blockedByUpstream': '上游擋的',
   'common.claudeBackedOff': 'Claude Code 自己收手',
   'common.routerRelayed': 'router 只是照實轉發',
-  'common.restartRequiredBadge': '改了要重啟',
   'common.moveUp': '上移',
   'common.moveDown': '下移',
   'common.langLabel': '語言',
@@ -39,16 +38,8 @@ export default {
   'nav.providers': 'Providers',
   'nav.rules': '路由',
   'nav.logs': '流量',
-  'nav.advanced': '進階',
   'nav.setup': '接入',
 
-  // ── 重啟提示 ──────────────────────────────────────────────────
-  'restart.required': '{reasons}已變更，要重新啟動 <code>npm start</code> 才會生效。',
-  'restart.note': '其餘設定都是每筆請求現查的，儲存後即時生效。',
-  'restart.reasonFallback': '設定',
-  'restart.reason.port': '埠號',
-  'restart.reason.trafficLog': '流量記錄落檔',
-  'restart.listSep': '、',
 
   // ── 進條共用 ──────────────────────────────────────────────────
   'rack.col.seat': '席位',
@@ -224,18 +215,6 @@ export default {
   'logs.pollHint': '每 3 秒更新・只記中繼資料，不記 prompt 內容',
   'logs.clear': '清空',
 
-  // ── 進階分頁 ──────────────────────────────────────────────────
-  'advanced.intro': 'router 本身的設定。除了<strong>流量記錄的檔名與上限</strong>（落檔只在啟動時建立一次，改了要重啟），其餘都是每筆請求現查的，儲存後即時生效。',
-  'advanced.passthroughTitle': '預設去向・passthrough',
-  'advanced.passthroughHint': '所有規則都沒命中、以及規則明確指向 passthrough 時的去向。憑證與 header 原樣轉發，body 除了規則指定的 model 改寫之外一個字不動 —— 這條線就是你的訂閱。除非另外架了 Anthropic 前置，否則不要改。',
-  'advanced.trafficLogTitle': '流量記錄落檔',
-  'advanced.trafficLogFileLabel': '檔名・相對於 config.json 所在目錄・留空＝不落檔',
-  'advanced.trafficLogFileHint': '只有中繼資料，沒有 prompt；但含專案目錄與 session id，預設已進 .gitignore',
-  'advanced.maxBytesLabel': '輪替上限 (bytes)',
-  'advanced.maxBytesHint': '超過就輪替成 <code>.1</code>，只留一份舊的，磁碟最多佔兩倍',
-  'advanced.requestLimitTitle': '請求上限',
-  'advanced.maxRequestBytesLabel': '單一請求 body 上限 (bytes)',
-  'advanced.maxRequestBytesHint': 'router 要讀完整包才能判斷路由與改寫，這是防呆不是限流。1M context 的請求實測十幾 MB',
 
   // ── 接入分頁 ──────────────────────────────────────────────────
   'setup.step1Title': '1・設定 Claude Code',

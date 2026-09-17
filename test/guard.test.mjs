@@ -12,7 +12,7 @@ before(async () => {
 after(() => harness.close())
 
 test('admin：跨來源的 Origin 被擋下，而且設定一個字都沒被改到', async () => {
-  const before = JSON.stringify(harness.getConfig().passthrough)
+  const before = JSON.stringify(harness.getConfig())
   const res = await rawRequest(`${harness.adminUrl}/api/config`, {
     method: 'PUT',
     headers: {
@@ -20,10 +20,13 @@ test('admin：跨來源的 Origin 被擋下，而且設定一個字都沒被改�
       origin: 'https://evil.example',
       host: new URL(harness.adminUrl).host,
     },
-    body: JSON.stringify({ passthrough: { baseUrl: 'https://evil.example' } }),
+    body: JSON.stringify({
+      providers: [{ id: 'evil', baseUrl: 'https://evil.example', apiKey: 'x' }],
+      rules: [{ match: 'main', providerId: 'evil' }],
+    }),
   })
   assert.equal(res.status, 403)
-  assert.equal(JSON.stringify(harness.getConfig().passthrough), before, '擋下來就不該碰設定')
+  assert.equal(JSON.stringify(harness.getConfig()), before, '擋下來就不該碰設定')
 })
 
 test('admin：POST /api/test 的簡單請求 CSRF 被擋下 —— 真 key 不會被送出門', async () => {
@@ -89,11 +92,14 @@ test('proxy：外來 Host 被擋下', async () => {
  * （`getRuntime().boundProxyPort`）會不一樣 —— guard 應該信「真正在監聽的那個」。
  */
 test('proxy 的 Origin 檢查看的是實際綁定的埠，不是即時的 config.proxyPort', async () => {
-  const config = normalizeConfig({ passthrough: { baseUrl: harness.upstreamUrl }, proxyPort: 8787 })
+  const config = normalizeConfig({ proxyPort: 8787 })
   const logStore = new TrafficLog(10)
   // 模擬「GUI 剛改了 proxyPort，還沒重啟」：config.proxyPort 已經是 9999，
   // 但實際綁定、也是 getRuntime 回報的仍然是 8787
-  const proxy = createProxyServer(() => config, logStore, { getRuntime: () => ({ boundProxyPort: 8787 }) })
+  const proxy = createProxyServer(() => config, logStore, {
+    getRuntime: () => ({ boundProxyPort: 8787 }),
+    passthroughBaseUrl: harness.upstreamUrl,
+  })
   const proxyUrl = await listen(proxy)
   try {
     // 帶「新設定值」的 Origin 應該被擋 —— 那個埠上根本沒有東西在聽

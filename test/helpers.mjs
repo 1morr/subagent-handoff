@@ -25,7 +25,6 @@ export async function createHarness(overrides = {}) {
   const upstreamUrl = await listen(upstream.server)
 
   let config = normalizeConfig({
-    passthrough: { baseUrl: upstreamUrl },
     providers: [
       defaultProvider({ id: 'kimi', label: 'Kimi', baseUrl: upstreamUrl, apiKey: 'sk-moonshot', model: 'kimi-k3' }),
       defaultProvider({
@@ -38,9 +37,9 @@ export async function createHarness(overrides = {}) {
 
   const finished = []
   const logStore = new TrafficLog(300, (entry) => finished.push(entry))
-  const getRuntime = () => ({ boundProxyPort: 8787, boundAdminPort: 8788, restartRequired: false })
+  const getRuntime = () => ({ boundProxyPort: 8787, boundAdminPort: 8788 })
 
-  const proxy = createProxyServer(() => config, logStore, { getRuntime })
+  const proxy = createProxyServer(() => config, logStore, { getRuntime, passthroughBaseUrl: upstreamUrl })
   const proxyUrl = await listen(proxy)
 
   const admin = createAdminServer({

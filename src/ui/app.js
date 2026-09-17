@@ -94,18 +94,6 @@ function markDirty() {
   updateDirtyNote()
 }
 
-/** restart-note 含翻譯過的文字，語言切換時要單獨重繪一次，但不能連帶動到 S.dirty ——
- *  那是 applyState() 自己的事，語言切換不是存檔。 */
-function renderRestartNote() {
-  if (!S.runtime) return
-  const reasons = (S.runtime.restartReasons ?? []).map((r) => t(`restart.reason.${r}`))
-  $('#restart-note').innerHTML = S.runtime.restartRequired
-    ? `<div class="marginal note"><i></i><div><strong>${
-        t('restart.required', { reasons: esc(reasons.join(t('restart.listSep'))) || t('restart.reasonFallback') })
-      }</strong> ${t('restart.note')}</div></div>`
-    : ''
-}
-
 function applyState(payload) {
   S.config = payload.config
   S.preview = null
@@ -115,7 +103,6 @@ function applyState(payload) {
   updateDirtyNote()
   $('#binding').textContent =
     `PROXY ${payload.runtime.boundProxyPort} · GUI ${payload.runtime.boundAdminPort} · ${payload.runtime.configPath}`
-  renderRestartNote()
 }
 
 // ── 進條的判讀 ────────────────────────────────────────────────────
@@ -427,7 +414,7 @@ function renderBay() {
           ${rlBar}
         </div>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid var(--rail);padding-top:12px">
-          <span class="hint" style="flex:1;min-width:200px"><code>${esc(S.config.passthrough.baseUrl)}</code> · ${t('bay.credentialsPassthrough')}</span>
+          <span class="hint" style="flex:1;min-width:200px"><code>${esc(S.runtime.passthroughBaseUrl)}</code> · ${t('bay.credentialsPassthrough')}</span>
         </div>
       </div></div>
 
@@ -708,7 +695,7 @@ function renderRules() {
           <div style="background:#20262e;border:1px dashed var(--rail-lit);border-left:0;display:flex;
                       align-items:center;gap:10px;padding:11px;flex-wrap:wrap">
             <span class="sign" style="font-size:12px;color:var(--sub)">SUB passthrough</span>
-            <span class="hint">${t('rules.floorHint', { baseUrl: esc(S.config.passthrough.baseUrl) })}</span>
+            <span class="hint">${t('rules.floorHint', { baseUrl: esc(S.runtime.passthroughBaseUrl) })}</span>
             <span class="spacer"></span>
             <span class="lbl">${t('rules.floorLabel')}</span>
           </div>
@@ -800,50 +787,6 @@ function renderLogs() {
     </section>`
 }
 
-// ── 進階 ───────────────────────────────────────────────────────────
-function renderAdvanced() {
-  const trafficLog = S.config.trafficLog
-  return `
-    <div class="marginal"><i></i><div>
-      ${t('advanced.intro')}
-    </div></div>
-
-    <section class="panel">
-      <div class="panel-head"><span class="lbl">${t('advanced.passthroughTitle')}</span></div>
-      <div class="panel-body grid">
-        <label class="fld wide"><span class="lbl">Base URL</span>
-          <input type="text" id="pt-base" value="${esc(S.config.passthrough.baseUrl)}">
-          <span class="hint">${t('advanced.passthroughHint')}</span>
-        </label>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head"><span class="lbl">${t('advanced.trafficLogTitle')}</span>
-        <span class="lbl" style="border:1px solid var(--prv);color:var(--prv);padding:2px 7px">${t('common.restartRequiredBadge')}</span></div>
-      <div class="panel-body grid">
-        <label class="fld wide"><span class="lbl">${t('advanced.trafficLogFileLabel')}</span>
-          <input type="text" data-g="trafficLog.file" value="${esc(trafficLog.file)}" placeholder="traffic.log">
-          <span class="hint">${t('advanced.trafficLogFileHint')}</span>
-        </label>
-        <label class="fld"><span class="lbl">${t('advanced.maxBytesLabel')}</span>
-          <input type="number" min="10000" data-g="trafficLog.maxBytes" value="${trafficLog.maxBytes}">
-          <span class="hint">${t('advanced.maxBytesHint')}</span>
-        </label>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head"><span class="lbl">${t('advanced.requestLimitTitle')}</span></div>
-      <div class="panel-body">
-        <label class="fld" style="max-width:320px"><span class="lbl">${t('advanced.maxRequestBytesLabel')}</span>
-          <input type="number" min="1000000" data-g="maxRequestBytes" value="${S.config.maxRequestBytes}">
-          <span class="hint">${t('advanced.maxRequestBytesHint')}</span>
-        </label>
-      </div>
-    </section>`
-}
-
 // ── 接入說明 ───────────────────────────────────────────────────────
 function renderSetup() {
   const port = S.runtime.boundProxyPort
@@ -902,7 +845,7 @@ function renderSetup() {
 }
 
 // ── render / 事件 ─────────────────────────────────────────────────
-const VIEWS = { bay: renderBay, providers: renderProviders, rules: renderRules, logs: renderLogs, advanced: renderAdvanced, setup: renderSetup }
+const VIEWS = { bay: renderBay, providers: renderProviders, rules: renderRules, logs: renderLogs, setup: renderSetup }
 
 /** 導覽列、儲存按鈕、語言選單這些不隨分頁重繪的靜態外殼，語言切換時要單獨刷新一次。 */
 function applyStaticI18n() {
@@ -928,7 +871,6 @@ function setLang(next) {
   lang = next
   try { localStorage.setItem(LANG_KEY, lang) } catch {}
   applyStaticI18n()
-  renderRestartNote()
   render()
 }
 
@@ -937,21 +879,6 @@ $('#lang')?.addEventListener('change', (ev) => setLang(ev.target.value))
 // 輸入時只更新 state，不重繪，避免游標跳走
 document.addEventListener('input', (ev) => {
   const el = ev.target
-
-  if (el.id === 'pt-base') { S.config.passthrough.baseUrl = el.value; markDirty(); return }
-
-  // 進階分頁的全域設定：data-g="<群組>.<欄位>"，沒有點就是頂層欄位
-  const g = el.dataset.g
-  if (g) {
-    const [group, key] = g.split('.')
-    const target = key ? S.config[group] : S.config
-    const name = key ?? group
-    if (el.type === 'checkbox') target[name] = el.checked
-    else if (el.type === 'number') target[name] = el.value === '' ? 0 : Number(el.value)
-    else target[name] = el.value
-    markDirty()
-    return
-  }
 
   const f = el.dataset.f
   if (!f) return

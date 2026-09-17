@@ -252,7 +252,6 @@
   .legend .chip { font: 600 11px/1 var(--sign); letter-spacing: .08em; padding: 3px 6px; color: #10161a; }
 
   .empty { padding: 26px; text-align: center; color: var(--on-bay-dim); }
-  #restart-note:not(:empty) { padding: 0 26px; margin-top: 14px; }
   #toast {
     position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
     display: grid; grid-template-columns: 4px 1fr; max-width: min(560px, 92vw);
@@ -264,7 +263,7 @@
   #toast[hidden] { display: none; }
 
   @media (max-width: 820px) {
-    .titleblock, nav, main, #restart-note:not(:empty) { padding-left: 14px; padding-right: 14px; }
+    .titleblock, nav, main { padding-left: 14px; padding-right: 14px; }
     .rack { padding-right: 3px; }
     .slot.chk, .slot.hold { transform: none; }
     .slot.hold { box-shadow: 0 0 0 2px var(--alarm); }

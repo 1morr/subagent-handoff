@@ -15,37 +15,15 @@ if (Number(process.versions.node.split('.')[0]) < 20) {
 
 let config = await loadConfig()
 
-// 路徑相對於設定檔，而不是啟動時的工作目錄 —— 從哪裡 npm start 都寫到同一個地方
-const trafficLogPath = config.trafficLog.file
-  ? path.resolve(path.dirname(CONFIG_PATH), config.trafficLog.file)
-  : ''
-const log = new TrafficLog(300, createFileSink({ file: trafficLogPath, maxBytes: config.trafficLog.maxBytes }))
+// 放在設定檔旁邊，而不是啟動時的工作目錄 —— 從哪裡 npm start 都寫到同一個地方
+const trafficLogPath = path.join(path.dirname(CONFIG_PATH), 'traffic.log')
+const log = new TrafficLog(300, createFileSink({ file: trafficLogPath }))
 
-/**
- * 啟動時就定下來、之後改了必須重啟才生效的那幾項。
- * 埠是綁定當下決定的；流量記錄的 sink 也只在這裡建立一次，換檔名或改上限都不會自己重來。
- */
-const bootedWith = {
-  proxyPort: config.proxyPort,
-  adminPort: config.adminPort,
-  trafficLog: JSON.stringify(config.trafficLog),
-}
+// 埠是綁定當下決定的；其餘設定每筆請求現查，改完即時生效
+const bound = { boundProxyPort: config.proxyPort, boundAdminPort: config.adminPort }
 
 const getConfig = () => config
-const getRuntime = () => {
-  // 講清楚是「哪一項」要重啟：只說「需要重啟」會讓人回頭找不到自己改了什麼。
-  // 這裡刻意存英文穩定代碼（GUI 是雙語的），app.js 拿代碼去 i18n 目錄查表翻譯。
-  const reasons = []
-  if (config.proxyPort !== bootedWith.proxyPort || config.adminPort !== bootedWith.adminPort) reasons.push('port')
-  if (JSON.stringify(config.trafficLog) !== bootedWith.trafficLog) reasons.push('trafficLog')
-  return {
-    boundProxyPort: bootedWith.proxyPort,
-    boundAdminPort: bootedWith.adminPort,
-    // 其餘設定都是每筆請求現查的，改完即時生效
-    restartRequired: reasons.length > 0,
-    restartReasons: reasons,
-  }
-}
+const getRuntime = () => bound
 
 async function setConfig(next) {
   config = await saveConfig(next)
@@ -90,7 +68,7 @@ console.log(`
   Proxy   http://${HOST}:${config.proxyPort}
   GUI     http://${HOST}:${config.adminPort}
   Config   ${CONFIG_PATH}
-  Traffic  ${trafficLogPath || '(not written to disk)'}
+  Traffic  ${trafficLogPath}
 
   Point ANTHROPIC_BASE_URL at the proxy above in Claude Code settings.json, and
   leave ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY unset to keep the subscription.

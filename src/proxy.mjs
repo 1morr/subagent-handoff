@@ -275,6 +275,15 @@ export function collectRateLimit(headers) {
   return Object.keys(out).length ? out : null
 }
 
+/** 沒有規則命中、或規則指向 passthrough 時的去向。憑證原樣轉發，這條線就是訂閱。 */
+export const PASSTHROUGH_BASE_URL = 'https://api.anthropic.com'
+
+/**
+ * 單一請求 body 的上限。router 要讀完整包才能判斷路由與改寫，沒有上限的話
+ * 一個壞掉的 client 就能把記憶體吃光。1M context 的請求實測十幾 MB，這是防呆不是限流。
+ */
+const MAX_REQUEST_BYTES = 64 * 1024 * 1024
+
 async function readBody(req, limit) {
   const chunks = []
   let size = 0
@@ -327,10 +336,14 @@ function baseEntry(req, ctx, over) {
  * @param {object} [options]
  * @param {() => { boundProxyPort: number }} [options.getRuntime] 回報**實際綁定**的埠；
  *   不給的話退回讀 `config.proxyPort`，但那在使用者改埠又還沒重啟時會跟真正綁定的埠不一致。
+ * @param {string} [options.passthroughBaseUrl] 測試用：把訂閱線指到假上游
+ * @param {number} [options.maxRequestBytes] 測試用：不必真的送 64MB 才看得到 413
  */
 export function createProxyServer(getConfig, log, options = {}) {
   const {
     getRuntime = () => ({ boundProxyPort: getConfig().proxyPort }),
+    passthroughBaseUrl = PASSTHROUGH_BASE_URL,
+    maxRequestBytes = MAX_REQUEST_BYTES,
   } = options
   const sessionCwd = new SessionCwd()
 
@@ -358,7 +371,7 @@ export function createProxyServer(getConfig, log, options = {}) {
       let raw = Buffer.alloc(0)
       let tooLarge = null
       try {
-        raw = await readBody(req, config.maxRequestBytes)
+        raw = await readBody(req, maxRequestBytes)
       } catch (err) {
         if (err.code !== 'BODY_TOO_LARGE') {
           // client 在送 body 的途中就走了。拿一個空 body 往上游打一次註定 400 的請求
@@ -429,7 +442,7 @@ export function createProxyServer(getConfig, log, options = {}) {
         changes = rewritten.changes
         if (changes.length) outBody = Buffer.from(JSON.stringify(rewritten.body))
         headers = buildPassthroughHeaders(req.headers)
-        target = config.passthrough.baseUrl + req.url
+        target = passthroughBaseUrl + req.url
       }
 
       // sessionId：cwd 認不出來時，它是唯一還能分辨「這筆是誰送的」的線索
