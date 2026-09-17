@@ -1008,6 +1008,19 @@ function readQuadrants(base64) {
   return { TL: colorAt(q, q), TR: colorAt(3 * q, q), BL: colorAt(q, 3 * q), BR: colorAt(3 * q, 3 * q) }
 }
 
+test('基本推論：預算留給會自己思考的上游，回覆是空的時候講清楚為什麼', async () => {
+  await withUpstream(
+    (_body, res) => replyJson(res, { model: 'm', content: [{ type: 'thinking', thinking: '…' }], stop_reason: 'max_tokens' }),
+    async (url, seen) => {
+      const [result] = (await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['connectivity'] })).results
+      assert.equal(result.ok, true, '通不通只看狀態碼，思考吃光預算不代表連不上')
+      assert.match(result.detail, /回覆 是空的（stop_reason=max_tokens，思考把 max_tokens 吃光了）/)
+      assert.ok(seen[0].max_tokens >= 256, 'DeepSeek 不帶 thinking 也會思考，16 tokens 實測不夠')
+      assert.equal(seen[0].thinking, undefined, '不改送 thinking: disabled，免得上游不收時連通測試跟著壞')
+    },
+  )
+})
+
 test('預設清單不含選配的 WebSearch，結果都帶著分級', async () => {
   assert.ok(!DEFAULT_TEST_IDS.includes('webSearch'), '一次上萬 tokens 的測試不能藏在「執行測試」裡')
   await withUpstream(

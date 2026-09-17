@@ -198,20 +198,25 @@ async function judgeReply(response, started, judge) {
 
 async function testConnectivity(provider, model) {
   const started = Date.now()
+  // 不帶 thinking 欄位時，DeepSeek 預設照樣思考：16 tokens 會被思考吃光、回覆是空字串（實測 2026-09）。
+  // 不改送 thinking: disabled —— 上游不收的話，「通不通」這一項就被別的問題拖下水
   const response = await call(provider, model, {
-    max_tokens: 16,
+    max_tokens: 512,
     messages: [{ role: 'user', content: 'Reply with exactly: OK' }],
   })
   if (!response.ok) return { ok: false, ms: Date.now() - started, error: await errorDetail(response) }
 
   const json = await response.json()
   const text = textOf(json.content ?? [])
+  const reply = text
+    ? JSON.stringify(text.slice(0, 40))
+    : `是空的（stop_reason=${json.stop_reason}${json.stop_reason === 'max_tokens' ? '，思考把 max_tokens 吃光了' : ''}）`
   return {
     ok: true,
     ms: Date.now() - started,
-    detail: `上游回報 model=${json.model ?? '?'}・回覆 ${JSON.stringify(text.slice(0, 40))}・in ${
-      json.usage?.input_tokens ?? '?'
-    } / out ${json.usage?.output_tokens ?? '?'} tokens`,
+    detail: `上游回報 model=${json.model ?? '?'}・回覆 ${reply}・in ${json.usage?.input_tokens ?? '?'} / out ${
+      json.usage?.output_tokens ?? '?'
+    } tokens`,
   }
 }
 
