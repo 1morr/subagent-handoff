@@ -494,7 +494,7 @@ function pngChunk(type, data) {
 }
 
 /** 四格純色的 PNG。零依賴自己編碼，因為 GUI 與 router 都守著「沒有 npm 依賴」。 */
-function quadrantPng(colors, size = 128) {
+export function quadrantPng(colors, size = 128) {
   const row = size * 3 + 1
   const raw = Buffer.alloc(row * size)
   for (let y = 0; y < size; y++) {
@@ -518,7 +518,7 @@ function quadrantPng(colors, size = 128) {
 }
 
 /** 只有一頁、一行字的 PDF。xref 的位移要算對，否則寬容度低的解析器會當成壞檔。 */
-function textPdf(text) {
+export function textPdf(text) {
   const stream = `BT /F1 24 Tf 20 40 Td (${text}) Tj ET`
   const objects = [
     '<</Type/Catalog/Pages 2 0 R>>',

@@ -417,7 +417,7 @@ GUI 上必要項目沒過的那列用告警框框住；能力項目沒過的只�
 - [`docs/refactor-2026-08.md`](docs/refactor-2026-08.md) —— 2026-08 那次重構的前後對照：
   補上的本機來源守衛、依路由分開的重試策略、以及每項改動背後的實測數據。
 - [`docs/claude-code-request-shapes.md`](docs/claude-code-request-shapes.md) —— Claude Code v2.1.274 實際送出的請求形狀
-  （Read 圖片 / PDF、WebSearch、Workflow schema、中途 system 訊息）與 DeepSeek 對每一種的實測反應。內建測試照這份打。
+  （Read 圖片 / PDF、WebSearch、Workflow schema、中途 system 訊息）與 DeepSeek 對每一種的實測反應。內建測試照這份打；Claude Code 升級後用 `node scripts/capture-shapes.mjs` 重抓。
 - [`PRODUCT.md`](PRODUCT.md) —— 產品事實：使用者、使用時機、術語、技術約束、已知限制。
 - [`DESIGN.md`](DESIGN.md) —— 視覺系統：色彩、字體、狀態的三個冗餘通道、資訊架構。
 - [`design/`](design/) —— 介面設計稿，`.dc.html` artboard 可以直接用瀏覽器開。

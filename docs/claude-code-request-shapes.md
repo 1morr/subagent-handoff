@@ -4,13 +4,21 @@
 
 ## 怎麼抓的
 
-把 `ANTHROPIC_BASE_URL` 指向本機一個照劇本回 SSE 的假上游，用
-`claude -p --setting-sources project --strict-mcp-config --model opus[1m] --effort xhigh`
-驅動 Claude Code 依序走過：Read 讀圖片、Read 讀 PDF（整份與指定頁數）、WebSearch、開一個 sonnet 子 agent 在裡面讀圖加搜尋、跑一個帶 `schema` 的 Workflow `agent()`。
+```bash
+node scripts/capture-shapes.mjs                       # 五個劇本全跑，輸出到暫存目錄
+node scripts/capture-shapes.mjs image,pdf             # 只跑其中幾個；--out <目錄> 指定輸出位置
+```
 
-- 只記結構：文字只記長度，`authorization` 只記名字。假上游不打真的 API，不花訂閱額度。
+腳本把 `ANTHROPIC_BASE_URL` 指向本機一個照劇本回 SSE 的假上游，用
+`claude -p --setting-sources project --strict-mcp-config --model opus[1m] --effort xhigh`
+驅動 Claude Code 依序走過：Read 讀圖片、Read 讀 PDF（整份與指定頁數）、WebSearch、開一個 sonnet 子 agent 在裡面讀圖加搜尋、跑一個帶 `schema` 的 Workflow `agent()`。Claude Code 升級後重跑一次，對照這份文檔。
+
+- 假上游不打真的 API，不花訂閱額度。全部跑完約 1.5 分鐘，大半在等 Workflow。
+- `requests.jsonl` 只記結構，可以直接貼進來：文字只記長度；帶憑證與身分的 header、`metadata.user_id` 裡的 `account_uuid` 與 `device_id` 只記鍵名；認不得的欄位只記形狀。測試裡有斷言守著。
+- `claude-<劇本>.jsonl` 是 Claude Code 的 stream-json 原樣輸出（含本機路徑與 session id），只給自己除錯用，不要貼出去。
 - `--setting-sources project` 是為了不載入使用者層的 hooks（會對外回報 session 事件）。
-- 腳本是一次性的，沒有進 repo。Claude Code 升級後要重抓，照這一節重做即可。
+- 找不到 `claude` 時用 `CLAUDE_BIN` 指定執行檔。
+- 加了 `--no-session-persistence`，Claude Code 仍會在 `~/.claude/projects/` 下留一個以輸出目錄命名的資料夾（子 agent 與 Workflow 的中繼資料，幾 KB），跑完可以刪。
 
 ## 每一筆推論請求都有的
 
@@ -69,7 +77,7 @@ Workflow agent 的工具清單裡沒有 `Agent` 與 `Workflow`，與 README「�
 | `tool_result` 裡的 image | 看得到，四格顏色全答對 |
 | `tool_result` 裡的 document（PDF） | **200，但 PDF 被換成 `[Unsupported Document]`**，模型看不到內容 |
 | 對話中間與結尾的 `role: "system"`（含 `cache_control: {ttl: "1h"}`） | 兩個位置的碼都答對 |
-| WebSearch 那筆內部請求 | 會代為搜尋。端到端讓 Claude Code 解析 DeepSeek 的真實回應：子 agent 拿到 10 個連結。**一次約 3 萬 input tokens**。把 `max_uses` 壓到 1 並強制 `tool_choice` 時仍搜了 3 次，所以它不見得遵守 `max_uses` |
+| WebSearch 那筆內部請求 | 會代為搜尋。端到端讓 Claude Code 解析 DeepSeek 的真實回應（當時在抓包腳本裡臨時把這一筆轉給 DeepSeek；進 repo 的版本拿掉了這段，不碰 API key）：子 agent 拿到 10 個連結。**一次約 3 萬 input tokens**。把 `max_uses` 壓到 1 並強制 `tool_choice` 時仍搜了 3 次，所以它不見得遵守 `max_uses` |
 | 開著思考、帶 `tool_use` 的 assistant 歷史沒附 thinking | **400** `The content[].thinking in the thinking mode must be passed back to the API.` |
 | 同上，但 `thinking: disabled` | 200 |
 | 帶 `tool_use` 的歷史附上別家的 thinking（空內容加任意 `signature`） | 200 —— 規則從訂閱切到 DeepSeek 時，Anthropic 留下的 thinking 送得過去 |
