@@ -61,7 +61,7 @@ npm start
 
 打開 <http://127.0.0.1:8788>：
 
-1. **Providers** —— 填入 Base URL、API Key 與 Model，按「執行測試」，確認四項全過，見[內建的測試](docs/providers.md#內建的測試)。
+1. **Providers** —— 填入 Base URL、API Key 與 Model，按「執行測試」，確認「必要」項目全過。「能力」項目沒過，Claude Code 照樣跑得起來，只是子 agent 用到那個能力時靜默失效，見[內建的測試](docs/providers.md#內建的測試)。
 2. **Routing** —— 勾選「all subagents → your provider」規則來啟用它。
 3. **Connect** —— 複製 `settings.json` 片段，重新啟動 Claude Code。
 4. 執行 `/status`，確認 `Login method` 仍然指向你的 claude.ai 帳號。
@@ -113,7 +113,7 @@ npm start
 - 儲存的 API key 永遠不會回傳給瀏覽器 —— GUI 拿到的只是遮蔽過的提示字串和一個 `__keep__` 標記值。
 - `config.json` 與 `traffic.log` 都是以 `0600` 權限寫入。
 - 流量記錄只存 metadata：不含請求內容、不含 header，也不含憑證。
-- 供應商請求一律從一組空的 header 開始組建，只從 client 帶過去 `anthropic-version` 與 `anthropic-beta`，所以不會不小心把 client 端的憑證帶出去。有一個測試會斷言這件事。
+- 供應商請求一律從一組空的 header 開始組建，只從 client 帶過去 `anthropic-version`、`anthropic-beta` 與 `accept`，所以不會不小心把 client 端的憑證帶出去。有一個測試會斷言這件事。
 - 送去供應商的請求一律拿掉 `metadata`：Claude Code 在裡面放了你 claude.ai 帳號的 `account_uuid` 與 `device_id`。訂閱那條線不受影響。有一個測試會斷言這件事。
 
 詳細內容與威脅模型：[docs/security.md](docs/security.md)。

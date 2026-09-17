@@ -73,7 +73,9 @@ enabling it would just 401 every subagent.
 Open <http://127.0.0.1:8788>:
 
 1. **Providers** — enter Base URL, API Key and Model, click **Run test**, and
-   confirm all four checks pass; see [the built-in tests](docs/providers.md#內建的測試).
+   confirm every **Required** check passes. A failing **Capability** check
+   does not stop Claude Code from working, but that capability silently fails
+   for subagents; see [the built-in tests](docs/providers.md#內建的測試).
 2. **Routing** — tick the "all subagents → your provider" rule to enable it.
 3. **Connect** — copy the `settings.json` snippet and restart Claude Code.
 4. Run `/status` and confirm `Login method` still points at your claude.ai account.
@@ -144,8 +146,8 @@ under **Rewritten before sending** in the traffic log. Details:
 - `config.json` and `traffic.log` are written `0600`.
 - The traffic log records metadata only: no request bodies, no headers, no
   credentials.
-- Provider requests are built from an empty header set — only `anthropic-version`
-  and `anthropic-beta` are copied over — so no client credential can be
+- Provider requests are built from an empty header set — only `anthropic-version`,
+  `anthropic-beta` and `accept` are copied over — so no client credential can be
   forwarded by accident. A test asserts this.
 - Provider requests have `metadata` removed: Claude Code puts your claude.ai
   `account_uuid` and `device_id` in it. The subscription line is untouched. A

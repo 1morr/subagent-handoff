@@ -1,6 +1,6 @@
 # Claude Code 實際送出的請求形狀（v2.1.274，2026-09）
 
-換 provider 之前，拿這份對照它收不收得下 Claude Code 真正送的東西。形狀抄錯，測到的就是別的東西 —— 這件事實際發生過：看圖測試第一版自己捏了一則「assistant 呼叫 Read」當歷史、沒附 thinking，DeepSeek 回 `400 The content[].thinking in the thinking mode must be passed back to the API`，結果被判成「看不到圖片」。
+[內建測試](providers.md#內建的測試)的串流工具迴圈、中途 system 訊息、看圖、讀 PDF 都照這裡記錄的形狀打；換 provider 時也拿這份對照它收不收得下 Claude Code 真正送的東西。形狀抄錯，測到的就是別的東西 —— 這件事實際發生過：看圖測試第一版自己捏了一則「assistant 呼叫 Read」當歷史、沒附 thinking，DeepSeek 回 `400 The content[].thinking in the thinking mode must be passed back to the API`，結果被判成「看不到圖片」。
 
 ## 怎麼抓的
 
@@ -20,7 +20,7 @@
 | `messages` | 第一則 user 由好幾個 text block 組成，**緊接著一則 `role: "system"`**（主對話約 8.6K 字元，子 agent 也有）；結尾常再有一則帶 `cache_control` 的 `role: "system"`。`tool_use`、`tool_result` 也帶 `cache_control` |
 | `tools` | 沒有 `strict`、沒有 `defer_loading` —— 自訂 base URL 下 tool search 預設關閉，實測吻合 |
 
-`role: "system"` 不是標準 Messages API 的角色。上游收下卻丟掉時，子 agent 會少掉 Claude Code 放在那裡的指示而且不報錯，換 provider 時要單獨確認。
+`role: "system"` 不是標準 Messages API 的角色。上游收下卻丟掉時，子 agent 會少掉 Claude Code 放在那裡的指示而且不報錯，所以「中途 system 訊息」是一個獨立的測試項。
 
 ## Read
 

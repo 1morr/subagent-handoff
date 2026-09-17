@@ -136,7 +136,7 @@ state`）。Claude Code 一律走串流所以碰不到，但自己寫長生成�
 
 - **子 agent 讀不到 PDF。** Read 把 PDF 以 `document` block 放進工具結果，
   DeepSeek 把它換成 `[Unsupported Document]` 照樣回 200，模型只看得到檔名那一
-  行。端到端實測時，一個子 agent 讀不到之後自己改
+  行。內建測試的「讀 PDF」會標出來。端到端實測時，一個子 agent 讀不到之後自己改
   用 Bash 看 PDF 的原始位元組，碰巧讀出了碼 —— 那是因為測試用的 PDF 沒壓縮，一般
   PDF 行不通。
 - **看圖可以。** 圖片放在工具結果裡（Read 讀圖、MCP 截圖都是這種）照樣看得到；真
@@ -175,8 +175,12 @@ provider 線上唯一會被改寫的回應，就是上面那個 **context 超限
 
 ## 內建的測試
 
-GUI 上每個 provider 都能一鍵測（`src/probe.mjs`）。四項任一不過，Claude Code 在這個
-provider 上就跑不起來：
+GUI 上每個 provider 都能一鍵測（`src/probe.mjs`）。前三項是刻意簡化的單發請求，
+只問通不通；其餘各項照 Claude Code 子 agent **實際送出的請求形狀**打（v2.1.274
+抓包，見 [claude-code-request-shapes.md](claude-code-request-shapes.md)）。分成
+兩級，因為壞掉的樣子完全不同：
+
+**必要** —— 任一不過，Claude Code 在這個 provider 上就跑不起來
 
 - **基本推論** — base URL / key / model 名三者對不對，順便回報上游實際回傳的
   model 與 token 用量
@@ -186,18 +190,37 @@ provider 上就跑不起來：
 - **串流工具迴圈** — 子 agent 每一輪的真實形狀：串流吐出 `tool_use`，再把整則
   assistant 訊息（連同 thinking 與 `signature`）加上 `tool_result` 送回去。單發
   的工具呼叫測不到「`input_json_delta` 拼不拼得回 JSON」與「上游收不收自己吐的
-  thinking」。這一項照子 agent 的思考形狀送（`thinking: adaptive`、
-  `context_management`），檔位壓到 `low`
+  thinking」
+
+**能力** —— 不過也跑得起來、請求照樣 200，只是子 agent 用到那個能力時靜默失效
+
+- **中途 system 訊息** — Claude Code 每一筆請求都在對話中間夾著 `role: "system"`
+  訊息。丟掉的話子 agent 少一大段指示
+- **看圖** — 圖片放在工具結果裡（Read 讀圖、MCP 截圖都是這種），模型要答對四格
+  隨機顏色
+- **讀 PDF** — `document` block 放在工具結果裡，模型要答出 PDF 裡的隨機碼。
+  DeepSeek 在這項不過
+
+能力項目的判定**看模型答不答得出只有它看得見的東西，不看狀態碼**：DeepSeek 把
+PDF 換成佔位字之後照樣回 200。思考把 `max_tokens` 吃光、或模型不肯呼叫工具時，結
+果會寫明無法判定，不會誣賴上游丟了內容。
+
+看圖與讀 PDF 會先讓模型真的呼叫一次 Read，再把它自己那則回覆原樣送回去 —— 不能自
+己捏一則 assistant 訊息當歷史，DeepSeek 在思考模式下會因為缺 thinking 回 400，那
+個 400 會被誤判成看不到圖。測試用的圖片與 PDF 是每次隨機產生的（四格純色 PNG、一行
+字的 PDF），零依賴自己編碼。
+
+GUI 上每一列都標著它是必要還是能力。必要項目沒過的那列用告警框框住；能力項目沒過
+的只推出機架，不發告警色（視覺規則見 [ui-notes.md](ui-notes.md)）。
 
 測試的 header 與 body 用 proxy 轉發子 agent 請求的同一套函式組（`buildProviderHeaders`、
-`rewriteBodyForProvider`），所以測到的就是真的會送出去的樣子。總共 5 個小請求；未儲存
-的設定也能直接測，測完滿意再按儲存。
+`rewriteBodyForProvider`），測到的就是真的會送出去的樣子。「執行測試」總共打 10 個
+小請求（串流工具迴圈、看圖、讀 PDF 各 2 個），串流工具迴圈與能力項目一律用子 agent
+的思考形狀、檔位壓到 `low`。未儲存的設定也能直接測，測完滿意再按儲存。
 
-看圖、讀 PDF、中途 `role: "system"` 訊息、`/effort` 檔位、WebSearch 這些「不支援也
-照樣回 200、只是能力靜默失效」的差異，曾經也是內建測試，已經拿掉：它們回答的是換
-provider 時問一次的問題，每跑一次多花十幾個付費請求。DeepSeek 在這幾項上的結果記在
-上面兩節與 [claude-code-request-shapes.md](claude-code-request-shapes.md)；換別家
-provider 時，照那份文檔的形狀自己打幾筆確認。
+兩項不測：`/effort` 檔位上游不收時回的是看得見的 400，不是靜默失效；WebSearch 由
+provider 代為搜尋、結果整包灌進 context，DeepSeek 上一次就要 3 萬 input tokens 上下，
+結果記在上面的補測一節。
 
 ## 另見
 

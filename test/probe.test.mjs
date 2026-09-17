@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import zlib from 'node:zlib'
 import { runProbes } from '../src/probe.mjs'
 import { defaultProvider } from '../src/config.mjs'
 import { listen } from './helpers.mjs'
@@ -80,9 +81,38 @@ function replySse(res, events) {
   res.end()
 }
 
-/** 最後一則 user 訊息裡的 tool_result 內容 */
+const replyText = (res, text, extra = {}) =>
+  replyJson(res, { content: [{ type: 'text', text }], stop_reason: 'end_turn', ...extra })
+
+/** 最後一則 user 訊息裡的 tool_result 內容（Read 的結果都放在這裡） */
 const lastToolResult = (body) =>
   body.messages.at(-1).content.find((b) => b.type === 'tool_result')?.content ?? []
+
+/** 從探針送來的 PNG 讀回四格的顏色：真的解碼，而不是去偷看探針的內部狀態 */
+function readQuadrants(base64) {
+  const png = Buffer.from(base64, 'base64')
+  let width = 0
+  const idat = []
+  for (let at = 8; at < png.length; ) {
+    const length = png.readUInt32BE(at)
+    const type = png.toString('ascii', at + 4, at + 8)
+    const data = png.subarray(at + 8, at + 8 + length)
+    if (type === 'IHDR') width = data.readUInt32BE(0)
+    if (type === 'IDAT') idat.push(data)
+    at += 12 + length
+  }
+  const raw = zlib.inflateSync(Buffer.concat(idat))
+  const row = width * 3 + 1
+  const palette = { red: [255, 0, 0], green: [0, 255, 0], blue: [0, 0, 255], yellow: [255, 255, 0] }
+  const colorAt = (x, y) => {
+    const o = y * row + 1 + x * 3
+    const px = [raw[o], raw[o + 1], raw[o + 2]]
+    const distance = (c) => c.reduce((sum, v, i) => sum + (v - px[i]) ** 2, 0)
+    return Object.keys(palette).sort((a, b) => distance(palette[a]) - distance(palette[b]))[0]
+  }
+  const q = width / 4
+  return { TL: colorAt(q, q), TR: colorAt(3 * q, q), BL: colorAt(q, 3 * q), BR: colorAt(3 * q, 3 * q) }
+}
 
 test('基本推論：預算留給會自己思考的上游，回覆是空的時候講清楚為什麼', async () => {
   await withUpstream(
@@ -93,6 +123,16 @@ test('基本推論：預算留給會自己思考的上游，回覆是空的時�
       assert.match(result.detail, /reply empty \(stop_reason=max_tokens, thinking used up max_tokens\)/)
       assert.ok(seen[0].max_tokens >= 256, 'DeepSeek 不帶 thinking 也會思考，16 tokens 實測不夠')
       assert.equal(seen[0].thinking, undefined, '不改送 thinking: disabled，免得上游不收時連通測試跟著壞')
+    },
+  )
+})
+
+test('結果都帶著分級：必要項目與能力項目分得開', async () => {
+  await withUpstream(
+    (_body, res) => replyText(res, 'OK'),
+    async (url) => {
+      const { results } = await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['connectivity', 'systemMessages'] })
+      assert.deepEqual(results.map((r) => r.tier), ['required', 'capability'])
     },
   )
 })
@@ -184,3 +224,129 @@ test('串流工具迴圈：input_json_delta 拼不回合法 JSON 就判失敗，
   )
 })
 
+test('中途 system 訊息：兩個位置都送到，模型答得出兩個碼才算過', async () => {
+  await withUpstream(
+    (body, res) => {
+      const systemTexts = body.messages
+        .filter((m) => m.role === 'system')
+        .map((m) => (typeof m.content === 'string' ? m.content : m.content.map((b) => b.text).join('')))
+      const session = /Session code: (\d+)/.exec(systemTexts.join('\n'))?.[1] ?? 'NONE'
+      const reminder = /Reminder code: (\d+)/.exec(systemTexts.join('\n'))?.[1] ?? 'NONE'
+      replyText(res, `SESSION=${session} REMINDER=${reminder}`)
+    },
+    async (url, seen) => {
+      const [result] = (await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['systemMessages'] })).results
+      assert.equal(result.ok, true, result.error)
+      const roles = seen[0].messages.map((m) => m.role)
+      assert.equal(roles[1], 'system', '照抓到的形狀：第一則 user 之後就是 system')
+      assert.equal(roles.at(-1), 'system', '結尾也有一則')
+      assert.ok(seen[0].messages.at(-1).content[0].cache_control, '結尾那則帶 cache_control')
+    },
+  )
+})
+
+test('中途 system 訊息：上游收下卻丟掉時照樣 200，要判失敗並指出是哪一則', async () => {
+  await withUpstream(
+    (_body, res) => replyText(res, 'SESSION=NONE REMINDER=NONE'),
+    async (url) => {
+      const [result] = (await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['systemMessages'] })).results
+      assert.equal(result.ok, false)
+      assert.match(result.error, /mid-conversation and trailing system message/)
+    },
+  )
+})
+
+/** 看圖 / 讀 PDF 的第一輪：模型呼叫 Read，前面帶著自己的 thinking —— 第二輪必須原樣看到這一則 */
+const READ_CALL = [
+  { type: 'thinking', thinking: '', signature: 'sig-read' },
+  { type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: '/tmp/probe' } },
+]
+const replyReadCall = (res) => replyJson(res, { content: READ_CALL, stop_reason: 'tool_use' })
+
+test('看圖：圖片放在 tool_result 裡，模型答對四格顏色才算過', async () => {
+  await withUpstream(
+    (body, res) => {
+      if (body.messages.length === 1) return replyReadCall(res)
+      const image = lastToolResult(body).find((b) => b.type === 'image')
+      const q = readQuadrants(image.source.data)
+      replyText(res, `TL=${q.TL} TR=${q.TR} BL=${q.BL} BR=${q.BR}`)
+    },
+    async (url, seen) => {
+      const [result] = (await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['vision'] })).results
+      assert.equal(result.ok, true, result.error)
+      assert.equal(seen.length, 2)
+      assert.deepEqual(seen[1].messages[1].content, READ_CALL, '要送回模型自己那一則，thinking 缺了 DeepSeek 直接 400')
+      const last = seen[1].messages.at(-1)
+      assert.deepEqual(last.content.map((b) => b.type), ['tool_result'], '照 Claude Code 的形狀：圖片只出現在工具結果裡')
+      assert.equal(last.content[0].tool_use_id, 'toolu_read')
+    },
+  )
+})
+
+test('看圖：模型不呼叫 Read 時是「無法判定」，不打第二輪', async () => {
+  await withUpstream(
+    (_body, res) => replyText(res, 'I will not read files.'),
+    async (url, seen) => {
+      const [result] = (await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['vision'] })).results
+      assert.equal(result.ok, false)
+      assert.match(result.error, /did not call Read.*cannot judge/)
+      assert.equal(seen.length, 1)
+    },
+  )
+})
+
+test('看圖：上游把圖片丟掉、模型照猜，要判失敗', async () => {
+  await withUpstream(
+    (body, res) => (body.messages.length === 1 ? replyReadCall(res) : replyText(res, 'I cannot see an image. TL=? TR=? BL=? BR=?')),
+    async (url) => {
+      const [result] = (await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['vision'] })).results
+      assert.equal(result.ok, false)
+      assert.match(result.error, /never reached the model/)
+    },
+  )
+})
+
+test('看圖：思考吃光 max_tokens 沒有回覆時是「無法判定」，不能誣賴上游丟了圖', async () => {
+  await withUpstream(
+    (body, res) =>
+      body.messages.length === 1
+        ? replyReadCall(res)
+        : replyJson(res, { content: [{ type: 'thinking', thinking: '…' }], stop_reason: 'max_tokens' }),
+    async (url) => {
+      const [result] = (await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['vision'] })).results
+      assert.equal(result.ok, false)
+      assert.match(result.error, /cannot judge/)
+      assert.match(result.error, /max_tokens/)
+      assert.doesNotMatch(result.error, /never reached the model/)
+    },
+  )
+})
+
+test('讀 PDF：document 放在 tool_result 裡，答得出 PDF 裡的碼才算過', async () => {
+  await withUpstream(
+    (body, res) => {
+      if (body.messages.length === 1) return replyReadCall(res)
+      const doc = lastToolResult(body).find((b) => b.type === 'document')
+      const text = /\((PDF-\d+)\) Tj/.exec(Buffer.from(doc.source.data, 'base64').toString('latin1'))[1]
+      replyText(res, text)
+    },
+    async (url, seen) => {
+      const [result] = (await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['pdf'] })).results
+      assert.equal(result.ok, true, result.error)
+      const content = seen[1].messages.at(-1).content[0].content
+      assert.deepEqual(content.map((b) => b.type), ['text', 'document'], '照 Claude Code 的形狀：一行檔名說明加上 document')
+      assert.equal(content[1].source.media_type, 'application/pdf')
+    },
+  )
+})
+
+test('讀 PDF：上游把 document 換成佔位字照樣回 200（DeepSeek 實測），要判失敗', async () => {
+  await withUpstream(
+    (body, res) => (body.messages.length === 1 ? replyReadCall(res) : replyText(res, 'NONE')),
+    async (url) => {
+      const [result] = (await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['pdf'] })).results
+      assert.equal(result.ok, false)
+      assert.match(result.error, /PDF content never reached the model/)
+    },
+  )
+})

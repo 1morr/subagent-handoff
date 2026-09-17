@@ -499,13 +499,18 @@ function filteredLogs() {
 // 目錄查表，查不到（例如日後新增的測項）才退回伺服器給的 label。
 const PROBE_LABEL_KEY = {
   connectivity: 'providers.testConnectivity', streaming: 'providers.testStreaming', tools: 'providers.testTools',
-  toolLoop: 'providers.testToolLoop', config: 'providers.testConfig',
+  toolLoop: 'providers.testToolLoop', systemMessages: 'providers.testSystemMessages',
+  vision: 'providers.testVision', pdf: 'providers.testPdf', config: 'providers.testConfig',
 }
 const probeLabel = (r) => (PROBE_LABEL_KEY[r.id] && t(PROBE_LABEL_KEY[r.id]) !== PROBE_LABEL_KEY[r.id]) ? t(PROBE_LABEL_KEY[r.id]) : r.label
 
 function probeRow(r) {
-  const cls = r.ok ? 'clr' : 'hold'
-  const tabStyle = r.ok ? 'background:var(--sub)' : 'background:var(--alarm)'
+  // 必要項目沒過＝被擋下（整圈告警框）；能力項目沒過＝跑得起來但出了事，推出機架、不發告警色。
+  // 兩種都印 FAIL，差別在位置與框 —— 把「看不到 PDF」畫得跟「連不上」一樣響就是在誇大。
+  // 沒有 tier 的（設定錯誤、連 admin 都打不到）一律當必要看待
+  const required = r.tier !== 'capability'
+  const cls = r.ok ? 'clr' : required ? 'hold' : 'chk'
+  const tabStyle = r.ok ? 'background:var(--sub)' : required ? 'background:var(--alarm)' : ''
   return `
     <div class="slot ${cls}">
       <div class="strip" style="cursor:default">
@@ -515,6 +520,7 @@ function probeRow(r) {
         <span style="padding:9px 12px;display:flex;flex-direction:column;gap:4px;min-width:0">
           <span style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap">
             <span style="font-weight:700;color:var(--ink);font-size:12.5px">${esc(probeLabel(r))}</span>
+            <span style="font:11px var(--han);color:var(--ink-dim)">${required ? t('providers.tierRequired') : t('providers.tierCapability')}</span>
             ${r.ms != null ? `<span class="num" style="font-size:11px;color:var(--ink-dim)">${r.ms}ms</span>` : ''}
           </span>
           ${r.detail ? `<span class="num" style="font-size:11px;color:var(--ink-dim);word-break:break-word">${esc(r.detail)}</span>` : ''}
@@ -526,9 +532,12 @@ function probeRow(r) {
 
 /** 測試結果底下那一行結論。回傳 HTML：測項名稱已過 esc()，字串本身帶 <strong> 之類的標記。 */
 function probeSummary(results) {
-  const failed = results.filter((r) => !r.ok)
-  if (!failed.length) return t('providers.allPass')
-  return t('providers.requiredFailed', { names: failed.map((r) => esc(probeLabel(r))).join(t('providers.listSep')) })
+  const names = (list) => list.map((r) => esc(probeLabel(r))).join(t('providers.listSep'))
+  const blocked = results.filter((r) => !r.ok && r.tier !== 'capability')
+  const degraded = results.filter((r) => !r.ok && r.tier === 'capability')
+  if (blocked.length) return t('providers.requiredFailed', { names: names(blocked) })
+  if (degraded.length) return t('providers.capabilityFailed', { names: names(degraded) })
+  return t('providers.allPass')
 }
 
 function providerCard(p) {

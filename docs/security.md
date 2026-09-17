@@ -31,7 +31,7 @@ CSRF、Host 擋 DNS rebinding），細節與驗證方式見 README 的對應章�
 guard 之外、跟資料安全直接相關的幾點：
 
 - **`buildProviderHeaders`（`src/proxy.mjs`）從零組出送給第三方的 header**，只從
-  客戶端（Claude Code）帶過去 `anthropic-version` 與 `anthropic-beta`，不會把原始的
+  客戶端（Claude Code）帶過去 `anthropic-version`、`anthropic-beta` 與 `accept`，不會把原始的
   `authorization` / `x-api-key` / `cookie` 轉發過去 —— 第三方永遠只拿得到你在 GUI 裡
   替那個 provider 填的 key，拿不到訂閱的 OAuth token。這是整個工具存在的前提，
   `test/routing.test.mjs` 有專門的負向斷言守著。
