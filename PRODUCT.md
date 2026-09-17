@@ -50,6 +50,7 @@ web
 - 只綁 `127.0.0.1`，且 admin server 有來源檢查（它握有 API key 還原能力與整份設定的寫入權）。
 - 沒有網路可用性假設：畫面上不能有任何外部 CDN、字型或圖片請求。
 - 資料只有中繼資料，沒有 prompt 內容。這是刻意的隱私邊界，測試裡有斷言守著。
+- 訂閱帳號的識別資訊不出門到第三方：送去 provider 的請求一律拿掉 `metadata`（內含 claude.ai 的 `account_uuid` 與 `device_id`），測試裡同樣有斷言。
 
 **已知限制**（產品事實，不是缺陷）：Anthropic 官方不支援把 Claude Code 導到非 Claude 模型；`ANTHROPIC_BASE_URL` 指向非 Anthropic host 時 Remote Control 會停用；`/fast` 與 WebFetch 的檢查直連 `api.anthropic.com` 不經過 router。
 

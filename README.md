@@ -362,6 +362,8 @@ GUI 上每個 provider 都能一鍵測，對應 Claude Code 實際會用到、�
   2. 還是不行就在 Claude Code 那頭設 `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`，兩半一起不送 —— 這是官方指定的解法，代價是它**全域生效**，訂閱線也會少掉那些 capability
   3. 最後才動 `dropFields`，而且一次只加一個。整組刪掉會連帶關掉 `/effort`，且請求照樣 200，只是模型變笨
 - `dropFields`、`maxOutputTokens`、`extraHeaders` 只作用在要送去 provider 的請求。passthrough（訂閱）那條線是原始 bytes 原樣轉發，連 JSON 都不重新序列化，主對話的思考檔位不受任何影響 —— 唯一的例外是規則設了 `modelOverride`，那筆會重新序列化，但也只換 `model` 一個欄位。
+- **送去 provider 的請求一律拿掉 `metadata`。** Claude Code 在 `metadata.user_id` 裡放了 claude.ai 的 `account_uuid` 與 `device_id`（實測 v2.1.274），那是訂閱帳號的識別資訊。這一項沒有開關；訂閱線照舊原樣轉發。點開進條的「送出前改寫」會看到 `-metadata`。
+  代價：DeepSeek 的[文檔](https://api-docs.deepseek.com/quick_start/rate_limit)說它拿 `user_id` 做 KV cache 與排程隔離，拿掉之後所有請求落在同一個（空 id 的）分區。那種隔離是給一把 key 服務很多終端使用者用的，單人用不到；一般帳號的並發上限本來也是所有 `user_id` 合計。
 - `/v1/messages/count_tokens` 若 provider 不支援會回 404，Claude Code 會自動退回用推論端點估算，不影響運作。
 - 建議一併設 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`。Claude Code 會在 system prompt 前面加一段 attribution block，只有 `api.anthropic.com` 會自動剝除，第三方 provider 會把它當 prompt 收下去。
 

@@ -123,6 +123,14 @@ export function rewriteBodyForProvider(payload, provider, model) {
   const body = { ...renamed.body }
   const changes = [...renamed.changes]
 
+  // Claude Code 把 claude.ai 的 account_uuid 與 device_id 塞在 metadata.user_id（實測 v2.1.274）。
+  // 那是訂閱帳號的識別資訊，不該跟著子 agent 的請求出門。DeepSeek 會拿 user_id 做 KV cache 與排程隔離，
+  // 但那是給「一把 key 服務很多終端使用者」的情境；這裡只有一個人，拿掉只是所有請求落在同一個分區。
+  if (body.metadata !== undefined) {
+    delete body.metadata
+    changes.push('-metadata')
+  }
+
   for (const field of provider.dropFields ?? []) {
     if (field in body) {
       delete body[field]

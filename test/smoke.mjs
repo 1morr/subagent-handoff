@@ -177,6 +177,8 @@ async function post(headers, body, query = 'beta=true') {
 
 const BASE_BODY = {
   model: 'claude-opus-5',
+  // 形狀照實測 v2.1.274：訂閱帳號的識別資訊就放在這裡
+  metadata: { user_id: '{"device_id":"dev-1","account_uuid":"acct-1","session_id":"sess-1"}' },
   max_tokens: 4096,
   messages: [{ role: 'user', content: 'hi' }],
   thinking: { type: 'adaptive' },
@@ -217,6 +219,19 @@ test('子 agent 改導向 provider 並改寫 model，但預設不動任何 body 
   assert.deepEqual(hit.body.thinking, { type: 'adaptive' })
   assert.deepEqual(hit.body.context_management, { edits: [] })
   assert.deepEqual(hit.body.messages, BASE_BODY.messages, 'messages 不能動')
+})
+
+test('送去 provider 的請求不帶 metadata：claude.ai 帳號識別不能流到第三方', async () => {
+  await (await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'agent-1' }, BASE_BODY)).text()
+
+  const [hit] = received
+  assert.equal(hit.body.metadata, undefined)
+  assert.ok(!JSON.stringify(hit.body).includes('acct-1'), 'account_uuid 不能以任何形式出現在送出的 body 裡')
+  assert.ok(logStore.list()[0].changes.includes('-metadata'), '流量記錄要看得出 router 動過這一項')
+
+  // 訂閱線照舊原樣：那是 Anthropic 自己的欄位，拿掉反而是在改 Claude Code 的請求
+  await (await post(SUBSCRIPTION_HEADERS, BASE_BODY)).text()
+  assert.deepEqual(received[0].body.metadata, BASE_BODY.metadata)
 })
 
 test('流量記錄帶上 cwd 與 effort，但不留 prompt 內容', async () => {
