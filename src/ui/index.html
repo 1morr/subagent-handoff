@@ -780,23 +780,45 @@ function retryTune(retry, scopeAttr = '') {
 }
 
 function probeRow(r) {
-  const cls = r.ok ? 'clr' : 'hold'
+  // 必要項目沒過＝被擋下（整圈告警框）；能力項目沒過＝跑得起來但出了事，推出機架、不發告警色。
+  // 沒有 tier 的（設定錯誤、連 admin 都打不到）一律當必要看待
+  const required = r.tier !== 'capability'
+  const cls = r.ok ? 'clr' : required ? 'hold' : 'chk'
+  const tabStyle = r.ok ? 'background:var(--sub)' : required ? 'background:var(--alarm)' : ''
   return `
     <div class="slot ${cls}">
       <div class="strip" style="cursor:default">
-        <span class="tab" style="background:${r.ok ? 'var(--sub)' : 'var(--alarm)'}">
+        <span class="tab" style="${tabStyle}">
           <span class="code">${r.ok ? 'PASS' : 'FAIL'}</span>
         </span>
         <span style="padding:9px 12px;display:flex;flex-direction:column;gap:4px;min-width:0">
           <span style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap">
             <span style="font-weight:700;color:var(--ink);font-size:12.5px">${esc(r.label)}</span>
+            <span style="font:11px var(--han);color:var(--ink-dim)">${required ? '必要' : '能力'}</span>
             ${r.ms != null ? `<span class="num" style="font-size:11px;color:var(--ink-dim)">${r.ms}ms</span>` : ''}
           </span>
           ${r.detail ? `<span class="num" style="font-size:11px;color:var(--ink-dim);word-break:break-word">${esc(r.detail)}</span>` : ''}
-          ${r.error ? `<span class="num" style="font-size:11px;color:#8f2c18;word-break:break-word">${esc(r.error)}</span>` : ''}
+          ${r.error ? `<span style="font:11px/1.55 var(--han);color:#8f2c18;word-break:break-word">${esc(r.error)}</span>` : ''}
         </span>
       </div>
     </div>`
+}
+
+const PROBE_INTRO =
+  '尚未測試。<strong>必要</strong>項目（基本推論、SSE 串流、工具呼叫、串流工具迴圈）任一不過，Claude Code 在這個 provider 上就跑不起來。' +
+  '<strong>能力</strong>項目（思考檔位、中途 system 訊息、看圖、讀 PDF）壞掉時請求照樣回 200，只是子 agent 用到那個能力時靜默失效。共 15 個小請求。'
+
+function probeSummary(results) {
+  // 只單獨跑過 WebSearch 時，還不能對整個 provider 下結論
+  if (!results.some((r) => r.tier !== 'capability')) return PROBE_INTRO
+  const names = (list) => list.map((r) => esc(r.label)).join('、')
+  const blocked = results.filter((r) => !r.ok && r.tier !== 'capability')
+  const degraded = results.filter((r) => !r.ok && r.tier === 'capability')
+  if (blocked.length) return `必要項目沒過（${names(blocked)}）—— Claude Code 在這個 provider 上跑不起來。`
+  if (degraded.length) {
+    return `必要項目全過，Claude Code 跑得起來。沒過的是能力項目（${names(degraded)}）：不會報錯，子 agent 用到時才靜默失效，原因寫在各列上。`
+  }
+  return '全部通過。這個 provider 可以接 Claude Code 的子 agent 流量。'
 }
 
 function providerCard(p) {
@@ -874,14 +896,11 @@ function providerCard(p) {
           <input type="text" data-f="testModel" value="${esc(t?.model ?? '')}">
         </label>
         <button class="btn go" data-act="test" ${busy ? 'disabled' : ''}>${busy ? '測試中…' : '執行測試'}</button>
+        <button class="btn" data-act="test-websearch" ${busy ? 'disabled' : ''}>測 WebSearch</button>
       </div>
-      ${t?.results?.length
-        ? `<div class="rack" style="padding:3px 26px 3px 3px">${t.results.map(probeRow).join('')}</div>
-           <span class="hint">${
-             t.results.every((r) => r.ok)
-               ? '四項全過。這個 provider 可以接 Claude Code 的子 agent 流量。'
-               : '有項目沒過 —— 前三項任一不過，Claude Code 在這個 provider 上就跑不起來；第四項不過的話跑得起來，但 <code>/effort</code> 會被吃掉。'}</span>`
-        : '<span class="hint">尚未測試。前三項驗基本推論、SSE 串流、工具呼叫 —— 任一不過，Claude Code 在這個 provider 上就跑不起來。第四項驗 <code>/effort</code> 到不到得了模型，它壞掉不會報錯，只是模型變笨。</span>'}
+      <span class="hint">「測 WebSearch」是選配：子 agent 的 WebSearch 會分到這個 provider、由它代為搜尋，但搜尋結果會整包灌進 context，一次就要上萬 input tokens，所以不在「執行測試」裡。</span>
+      ${t?.results?.length ? `<div class="rack" style="padding:3px 26px 3px 3px">${t.results.map(probeRow).join('')}</div>` : ''}
+      <span class="hint">${t?.results?.length ? probeSummary(t.results) : PROBE_INTRO}</span>
     </div>
   </section>`
 }
@@ -1364,12 +1383,17 @@ document.addEventListener('click', async (ev) => {
       applyState(await api('PUT', '/api/config', S.config))
       render()
       toast(act === 'flip' ? '所有子 agent 已交還給訂閱・下一個請求就改道' : '已重新收下子 agent')
-    } else if (act === 'test') {
+    } else if (act === 'test' || act === 'test-websearch') {
       const provider = S.config.providers.find((p) => p.id === pid)
+      const webSearchOnly = act === 'test-websearch'
       S.busy[pid] = true; render()
       try {
-        const out = await api('POST', '/api/test', { provider, model: S.tests[pid]?.model })
-        S.tests[pid] = { ...out, model: S.tests[pid]?.model ?? '' }
+        const out = await api('POST', '/api/test', {
+          provider, model: S.tests[pid]?.model, tests: webSearchOnly ? ['webSearch'] : undefined,
+        })
+        // WebSearch 單獨跑，結果併進既有那組，不把剛跑完的預設項目洗掉
+        const kept = webSearchOnly ? (S.tests[pid]?.results ?? []).filter((r) => r.id !== 'webSearch') : []
+        S.tests[pid] = { ...out, results: [...kept, ...out.results], model: S.tests[pid]?.model ?? '' }
       } catch (err) {
         S.tests[pid] = { results: [{ id: 'x', label: '測試', ok: false, error: err.message }] }
       } finally {

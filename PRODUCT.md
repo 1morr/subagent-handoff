@@ -15,7 +15,7 @@ web
 1. **確認分流有沒有生效** —— 改完設定或重開 Claude Code 之後，要馬上知道主對話走訂閱、子 agent 走 provider，而且真的在動。
 2. **出事了在查原因** —— Claude Code 畫面上寫 `will retry in 2m 26s` 或「回應可能不完整」，他來這裡查是誰擋的、429 還是 5xx、限流窗還剩多久。
 3. **切換配額去向** —— 第三方配額見底時把規則的導向切回訂閱（或反過來）。這是最頻繁的操作，而且往往在 agent 正在跑的時候做。
-4. **接新的 provider** —— 填 base URL / API key、跑四項測試、照上游的 400 錯誤訊息調 `dropFields`，直到跑得通。
+4. **接新的 provider** —— 填 base URL / API key、跑內建測試、照上游的 400 錯誤訊息調 `dropFields`，直到必要項目全過；能力項目（看圖、讀 PDF 等）沒過的，知道子 agent 在那個 provider 上缺什麼。
 
 ## Product Purpose
 
@@ -41,7 +41,7 @@ web
 
 ## Capabilities and Constraints
 
-**功能**（五個分頁）：Providers（憑證、model 改寫、authStyle、dropFields、extraHeaders、max_tokens 夾制、retry 覆寫、四項連通性測試）、路由規則（passthrough 預設去向 + 由上而下第一條命中的規則清單 + 規則預覽）、流量記錄（每 3 秒輪詢，11 欄）、進階（全域 retry、落檔、請求上限）、接入說明。
+**功能**（五個分頁）：Providers（憑證、model 改寫、authStyle、dropFields、extraHeaders、max_tokens 夾制、retry 覆寫、照 Claude Code 真實請求形狀打的測試：必要 4 項＋能力 4 項＋選配 WebSearch）、路由規則（passthrough 預設去向 + 由上而下第一條命中的規則清單 + 規則預覽）、流量記錄（每 3 秒輪詢，11 欄）、進階（全域 retry、落檔、請求上限）、接入說明。
 
 **術語**（不可改寫，程式與文檔共用）：`main` / `subagent` / `nested`（請求來源）、`passthrough`（訂閱那條線）、`provider`、`rule`、`modelOverride`、`dropFields`、`effort`。
 

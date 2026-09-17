@@ -39,7 +39,7 @@ npm start
 
 打開 <http://127.0.0.1:8788>：
 
-1. **Providers** 分頁填 Base URL、API Key、Model，按「執行測試」確認四項全過
+1. **Providers** 分頁填 Base URL、API Key、Model，按「執行測試」確認**必要**項目全過（能力項目沒過也跑得起來，見[內建的測試](#內建的測試)）
 2. **路由** 分頁把「所有子 agent → 你的 provider」那條規則**打勾啟用**（左邊的標記從 `OFF` 變成 `ON`）
 3. **接入** 分頁複製 `settings.json` 片段，重開 Claude Code
 4. `/status` 確認 `Login method` 仍指向 claude.ai 帳號
@@ -315,27 +315,52 @@ DeepSeek [自己的文檔](https://api-docs.deepseek.com/guides/thinking_mode)�
 
 兩個不用擔心的：
 
-- **多輪的 thinking block 不強制回傳。** 整個拿掉、或保留但把 `signature` 清空，第二輪都照樣 200 且答對。社群有回報 DeepSeek 要求 `content[].thinking` 必須原樣送回，在 `deepseek-v4-pro` 上不重現。
-- **`cache_control` 被忽略**，所以這條線沒有 prompt caching。長 system prompt 的子 agent 成本會比有快取的 provider 難看。
+- **多輪的 thinking block 不強制回傳。** 整個拿掉、或保留但把 `signature` 清空，第二輪都照樣 200 且答對。社群有回報 DeepSeek 要求 `content[].thinking` 必須原樣送回，在 `deepseek-v4-pro` 上不重現。（2026-09 在 `deepseek-flash` 上**重現了**，限帶 `tool_use` 的歷史，見下一節。）
+- **`cache_control` 被忽略**，但它有自己的自動前綴快取 —— 2026-09 實測回應裡有 `cache_read_input_tokens`。這一條原本寫成「沒有 prompt caching」，是錯的。
 
 一個踩到的坑：**非串流的長生成會被砍連線**。跑一道要思考好幾分鐘的題目時，非串流請求憋著不吐任何位元組，連線會被收掉（`HTTPParserError: Invalid EOF state`）。Claude Code 一律走串流所以碰不到，但自己寫長生成的測試腳本時記得帶 `stream: true`。
 
-### 內建的四項測試
+### DeepSeek 補測（2026-09，`deepseek-flash`）
 
-GUI 上每個 provider 都能一鍵測，對應 Claude Code 實際會用到、也最常在相容層上壞掉的能力：
+照 Claude Code v2.1.274 實際送出的形狀打（抓包與完整結果見 [`docs/claude-code-request-shapes.md`](docs/claude-code-request-shapes.md)）：
+
+- **子 agent 讀不到 PDF。** Read 把 PDF 以 `document` block 放進工具結果，DeepSeek 把它換成 `[Unsupported Document]` 照樣回 200，模型只看得到檔名那一行。內建測試的「讀 PDF」會標出來。
+- **看圖可以。** 圖片放在工具結果裡（Read 讀圖、MCP 截圖都是這種）照樣看得到。
+- **WebSearch 可以，但貴。** 子 agent 的 WebSearch 會分到 DeepSeek、由它代為搜尋，Claude Code 解析得動它的回應；一次約 3 萬 input tokens。
+- **對話中間的 `role: "system"` 訊息看得到。** Claude Code 每一筆請求都有這種訊息，丟掉的話子 agent 會少一大段指示。
+- **開著思考時，帶 `tool_use` 的 assistant 歷史必須附上 thinking**，否則 400。正常流程碰不到。規則在 agent 跑到一半從訂閱切過來時，Anthropic 留下的 thinking 送得過去；只有 `redacted_thinking` 會被拒。
+
+### 內建的測試
+
+GUI 上每個 provider 都能一鍵測。前三項是刻意簡化的單發請求，只問通不通；其餘各項照 Claude Code 子 agent **實際送出的請求形狀**打（v2.1.274 抓包，見 [`docs/claude-code-request-shapes.md`](docs/claude-code-request-shapes.md)）。分成兩級，因為壞掉的樣子完全不同：
+
+**必要** —— 任一不過，Claude Code 在這個 provider 上就跑不起來
 
 - **基本推論** — base URL / key / model 名三者對不對，順便回報上游實際回傳的 model 與 token 用量
 - **SSE 串流** — Claude Code 的推論一律走串流。回報首位元組延遲與收到的 event 類型
 - **工具呼叫** — Claude Code 幾乎每個 turn 都在 call tool，不支援等於完全不能用
-- **思考檔位** — `/effort` 到不到得了模型。前三項全過也可能在這裡靜默失效
+- **串流工具迴圈** — 子 agent 每一輪的真實形狀：串流吐出 `tool_use`，再把整則 assistant 訊息（連同 thinking 與 `signature`）加上 `tool_result` 送回去。單發的工具呼叫測不到「`input_json_delta` 拼不拼得回 JSON」與「上游收不收自己吐的 thinking」
 
-前三項任一不過，Claude Code 在這個 provider 上就跑不起來。第四項不一樣，它驗的是**不會報錯的那種壞**：`dropFields` 含 `output_config`，或上游收下欄位卻沒接到思考檔位，請求都照樣 200，只是模型變笨。
+**能力** —— 不過也跑得起來、請求照樣 200，只是子 agent 用到那個能力時靜默失效
 
-第四項的判定依據是「Claude Code 的五個檔位有沒有哪個被回 400」—— 這是確定性的，而且上游的錯誤訊息通常直接點名欄位（DeepSeek 就是這樣把完整枚舉吐出來的）。
+- **思考檔位** — `/effort` 到不到得了模型
+- **中途 system 訊息** — Claude Code 每一筆請求都在對話中間夾著 `role: "system"` 訊息。丟掉的話子 agent 少一大段指示
+- **看圖** — 圖片放在工具結果裡（Read 讀圖、MCP 截圖都是這種），模型要答對四格隨機顏色
+- **讀 PDF** — `document` block 放在工具結果裡，模型要答出 PDF 裡的隨機碼。DeepSeek 在這項不過
+
+能力項目的判定**看模型答不答得出只有它看得見的東西，不看狀態碼**：DeepSeek 把 PDF 換成佔位字之後照樣回 200。思考把 `max_tokens` 吃光、或模型不肯呼叫工具時標成「無法判定」，不會誣賴上游丟了內容。
+
+看圖與讀 PDF 會先讓模型真的呼叫一次 Read，再把它自己那則回覆原樣送回去 —— 不能自己捏一則 assistant 訊息當歷史，DeepSeek 在思考模式下會因為缺 thinking 回 400，那個 400 會被誤判成看不到圖。
+
+GUI 上必要項目沒過的那列用告警框框住；能力項目沒過的只推出機架，不發告警色。
+
+**選配：WebSearch** 不在「執行測試」裡，要另外按「測 WebSearch」。子 agent 的 WebSearch 是另外發一筆強制使用 `web_search` server tool 的請求，會照規則分到 provider、由它代為搜尋；搜尋結果整包灌進 context，DeepSeek 上一次就要 3 萬 input tokens 上下。測試照抄那筆請求的形狀，只把 `max_uses` 從 8 壓到 1 —— 但 DeepSeek 不一定遵守，實測仍搜了 3 次。
+
+思考檔位的判定依據是「Claude Code 的五個檔位有沒有哪個被回 400」—— 這是確定性的，而且上游的錯誤訊息通常直接點名欄位（DeepSeek 就是這樣把完整枚舉吐出來的）。
 
 它曾經還會用 `low` 與 `max` 各跑一次比思考量，**已經拿掉**：那要多花兩次付費請求，而單次採樣分不出「上游沒把欄位接到檔位」和「這題對這個模型沒有解析度」。實測 Kimi K3 在那題上，六種送法（不帶 `output_config` 加五個檔位）各採樣 3 次，中位數全部落在 400～660 字元、範圍互相完全覆蓋，連基準線都分不出來 —— 但它其實是吃這個欄位的，換一道夠難的題目就有 4～5 倍差距（見上面 effort 段落）。花錢買一個「無法判定」不划算。真的要確認就自己挑一道對該模型難度合適的題目多採樣幾次。
 
-這一項會打 5 次請求（五個檔位各一次小探針），比前三項慢，付費 provider 上留意一下。未儲存的設定也能直接測，測完滿意再按儲存。
+「執行測試」總共打 15 個小請求（思考檔位 5 個、串流工具迴圈與看圖、讀 PDF 各 2 個），能力項目一律用子 agent 的思考形狀、檔位壓到 `low`。付費 provider 上留意一下。未儲存的設定也能直接測，測完滿意再按儲存。
 
 ### 只收本機來源的請求
 
@@ -371,6 +396,8 @@ GUI 上每個 provider 都能一鍵測，對應 Claude Code 實際會用到、�
 
 - [`docs/refactor-2026-08.md`](docs/refactor-2026-08.md) —— 2026-08 那次重構的前後對照：
   補上的本機來源守衛、依路由分開的重試策略、以及每項改動背後的實測數據。
+- [`docs/claude-code-request-shapes.md`](docs/claude-code-request-shapes.md) —— Claude Code v2.1.274 實際送出的請求形狀
+  （Read 圖片 / PDF、WebSearch、Workflow schema、中途 system 訊息）與 DeepSeek 對每一種的實測反應。內建測試照這份打。
 - [`PRODUCT.md`](PRODUCT.md) —— 產品事實：使用者、使用時機、術語、技術約束、已知限制。
 - [`DESIGN.md`](DESIGN.md) —— 視覺系統：色彩、字體、狀態的三個冗餘通道、資訊架構。
 - [`design/`](design/) —— 介面設計稿，`.dc.html` artboard 可以直接用瀏覽器開。
