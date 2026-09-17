@@ -1,7 +1,7 @@
-# 可靠性：不重送、保活與斷線
+# 可靠性：不重送、不補 ping、照樣斷線
 
 對應 README 的「Documentation」表格。這裡講上游失敗時 router 怎麼交回去、長串流
-怎麼保活，以及串流中途斷線時怎麼收尾。
+安靜很久時會發生什麼，以及串流中途斷線時怎麼收尾。
 
 ## 失敗原樣交回，router 不自己重送
 
@@ -27,17 +27,19 @@ router 在這之前再重送一層，只會讓打上游的次數相乘：router 
 `config.json` 裡的 `retry`、`passthrough.retry`、`providers[].retry` 載入時會被
 忽略，下次存檔就會從檔案裡消失。
 
-## 上游安靜太久時 router 自己補 ping
+## 上游安靜很久時：router 不補 ping
 
-長思考期間第三方可能一個 byte 都不吐，而 Claude Code 數的是位元組、靜默 300 秒
-就砍串流（undici 的 `bodyTimeout` 也是 300 秒）。官方 gateway protocol 要求
-gateway 在這種時候自己發 `ping`，router 照做：上游安靜超過 60 秒
-（`PING_IDLE_MS`，`src/proxy.mjs`）就補一個 `event: ping`。
+長思考期間上游可能一個 byte 都不吐。兩個計時器同時在數：
 
-只補在 **provider 那條線**。訂閱線的價值就是原始 bytes 原樣轉發，摻合成資料
-進去就不成立了，而且 Anthropic 本來就會自己 ping。補之前一定確認停在事件邊界
-—— 上游的 chunk 不保證切在 frame 邊界上，插進半個事件中間會把整條串流弄壞。
-補了幾個，點開那張進條看「keep-alive」那一行。
+- Claude Code 經過 gateway 時的 byte watchdog 預設 300 秒，收到任何 bytes（包括
+  `ping`）就重新計時（`CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS`，官方 network-config 文檔）。
+- router 自己往上游打的 `fetch` 走 undici，`bodyTimeout` 預設也是 300 秒。
+
+router 曾經在 provider 線上游安靜超過 60 秒時補一個 `event: ping`，已經拿掉：安靜
+不到 300 秒，兩邊本來都不會斷；滿 300 秒，就算 client 那頭有 ping 撐著，router 對
+上游的那條連線也會先被 undici 砍掉。補 ping 在預設值下不改變任何結果，實際流量裡
+也從沒觸發過（[measurements.md](measurements.md)）。官方 gateway protocol 要求的是
+「轉發或自己補 ping」，router 原樣轉發上游送來的 ping，已經符合。
 
 ## 串流中途斷線：照樣斷線
 
@@ -50,8 +52,8 @@ gateway 在這種時候自己發 `ping`，router 照做：上游安靜超過 60 
 | 直接斷線 | 當成連線錯誤，約 0.7 秒後重送**串流**請求 |
 | 補一個 `api_error` 事件後正常結束 | 立刻改發**非串流**請求 |
 
-非串流請求等整個回應生成完才回，provider 線的 ping 也補不進去，長輸出比較容易
-撞到逾時，所以照樣斷線才是讓 Claude Code 走它原本的復原路徑。已經開始輸出內容
+非串流請求等整個回應生成完才回 header，而 router 對上游的 undici `headersTimeout`
+是 300 秒，長輸出比較容易撞到逾時，所以照樣斷線才是讓 Claude Code 走它原本的復原路徑。已經開始輸出內容
 之後才斷的，兩種做法 Claude Code 都會保留已收到的部分，並標示回應可能不完整。
 
 這種失敗在流量記錄裡是狀態 `200` 加上錯誤 `terminated`，機架批註寫「串流中途斷線」。

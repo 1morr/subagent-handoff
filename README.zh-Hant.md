@@ -61,27 +61,18 @@ npm start
 
 打開 <http://127.0.0.1:8788>：
 
-1. **Providers** —— 填入 Base URL、API Key 與 Model，按「執行測試」，確認「必要」項目全過。「能力」項目沒過，Claude Code 照樣跑得起來，見[內建的測試](docs/providers.md#內建的測試)。
+1. **Providers** —— 填入 Base URL、API Key 與 Model，按「執行測試」，確認四項全過，見[內建的測試](docs/providers.md#內建的測試)。
 2. **Routing** —— 勾選「all subagents → your provider」規則來啟用它。
 3. **Connect** —— 複製 `settings.json` 片段，重新啟動 Claude Code。
 4. 執行 `/status`，確認 `Login method` 仍然指向你的 claude.ai 帳號。
 5. 派一個子代理去做點事，然後在 **Rack** 分頁看分流結果。
 
-想在沒有任何 API key 或網路連線的情況下，看到 GUI 裡有資料可以看：
-
-```bash
-npm run demo      # synthetic traffic against a local fake upstream
-```
-
-## 三種請求類型
+## 兩種請求類型
 
 | Condition | How it is detected | Who it is |
 |---|---|---|
-| `main` | 兩個 header 都沒有 | 你在輸入框裡打字 |
-| `subagent` | 帶有 `x-claude-code-agent-id` | 第一層 agent。**Workflow 與 ultracode 的 `agent()` 呼叫全部落在這裡** |
-| `nested` | 還多帶了 `x-claude-code-parent-agent-id` | 一個又派生出另一個 agent 的子代理 |
-
-**要涵蓋 ultracode，你的規則必須匹配 `subagent`。** Workflow 的 agent 不帶 parent header，所以 `nested` 一個都抓不到 —— 在純 ultracode 的 session 裡，`nested` 根本永遠不會觸發。
+| `main` | 沒有 `x-claude-code-agent-id` | 你在輸入框裡打字 |
+| `subagent` | 帶有 `x-claude-code-agent-id` | Claude Code 派生的任何 agent。**Workflow 與 ultracode 的 `agent()` 呼叫全部落在這裡**，子代理再派生的 agent 也是 |
 
 ## 設定
 
@@ -90,15 +81,14 @@ npm run demo      # synthetic traffic against a local fake upstream
 | Field | |
 |---|---|
 | `proxyPort` / `adminPort` | 8787 與 8788。改這兩個需要重新啟動；其他所有設定都是逐請求即時生效 |
-| `passthrough.baseUrl` | 沒匹配到任何規則的請求會送去哪裡。預設是 `https://api.anthropic.com`，憑證原封不動轉發 |
 | `providers[].baseUrl` | 必須說 Anthropic Messages 格式 —— router 會對 `{baseUrl}/v1/messages` 發送請求 |
 | `providers[].model` | 送出前改寫 `model`。留空 = 不動它 |
 | `providers[].authStyle` | `bearer` 或 `x-api-key` |
-| `rules[].match` | `any` / `main` / `subagent` / `nested`，可再用 `modelGlob` 或 `agentIdGlob` 進一步縮小範圍 |
+| `rules[].match` | `main` 或 `subagent`，可再用 `modelGlob` 進一步縮小範圍 |
 | `rules[].providerId` | 指定哪個供應商，或用保留值 `passthrough` 把請求送回訂閱額度 |
 | `rules[].modelOverride` | 改寫 `model`，優先權高於 `providers[].model`。對 `passthrough` 一樣有效 |
 
-完整參考文件（含流量記錄，以及每個數值的限制範圍）：[docs/configuration.md](docs/configuration.md)。
+沒匹配到任何規則的請求一律送去 `https://api.anthropic.com`，憑證原封不動轉發；這個目標是固定的。完整參考文件（含舊版 `config.json` 下次存檔時會少掉哪些欄位）：[docs/configuration.md](docs/configuration.md)。
 
 **有兩件事值得知道。** 第三方額度用完時，把那條規則的目標切成 `passthrough`，而不是直接停用它 —— 停用會讓流量往下掉到*下一條*規則，而指到 passthrough 才是真正把它停在訂閱額度上。另外，`modelOverride` 是唯一能讓子代理使用跟主對話不同模型的方法，因為 `agent()` 在沒有指定模型時會繼承主對話的模型，而這件事 Claude Code 本身沒辦法改。
 
@@ -109,7 +99,7 @@ npm run demo      # synthetic traffic against a local fake upstream
 - 儲存的 API key 永遠不會回傳給瀏覽器 —— GUI 拿到的只是遮蔽過的提示字串和一個 `__keep__` 標記值。
 - `config.json` 與 `traffic.log` 都是以 `0600` 權限寫入。
 - 流量記錄只存 metadata：不含請求內容、不含 header，也不含憑證。
-- 供應商請求一律從一組空的 header 開始組建，所以不會不小心把 client 端的憑證帶出去。有一個測試會斷言這件事。
+- 供應商請求一律從一組空的 header 開始組建，只從 client 帶過去 `anthropic-version` 與 `anthropic-beta`，所以不會不小心把 client 端的憑證帶出去。有一個測試會斷言這件事。
 - 送去供應商的請求一律拿掉 `metadata`：Claude Code 在裡面放了你 claude.ai 帳號的 `account_uuid` 與 `device_id`。訂閱那條線不受影響。有一個測試會斷言這件事。
 
 詳細內容與威脅模型：[docs/security.md](docs/security.md)。
@@ -128,12 +118,12 @@ npm test     # node --test, no dependencies, no network
 
 | | |
 |---|---|
-| [docs/configuration.md](docs/configuration.md) | 每個設定欄位、預設值與限制範圍 |
+| [docs/configuration.md](docs/configuration.md) | 每個設定欄位、寫死的值，以及舊設定檔會少掉什麼 |
 | [docs/routing.md](docs/routing.md) | 規則匹配、model 覆寫、額度切換 |
 | [docs/observability.md](docs/observability.md) | 流量記錄、快取命中率，以及怎麼看懂 Rack 分頁 |
-| [docs/reliability.md](docs/reliability.md) | 為什麼失敗直接交回 Claude Code、keep-alive ping，以及串流中途斷線 |
+| [docs/reliability.md](docs/reliability.md) | 為什麼失敗直接交回 Claude Code，以及串流中途斷線 |
 | [docs/providers.md](docs/providers.md) | 供應商相容性筆記、內建測試與實測數據 |
-| [docs/claude-code-request-shapes.md](docs/claude-code-request-shapes.md) | Claude Code 實際送出的請求形狀，以及 DeepSeek 對每一種的實測反應；Claude Code 升級後用 `node scripts/capture-shapes.mjs` 重抓 |
+| [docs/claude-code-request-shapes.md](docs/claude-code-request-shapes.md) | Claude Code v2.1.274 實際送出的請求形狀，以及 DeepSeek 對每一種的實測反應 |
 | [docs/security.md](docs/security.md) | 威脅模型，以及哪些有保護、哪些沒有 |
 
 ## 授權

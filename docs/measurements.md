@@ -38,7 +38,6 @@ router 曾經在上游回 `408` / `5xx` / `529` / 第三方 `429` 時自己先�
 
 ## Provider 串流：長連線沒有異常
 
-Kimi K3 實測最長一筆串流 622 秒仍正常完成，過程中沒有出現靜默斷流。這是
-`PING_IDLE_MS`（`src/proxy.mjs`，上游安靜超過 60 秒就補一個 `event: ping`）目前
-還沒被實際觸發過的背景 —— 保留這個機制是因為官方 gateway protocol 明文要求，
-不是因為已經觀察到需要它的案例。
+Kimi K3 實測最長一筆串流 622 秒仍正常完成，過程中沒有出現靜默斷流。router 當時在
+provider 線上游安靜超過 60 秒時會補 `event: ping`，同一份 1668 筆裡一次都沒觸發；
+加上它在預設逾時下不改變結果（見 [reliability.md](reliability.md)），已經拿掉。

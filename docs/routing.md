@@ -1,27 +1,20 @@
 # 路由規則
 
-對應 README 的「The three request kinds」與「Configuration」兩節裡提到的
-`rules[]`。這裡講規則怎麼匹配、怎麼在配額用盡時切換，以及怎麼按 agent 身分分流。
-欄位本身的說明見 [configuration.md](configuration.md)。
+對應 README 的「The two request kinds」與「Configuration」兩節裡提到的
+`rules[]`。這裡講規則怎麼匹配、怎麼在配額用盡時切換，以及怎麼讓子 agent 跑跟主
+對話不同的模型。欄位本身的說明見 [configuration.md](configuration.md)。
 
-## 三種來源分別是什麼
-
-實測 Claude Code v2.1.227 送出的 header：
+## 兩種來源分別是什麼
 
 | 條件 | 判定依據 | 是誰 |
 | --- | --- | --- |
-| `main` | 兩個 header 都沒有 | 你在對話框裡打字的那條線 |
-| `subagent` | 有 `x-claude-code-agent-id` | 第一層 agent。**Workflow / ultracode 的 `agent()` 全在這裡** |
-| `nested` | 另外有 `x-claude-code-parent-agent-id` | 某個 subagent 又往下開的 agent |
+| `main` | 沒有 `x-claude-code-agent-id` | 你在對話框裡打字的那條線 |
+| `subagent` | 有 `x-claude-code-agent-id` | Claude Code 開出來的任何 agent。**Workflow / ultracode 的 `agent()` 全在這裡** |
 
-**要涵蓋 ultracode，規則必須選 `subagent`。** Workflow 的 agent 沒有 parent
-header，選 `nested` 一個都分流不到。（`src/routing.mjs` 的 `kindMatches` 裡，
-`subagent` 這個 case 刻意把 `nested` 也涵蓋進去，所以反過來選 `subagent` 兩種都
-吃得到；只有想**排除**一般 subagent、只抓巢狀 agent 時才需要選 `nested`。）
-
-實測也確認 Workflow 的 agent 拿到的工具集裡沒有 `Agent` 與 `Workflow`，所以它們
-不會再往下開一層 —— 純 ultracode 場景下 `nested` 永遠不觸發。`nested` 只在你手動
-叫一個 general-purpose subagent、而它自己又去 spawn 別人時才出現。
+子 agent 自己再開的 agent 另外帶 `x-claude-code-parent-agent-id`，但它一樣有
+agent id，所以也算 `subagent`。router 曾經把它分成第三種 `nested`，已經拿掉：實測
+Workflow 的 agent 拿到的工具集裡沒有 `Agent` 與 `Workflow`，不會再往下開一層，純
+ultracode 場景下 `nested` 永遠不觸發。
 
 ## 配額快用完時切回訂閱
 
@@ -29,7 +22,9 @@ header，選 `nested` 一個都分流不到。（`src/routing.mjs` 的 `kindMatc
 
 第三方配額見底時，把那條規則的導向從 provider 換成訂閱、按儲存就結束了 —— 不用
 刪規則、不用清空 API key、也不用重啟 router。設定是每筆請求現查的，正在跑的
-agent 下一個請求就會走訂閱，之後配額補回來再切回去。
+agent 下一個請求就會走訂閱，之後配額補回來再切回去。機架分頁的「交還給訂閱」鍵
+一次把所有啟用中、指向 provider 的規則切過去並立即存檔；同一個位置會換成「收回子
+agent」，按下去照原本的導向換回來。
 
 比「把規則停用」好的地方是規則排序還在：多條規則疊著時，停用會讓流量掉到下一條
 規則去，而不是掉回訂閱。明確指向 `passthrough` 才是真的擋在那裡。
@@ -59,6 +54,16 @@ workflow script 裡），只能在 router 這層改：
 （`src/routing.mjs` 的 `resolveModel`）。所以同一個 provider 可以被多條規則以
 不同 model 使用，不必為了換 model 複製一份 provider。
 
+反過來，workflow script 裡明確寫了 `agent({ model: 'opus' })` 的，可以用
+`modelGlob` 把它們留在訂閱、其餘分到 provider：
+
+```jsonc
+[
+  { "match": "subagent", "modelGlob": "*opus*", "providerId": "passthrough" },
+  { "match": "subagent", "modelGlob": "*",      "providerId": "p-deepseek" }
+]
+```
+
 model 名要填**上游看得懂的完整字串**，不是 `opus` / `sonnet` 這種 alias。不確定
 就把主對話切到那個模型送一句話，再去流量記錄的「要求 model」欄複製實際送出的
 值 —— GUI 的輸入框有幾個常見值的建議清單，但以流量記錄看到的為準。
@@ -70,39 +75,19 @@ model 名要填**上游看得懂的完整字串**，不是 `opus` / `sonnet` 這
 - `max_tokens` 是 Claude Code 依原模型算的。改寫成上限較低的模型時可能被上游退
   件，這種情況只能調 `modelOverride` 或改回去。
 
-## 按 agent 身分分流
+## 規則預覽
 
-規則的 `agentIdGlob` 比對 `x-claude-code-agent-id`，`*` = 不篩。
+路由分頁下方的預覽選一個來源、填一個 model 名，不必真的去 spawn 一個 agent。預覽
+走的是跟真正轉發同一份 `resolveRoute`，而且用的是畫面上還沒儲存的規則。
 
-一般 subagent 的 id **每次 spawn 重新產生**，篩不出東西。但官方 gateway
-protocol 文檔載明：
-
-> Teammate agents, the named members of an agent team, **reuse a stable
-> name-based ID** across reconnections.
-
-所以這個欄位的實際用途是把 [agent team](https://code.claude.com/docs/en/agent-teams)
-的 teammate 按角色拆開 —— 便宜的活丟第三方，需要推理品質的留在訂閱：
-
-```jsonc
-[
-  { "match": "subagent", "agentIdGlob": "Explore*", "providerId": "kimi" },
-  { "match": "subagent", "agentIdGlob": "*",        "providerId": "passthrough" }
-]
-```
-
-主對話沒有這個 header，所以**永遠不會被非 `*` 的樣式命中** —— 不用擔心一條
-agent 規則把主對話也捲進去。
-
-規則預覽那格可以填 agent id 直接試，不必真的去 spawn 一個。跑完之後機架上會標出
-這一筆由哪條吃下（`HIT`）、它下面哪幾條被遮住（`SHDW`），上面比對過但沒命中的標
-`PASS`；一條都沒命中時，標起來的是最底下的機架底板。
+跑完之後機架上會標出這一筆由哪條吃下（`HIT`）、它下面哪幾條被遮住（`SHDW`），上
+面比對過但沒命中的標 `PASS`；一條都沒命中時，標起來的是最底下的機架底板。
 
 沒跑過預覽以前規則一律不標記，每條只印自己的 `ON` / `OFF`。標記亮著的時候，排程
 順序的抬頭會掛出模擬中的標示與這次模擬的條件，旁邊有一顆鍵可以收掉；改到任何一條
 規則也會把標記收掉 —— 那份模擬已經不是在講現在這份規則了。
 
-## `modelGlob` / `agentIdGlob` 比對不分大小寫
+## `modelGlob` 比對不分大小寫
 
-`globMatch`（`src/routing.mjs`）把 pattern 轉成的正規表示式
-帶了 `i` flag，所以 `Explore*` 跟 `explore*` 對同一個 agent id 的比對結果一樣。
-寫規則時不用刻意對齊 teammate 名字的大小寫。
+`globMatch`（`src/routing.mjs`）把 pattern 轉成的正規表示式帶了 `i` flag，
+`*` 以外的字元（包括 `.`）一律照字面比對。

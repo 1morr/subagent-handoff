@@ -1,30 +1,18 @@
 # Claude Code 實際送出的請求形狀（v2.1.274，2026-09）
 
-[內建測試](providers.md#內建的測試)除了前三項單發請求，每一項都照這裡記錄的形狀打。形狀抄錯，測到的就是別的東西 —— 這件事實際發生過：看圖測試第一版自己捏了一則「assistant 呼叫 Read」當歷史、沒附 thinking，DeepSeek 回 `400 The content[].thinking in the thinking mode must be passed back to the API`，結果被判成「看不到圖片」。
+換 provider 之前，拿這份對照它收不收得下 Claude Code 真正送的東西。形狀抄錯，測到的就是別的東西 —— 這件事實際發生過：看圖測試第一版自己捏了一則「assistant 呼叫 Read」當歷史、沒附 thinking，DeepSeek 回 `400 The content[].thinking in the thinking mode must be passed back to the API`，結果被判成「看不到圖片」。
 
 ## 怎麼抓的
 
-```bash
-node scripts/capture-shapes.mjs                       # 五個劇本全跑，輸出到暫存目錄
-node scripts/capture-shapes.mjs image,pdf             # 只跑其中幾個；--out <目錄> 指定輸出位置
-```
-
-腳本把 `ANTHROPIC_BASE_URL` 指向本機一個照劇本回 SSE 的假上游，用
+2026-09 用一支一次性腳本抓的（已經從 repo 拿掉）：把 `ANTHROPIC_BASE_URL` 指向本機一個照劇本回 SSE 的假上游，用
 `claude -p --setting-sources project --strict-mcp-config --model opus[1m] --effort xhigh`
-驅動 Claude Code 依序走過：Read 讀圖片、Read 讀 PDF（整份與指定頁數）、WebSearch、開一個 sonnet 子 agent 在裡面讀圖加搜尋、跑一個帶 `schema` 的 Workflow `agent()`。Claude Code 升級後重跑一次，對照這份文檔。
-
-- 假上游不打真的 API，不花訂閱額度。全部跑完約 1.5 分鐘，大半在等 Workflow。
-- `requests.jsonl` 只記結構，可以直接貼進來：文字只記長度；帶憑證與身分的 header、`metadata.user_id` 裡的 `account_uuid` 與 `device_id` 只記鍵名；認不得的欄位只記形狀。測試裡有斷言守著。
-- `claude-<劇本>.jsonl` 是 Claude Code 的 stream-json 原樣輸出（含本機路徑與 session id），只給自己除錯用，不要貼出去。
-- `--setting-sources project` 是為了不載入使用者層的 hooks（會對外回報 session 事件）。
-- 找不到 `claude` 時用 `CLAUDE_BIN` 指定執行檔。
-- 加了 `--no-session-persistence`，Claude Code 仍會在 `~/.claude/projects/` 下留一個以輸出目錄命名的資料夾（子 agent 與 Workflow 的中繼資料，幾 KB），跑完可以刪。
+驅動 Claude Code 依序走過：Read 讀圖片、Read 讀 PDF（整份與指定頁數）、WebSearch、開一個 sonnet 子 agent 在裡面讀圖加搜尋、跑一個帶 `schema` 的 Workflow `agent()`。假上游不打真的 API，不花訂閱額度；記錄只留結構，文字只記長度，帶憑證與身分的 header、`metadata.user_id` 裡的 `account_uuid` 與 `device_id` 只記鍵名。Claude Code 升級後形狀可能變，要重抓就照這個做法。
 
 ## 每一筆推論請求都有的
 
 | 項目 | 形狀 |
 | --- | --- |
-| `anthropic-beta` | 主對話（`opus[1m]`）：`claude-code-20250219, oauth-2025-04-20, context-1m-2025-08-07, interleaved-thinking-2025-05-14, thinking-token-count-2026-05-13, context-management-2025-06-27, prompt-caching-scope-2026-01-05, mid-conversation-system-2026-04-07, mid-conversation-tool-changes-2026-07-01, advisor-tool-2026-03-01, effort-2025-11-24`，主迴圈另加 `fallback-credit-2026-06-01, extended-cache-ttl-2025-04-11`。sonnet 子 agent 少了 `context-1m`、`mid-conversation-tool-changes`、`fallback-credit`、`extended-cache-ttl` |
+| `anthropic-beta` | router 在兩條線上都原樣轉發。主對話（`opus[1m]`）：`claude-code-20250219, oauth-2025-04-20, context-1m-2025-08-07, interleaved-thinking-2025-05-14, thinking-token-count-2026-05-13, context-management-2025-06-27, prompt-caching-scope-2026-01-05, mid-conversation-system-2026-04-07, mid-conversation-tool-changes-2026-07-01, advisor-tool-2026-03-01, effort-2025-11-24`，主迴圈另加 `fallback-credit-2026-06-01, extended-cache-ttl-2025-04-11`。sonnet 子 agent 少了 `context-1m`、`mid-conversation-tool-changes`、`fallback-credit`、`extended-cache-ttl` |
 | `metadata.user_id` | 一段 JSON 字串，含 `device_id`、claude.ai 的 `account_uuid`、`session_id`。**router 在 provider 線上會拿掉整個 `metadata`** |
 | 思考 | `thinking: {type: "adaptive"}`（Workflow agent 多了 `display: "omitted"`）、`context_management.edits: [clear_thinking_20251015, keep: all]`、`output_config: {effort}` |
 | `max_tokens` | opus 128000、sonnet 64000 |
@@ -32,7 +20,7 @@ node scripts/capture-shapes.mjs image,pdf             # 只跑其中幾個；--o
 | `messages` | 第一則 user 由好幾個 text block 組成，**緊接著一則 `role: "system"`**（主對話約 8.6K 字元，子 agent 也有）；結尾常再有一則帶 `cache_control` 的 `role: "system"`。`tool_use`、`tool_result` 也帶 `cache_control` |
 | `tools` | 沒有 `strict`、沒有 `defer_loading` —— 自訂 base URL 下 tool search 預設關閉，實測吻合 |
 
-`role: "system"` 不是標準 Messages API 的角色。上游收下卻丟掉時，子 agent 會少掉 Claude Code 放在那裡的指示而且不報錯，所以「中途 system 訊息」是一個獨立的測試項。
+`role: "system"` 不是標準 Messages API 的角色。上游收下卻丟掉時，子 agent 會少掉 Claude Code 放在那裡的指示而且不報錯，換 provider 時要單獨確認。
 
 ## Read
 

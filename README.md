@@ -73,31 +73,18 @@ enabling it would just 401 every subagent.
 Open <http://127.0.0.1:8788>:
 
 1. **Providers** — enter Base URL, API Key and Model, click **Run test**, and
-   confirm every **Required** check passes. A failing **Capability** check
-   does not stop Claude Code from working; see
-   [the built-in tests](docs/providers.md#內建的測試).
+   confirm all four checks pass; see [the built-in tests](docs/providers.md#內建的測試).
 2. **Routing** — tick the "all subagents → your provider" rule to enable it.
 3. **Connect** — copy the `settings.json` snippet and restart Claude Code.
 4. Run `/status` and confirm `Login method` still points at your claude.ai account.
 5. Give a subagent some work, then watch the split on the **Rack** tab.
 
-To see the GUI populated without any API key or network access:
-
-```bash
-npm run demo      # synthetic traffic against a local fake upstream
-```
-
-## The three request kinds
+## The two request kinds
 
 | Condition | How it is detected | Who it is |
 |---|---|---|
-| `main` | Neither header present | You typing in the prompt box |
-| `subagent` | Has `x-claude-code-agent-id` | A first-level agent. **Workflow and ultracode `agent()` calls are all here** |
-| `nested` | Also has `x-claude-code-parent-agent-id` | A subagent that spawned another agent |
-
-**To cover ultracode your rule must match `subagent`.** Workflow agents carry no
-parent header, so `nested` catches none of them — in a pure ultracode session
-`nested` never fires at all.
+| `main` | No `x-claude-code-agent-id` | You typing in the prompt box |
+| `subagent` | Has `x-claude-code-agent-id` | Any agent Claude Code spawned. **Workflow and ultracode `agent()` calls are all here**, and so are agents a subagent spawns in turn |
 
 ## Configuration
 
@@ -107,16 +94,16 @@ Rules are evaluated top to bottom and the first match wins.
 | Field | |
 |---|---|
 | `proxyPort` / `adminPort` | 8787 and 8788. Changing them needs a restart; everything else takes effect per request |
-| `passthrough.baseUrl` | Where unmatched requests go. Default `https://api.anthropic.com`, credentials forwarded unchanged |
 | `providers[].baseUrl` | Must speak the Anthropic Messages format — the router posts to `{baseUrl}/v1/messages` |
 | `providers[].model` | Rewrites `model` before sending. Empty = leave alone |
 | `providers[].authStyle` | `bearer` or `x-api-key` |
-| `rules[].match` | `any` / `main` / `subagent` / `nested`, optionally narrowed by `modelGlob` or `agentIdGlob` |
+| `rules[].match` | `main` or `subagent`, optionally narrowed by `modelGlob` |
 | `rules[].providerId` | Which provider, or the reserved value `passthrough` to send it back to the subscription |
 | `rules[].modelOverride` | Rewrites `model`, beating `providers[].model`. Works on `passthrough` too |
 
-Full reference including traffic logging and every clamped range:
-[docs/configuration.md](docs/configuration.md).
+Unmatched requests go to `https://api.anthropic.com` with their credentials
+unchanged; that target is fixed. Full reference, including what an older
+`config.json` loses on its next save: [docs/configuration.md](docs/configuration.md).
 
 **Two things worth knowing.** When a third-party quota runs dry, switch that
 rule's target to `passthrough` rather than disabling it — disabling drops traffic
@@ -135,8 +122,9 @@ model when none is specified and you cannot change that from Claude Code's side.
 - `config.json` and `traffic.log` are written `0600`.
 - The traffic log records metadata only: no request bodies, no headers, no
   credentials.
-- Provider requests are built from an empty header set, so no client credential
-  can be forwarded by accident. A test asserts this.
+- Provider requests are built from an empty header set — only `anthropic-version`
+  and `anthropic-beta` are copied over — so no client credential can be
+  forwarded by accident. A test asserts this.
 - Provider requests have `metadata` removed: Claude Code puts your claude.ai
   `account_uuid` and `device_id` in it. The subscription line is untouched. A
   test asserts this.
@@ -158,12 +146,12 @@ The in-depth docs are written in Traditional Chinese.
 
 | | |
 |---|---|
-| [docs/configuration.md](docs/configuration.md) | Every config field, default and clamp |
+| [docs/configuration.md](docs/configuration.md) | Every config field, the fixed values, and what older config files lose |
 | [docs/routing.md](docs/routing.md) | Rule matching, model overrides, quota switching |
 | [docs/observability.md](docs/observability.md) | The traffic log, cache hit rates, and reading the rack |
-| [docs/reliability.md](docs/reliability.md) | Why the router hands failures straight back to Claude Code, keep-alive pings, and mid-stream disconnects |
+| [docs/reliability.md](docs/reliability.md) | Why the router hands failures straight back to Claude Code, and mid-stream disconnects |
 | [docs/providers.md](docs/providers.md) | Provider compatibility notes, the built-in tests, and measurements |
-| [docs/claude-code-request-shapes.md](docs/claude-code-request-shapes.md) | The request shapes Claude Code actually sends and how DeepSeek handles each; recapture with `node scripts/capture-shapes.mjs` after a Claude Code upgrade |
+| [docs/claude-code-request-shapes.md](docs/claude-code-request-shapes.md) | The request shapes Claude Code v2.1.274 actually sends and how DeepSeek handles each |
 | [docs/security.md](docs/security.md) | Threat model and what is and is not protected |
 
 ## License

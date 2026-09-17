@@ -35,9 +35,9 @@ LRU，預設上限 200 筆），子 agent 再回查。
 
 ## 流量記錄會留在磁碟上
 
-GUI 上那份只有最近 300 筆，而且**重啟就沒了** —— 偏偏要查的事情常常橫跨重啟
-（改完設定要重啟才生效，一重啟證據就跟著消失）。所以每一筆走完的請求會補寫成
-一行 NDJSON 到 `traffic.log`（`src/logfile.mjs`）。
+GUI 上那份只有最近 300 筆，而且**重啟就沒了** —— 偏偏要查的事情常常橫跨重啟。
+所以每一筆走完的請求會補寫成一行 NDJSON 到 `config.json` 旁邊的 `traffic.log`
+（`src/logfile.mjs`）。
 
 內容跟 GUI 看到的完全一樣：只有中繼資料，沒有 prompt。但它含有專案目錄與
 session id，所以預設已經進 `.gitignore`。落檔用 `appendFileSync(..., { mode:
@@ -49,10 +49,10 @@ session id，所以預設已經進 `.gitignore`。落檔用 `appendFileSync(...,
 grep -v '"status":200' traffic.log | jq -r '[.ts, .target, .status, .detail] | @tsv'
 ```
 
-超過 `trafficLog.maxBytes` 會輪替成 `traffic.log.1`，只留一份舊的，所以磁碟最多
-佔兩倍。`trafficLog.file` 留空就完全不落檔。落檔失敗時（例如 Windows 上檔案被
-編輯器暫時鎖住）不會永久放棄：會冷卻一段時間再試，冷卻時間每次失敗翻倍、封頂在
-30 分鐘，這段期間流量只留在記憶體那份 300 筆裡。
+超過 5 MB 會輪替成 `traffic.log.1`，只留一份舊的，所以磁碟最多佔 10 MB。落檔失敗
+時（例如 Windows 上檔案被編輯器暫時鎖住）不會放棄：每一筆照樣再試，console 只在
+連續失敗的第一次報錯，恢復之後再壞才會再報；寫不進去的那幾筆只留在記憶體那份
+300 筆裡。
 
 ## 快取命中率
 
@@ -120,6 +120,6 @@ header 上，router 會整組收進流量記錄（`collectRateLimit`，`src/prox
 
 ## 另見
 
-- [reliability.md](reliability.md) —— 為什麼不自己重送、補 ping 與串流斷線的機制本身。
+- [reliability.md](reliability.md) —— 為什麼不自己重送、串流斷線的機制本身。
 - [measurements.md](measurements.md) —— 這些行為背後的實測樣本數。
 - [ui-notes.md](ui-notes.md) —— Rack 分頁的視覺編碼規則。

@@ -30,19 +30,24 @@
 CSRF、Host 擋 DNS rebinding），細節與驗證方式見 README 的對應章節。這裡補記
 guard 之外、跟資料安全直接相關的幾點：
 
-- **`buildProviderHeaders`（`src/proxy.mjs`）從零組出送給第三方的 header**，不會把
-  客戶端（Claude Code）原始的 `authorization` / `x-api-key` / `cookie` 轉發過去 ——
-  第三方永遠只拿得到你在 GUI 裡替那個 provider 填的 key，拿不到訂閱的 OAuth token。
-  這是整個工具存在的前提，`test/routing.test.mjs` 有專門的負向斷言守著。
+- **`buildProviderHeaders`（`src/proxy.mjs`）從零組出送給第三方的 header**，只從
+  客戶端（Claude Code）帶過去 `anthropic-version` 與 `anthropic-beta`，不會把原始的
+  `authorization` / `x-api-key` / `cookie` 轉發過去 —— 第三方永遠只拿得到你在 GUI 裡
+  替那個 provider 填的 key，拿不到訂閱的 OAuth token。這是整個工具存在的前提，
+  `test/routing.test.mjs` 有專門的負向斷言守著。
 - **`config.json` 與 `traffic.log` 落檔權限是 0600**（`src/config.mjs`、
   `src/logfile.mjs`），同機的其他使用者讀不到裡面的第三方 API key。Windows 上這個
   設定會被忽略（NTFS 權限模型不同），無害但也不生效 —— 多使用者 Windows 機器上
   這道防線實際上不存在。
-- **`providers[].baseUrl` 與 `passthrough.baseUrl` 只驗證 scheme**（必須是
-  `http:` 或 `https:`），不限制目標主機。這是刻意的：router 存在的目的就是讓使用者
+- **訂閱線的去向寫死成 `https://api.anthropic.com`**（`PASSTHROUGH_BASE_URL`），
+  不在設定檔裡。帶著 OAuth token 的請求因此不可能被一次存檔導去別的地方。
+- **`providers[].baseUrl` 只驗證 scheme**（必須是 `http:` 或 `https:`），不限制目標主機。這是刻意的：router 存在的目的就是讓使用者
   把流量導去自己選的任意端點，鎖住特定 IP 段（例如雲端 metadata 位址）會直接擋掉
   「指到自己跑的本地相容層」這種正常用法。換句話說，**把 baseUrl 填成什麼完全是
   使用者自己的責任**，router 不會幫你判斷那個目的地安不安全。
-- **GUI 的 `POST /api/test` 與 `PUT /api/config`** 都會以 400 擋下「送 `__keep__`
-  遮罩值但把 baseUrl 換成別的網域」這種輸入 —— 換 baseUrl 就必須明著帶新的 API
-  Key，不能沿用已存的遮罩值把舊 key 綁到新目的地，也不會悄悄存成空 key。
+- **GUI 的 `POST /api/test` 與 `PUT /api/config`** 共用同一道把關
+  （`src/config.mjs` 的 `providerProblem`），都會以 400 擋下「送 `__keep__` 遮罩值但
+  把 baseUrl 換成別的網域」這種輸入 —— 換 baseUrl 就必須明著帶新的 API Key，不能沿用
+  已存的遮罩值把舊 key 綁到新目的地，也不會悄悄存成空 key。
+- **DNS rebinding 真正想拿的**，是 `PUT /api/config` 加一個自己的 provider、把主對話
+  的規則指過去 —— 之後每一輪對話的完整內容都會送給他。Host 檢查擋的就是這條。
