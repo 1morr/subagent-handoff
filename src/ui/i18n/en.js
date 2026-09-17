@@ -201,6 +201,8 @@ export default {
   'logs.lastFetchFailed': "Last one: router couldn't reach upstream",
   'logs.lastBlocked': 'Last one: upstream blocked it',
   'logs.clientGot502': 'the client got a 502 the router synthesized',
+  'logs.lastStreamCut': 'Last one: stream cut off mid-response',
+  'logs.clientDropped': 'the router dropped the client connection too, so Claude Code resends the request',
   'logs.notThere': 'Not there at all',
   'logs.neverArrived': 'Request never reached the router',
   'logs.rackTitle': 'Traffic rack',

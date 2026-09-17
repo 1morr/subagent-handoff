@@ -199,6 +199,8 @@ export default {
   'logs.lastFetchFailed': '最近一次是 router 連不上上游',
   'logs.lastBlocked': '最近一次是上游擋的',
   'logs.clientGot502': 'client 收到的是 router 合成的 502',
+  'logs.lastStreamCut': '最近一次是串流中途斷線',
+  'logs.clientDropped': 'router 也切斷了 client 連線，Claude Code 會自己重送',
   'logs.notThere': '完全沒有這一筆',
   'logs.neverArrived': '請求根本沒到 router',
   'logs.rackTitle': '進條機架',

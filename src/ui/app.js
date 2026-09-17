@@ -733,17 +733,21 @@ function renderLogs() {
   const filters = [['all', t('common.filterAll')], ['attn', t('common.filterAttn')], ['main', t('rules.kind.main')], ['subagent', t('rules.kind.subagent')]]
   const list = filteredLogs()
   const worst = S.logs.find((e) => stateOf(e) === 'hold')
+  // 跟進條批註同一套判斷：有狀態碼的錯誤是串流開始後才斷，router 故意切線，client 沒有收到 502
+  const [worstTitle, worstOutcome] = !worst ? []
+    : !worst.error ? [t('logs.lastBlocked'), t('common.routerRelayed')]
+    : isStreamCut(worst) ? [t('logs.lastStreamCut'), t('logs.clientDropped')]
+    : [t('logs.lastFetchFailed'), t('logs.clientGot502')]
 
   return `
     ${worst ? `
     <section class="marginal alarm"><i></i><div style="display:flex;flex-direction:column;gap:11px">
       <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
         <span class="disp" style="font-size:24px;color:#f0d5cd;line-height:1.2">${
-          worst.error ? t('logs.lastFetchFailed') : t('logs.lastBlocked')}</span>
+          worstTitle}</span>
         <span class="num" style="font-size:11px">${esc(worst.ts.slice(11, 19))}</span>
         <span class="num" style="font-size:14px;color:var(--alarm-ink)">${esc(worst.error || worst.status)}</span>
-        <span style="font-size:12.5px">${esc(sectorOf(worst) === 'sub' ? t('common.subLine') : t('common.prvLine'))}・${
-          worst.error ? t('logs.clientGot502') : t('common.routerRelayed')}</span>
+        <span style="font-size:12.5px">${esc(sectorOf(worst) === 'sub' ? t('common.subLine') : t('common.prvLine'))}・${worstOutcome}</span>
       </div>
       <div style="display:flex;gap:24px;flex-wrap:wrap;border-top:1px solid #4a2a24;padding-top:11px">
         ${[
