@@ -28,8 +28,7 @@ export const USAGE_STREAM = [
 /**
  * 假上游：記下收到什麼，並能演出 Anthropic Messages API 實測會遇到的失敗形狀。
  *
- * 從 test/smoke.mjs 抽出來（原本每個測試檔案都得自己重寫一份），現在 proxy 相關的
- * 測試檔案與 `npm run demo` 共用同一份劇本：
+ * proxy 相關的測試檔案共用同一份劇本：
  *
  *   - 正常請求：非串流回一則文字訊息；`stream: true` 分兩塊送，中間隔 150ms
  *     （用來證明 proxy 沒有把整個回應緩衝起來）。
