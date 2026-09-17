@@ -291,59 +291,6 @@ export function collectRateLimit(headers) {
   return Object.keys(out).length ? out : null
 }
 
-/**
- * 上游靜默多久就自己補一個 ping。Claude Code 的 byte watchdog 與 undici 的
- * bodyTimeout 都是 300 秒，取五分之一，留足夠餘裕。
- */
-const PING_IDLE_MS = 60_000
-
-const SSE_PING = 'event: ping\ndata: {"type":"ping"}\n\n'
-
-/** 這一塊資料有沒有剛好停在 SSE 的事件邊界（空行）上。 */
-function endsFrame(buf) {
-  const n = buf.length
-  if (n >= 2 && buf[n - 1] === 10 && buf[n - 2] === 10) return true
-  return n >= 4 && buf[n - 1] === 10 && buf[n - 2] === 13 && buf[n - 3] === 10 && buf[n - 4] === 13
-}
-
-/**
- * 上游安靜太久時替它補 ping —— 官方 gateway protocol 明文要求 gateway 這麼做：
- * 長思考期間上游可能一個 byte 都不吐，而 Claude Code 數的是位元組，靜默 300 秒就砍串流。
- *
- * **只掛在 provider 線上。** 訂閱線的價值就在原始 bytes 原樣轉發，摻合成資料進去
- * 就不成立了，而且 Anthropic 自己就會 ping。
- *
- * 補之前一定要確認停在事件邊界：上游的 chunk 不保證切在 frame 邊界上，
- * 插進半個事件中間會把整條串流弄壞。
- */
-export function createPinger(res, idleMs = PING_IDLE_MS) {
-  let lastWriteAt = Date.now()
-  let atBoundary = true
-  let count = 0
-
-  const timer = setInterval(() => {
-    if (!atBoundary || res.writableEnded || res.destroyed) return
-    if (Date.now() - lastWriteAt < idleMs) return
-    lastWriteAt = Date.now()
-    count += 1
-    res.write(SSE_PING)
-  }, Math.max(50, Math.round(idleMs / 4)))
-  timer.unref?.()
-
-  return {
-    /** 每收到一塊上游資料就叫一次：重置計時，並記住有沒有停在事件邊界。 */
-    saw(chunk) {
-      lastWriteAt = Date.now()
-      atBoundary = endsFrame(chunk)
-    },
-    /** @returns {number} 總共補了幾個 ping */
-    stop() {
-      clearInterval(timer)
-      return count
-    },
-  }
-}
-
 async function readBody(req, limit) {
   const chunks = []
   let size = 0
@@ -383,7 +330,6 @@ function baseEntry(req, ctx, over) {
     error: null,
     retryAfter: null,
     rateLimit: null,
-    pings: 0,
     requestId: null,
     // token 用量，只有串流回應才有；非串流的回應 router 不緩衝，讀不到
     usage: null,
@@ -398,12 +344,10 @@ function baseEntry(req, ctx, over) {
  * @param {object} [options]
  * @param {() => { boundProxyPort: number }} [options.getRuntime] 回報**實際綁定**的埠；
  *   不給的話退回讀 `config.proxyPort`，但那在使用者改埠又還沒重啟時會跟真正綁定的埠不一致。
- * @param {number} [options.pingIdleMs] 覆寫 PING_IDLE_MS，測試用來不必真的等 60 秒
  */
 export function createProxyServer(getConfig, log, options = {}) {
   const {
     getRuntime = () => ({ boundProxyPort: getConfig().proxyPort }),
-    pingIdleMs = PING_IDLE_MS,
   } = options
   const sessionCwd = new SessionCwd()
 
@@ -528,7 +472,6 @@ export function createProxyServer(getConfig, log, options = {}) {
       })
 
       let sse = false
-      let pinger = null
       let usageTap = null
 
       try {
@@ -575,12 +518,10 @@ export function createProxyServer(getConfig, log, options = {}) {
         // 逐塊寫出，不緩衝：Claude Code 會數 SSE 位元組，靜默 300 秒就中斷串流
         // 標記有可能被切在兩塊之間，所以每塊都帶上一塊的尾巴一起看
         let carry = Buffer.alloc(0)
-        if (sse && route.kind === 'provider') pinger = createPinger(res, pingIdleMs)
         // 兩條線都讀：訂閱線的快取命中一樣值得看，而且只讀不改，原始 bytes 照樣原封轉發
         if (sse) usageTap = createUsageTap()
         if (upstream.body) {
           for await (const chunk of upstream.body) {
-            pinger?.saw(chunk)
             usageTap?.push(chunk)
             if (sse && entry.detail === null) {
               const window = carry.length ? Buffer.concat([carry, chunk]) : chunk
@@ -609,11 +550,10 @@ export function createProxyServer(getConfig, log, options = {}) {
           )
         } else {
           // 串流開始後斷掉就照樣斷線，不補合成的 error 事件：實測 Claude Code 把斷線當連線錯誤、
-          // 重送串流；收到 api_error 事件卻會改發非串流請求，長輸出沒有 ping 可以撐。
+          // 重送串流；收到 api_error 事件卻會改發非串流請求，長輸出要等整包生成完才有回應。
           res.destroy()
         }
       } finally {
-        entry.pings = pinger?.stop() ?? 0
         // 串流中途斷掉也留下已經讀到的部分：message_start 通常早就到了
         if (usageTap) entry.usage = usageTap.result()
         entry.ms = Date.now() - started

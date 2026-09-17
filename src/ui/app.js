@@ -156,7 +156,6 @@ function stateOf(e) {
   if (isAborted(e)) return 'chk'
   if (e.detail) return 'chk'                    // 200 但串流裡夾著 error 事件
   if (effortStripped(e)) return 'chk'
-  if (e.pings) return 'chk'
   if (!e.cwd) return 'chk'
   return 'clr'
 }
@@ -190,7 +189,6 @@ function marginNote(e) {
   }
   if (e.detail) return t('rack.note.streamError')
   if (effortStripped(e)) return t('rack.note.effortStripped')
-  if (e.pings) return t('rack.note.pings', { pings: e.pings })
   if (!e.cwd && e.status != null) return e.sessionId ? t('rack.note.cwdUnknown') : t('rack.note.noSession')
   return ''
 }
@@ -216,7 +214,6 @@ function annotation(e) {
     rows.push([t('rack.ann.silentDowngrade'), t('rack.ann.silentDowngradeValue', { effort: e.effort }), true])
     rows.push([t('rack.ann.fix'), t('rack.ann.fixValue')])
   }
-  if (e.pings) rows.push(['keep-alive', t('rack.ann.keepAliveValue', { pings: e.pings })])
   if (e.usage) {
     const u = e.usage
     const prompt = u.input + u.cacheRead + u.cacheWrite

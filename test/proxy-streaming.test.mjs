@@ -2,8 +2,8 @@ import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { createProxyServer, TrafficLog, findStreamError, createPinger, createUsageTap } from '../src/proxy.mjs'
-import { createHarness, makePost, listen, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
+import { findStreamError, createUsageTap } from '../src/proxy.mjs'
+import { createHarness, makePost, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
 import { USAGE_STREAM } from './fixtures/fake-upstream.mjs'
 
 let harness, post
@@ -146,40 +146,6 @@ test('讀 request body 途中斷線就收手，不拿空 body 往上游打', asy
   assert.match(entry.error, /failed to read request body/)
 })
 
-// ── SSE keep-alive ping ───────────────────────────────────────────
-test('createPinger：上游靜默就補 ping，而且只在事件邊界上補', async () => {
-  const onBoundary = []
-  const midFrame = []
-  const stub = (sink) => ({ writableEnded: false, destroyed: false, write: (c) => sink.push(c) })
-
-  const a = createPinger(stub(onBoundary), 30)
-  const b = createPinger(stub(midFrame), 30)
-  // 上游的 chunk 不保證切在 frame 邊界上，插進半個事件中間會把整條串流弄壞
-  b.saw(Buffer.from('event: content_block_delta\ndata: {"partial"'))
-
-  await sleep(200)
-  assert.ok(a.stop() > 0, '靜默超過 idleMs 就該補')
-  assert.deepEqual(onBoundary[0], 'event: ping\ndata: {"type":"ping"}\n\n', 'ping 必須是一個完整合法的事件')
-  assert.equal(b.stop(), 0, '停在半個事件中間就不能插進去')
-})
-
-test('createPinger：收到上游資料就重置計時，res 收掉之後不再寫', async () => {
-  const written = []
-  const res = { writableEnded: false, destroyed: false, write: (c) => written.push(c) }
-  const pinger = createPinger(res, 120)
-
-  // 每 40ms 餵一塊完整事件，計時一直被重置，撐過 idleMs 也不該有 ping
-  for (let i = 0; i < 5; i++) {
-    pinger.saw(Buffer.from('event: ping\ndata: {}\n\n'))
-    await sleep(40)
-  }
-  assert.equal(written.length, 0, '上游還在吐東西就不需要代打')
-
-  res.writableEnded = true
-  await sleep(200)
-  assert.equal(pinger.stop(), 0, '回應已經收掉還寫就會炸在 stream 上')
-})
-
 // ── token 用量與快取命中 ───────────────────────────────────────────
 
 test('createUsageTap：切在 JSON 與多位元組字元中間也讀得出來，message_delta 的累計值蓋過先到的', () => {
@@ -214,54 +180,13 @@ test('兩條線都把 token 用量記進流量記錄，而且轉發的 bytes 一
   }
 })
 
-test('訂閱線的串流一個合成 byte 都不加', async () => {
-  const res = await post(SUBSCRIPTION_HEADERS, { ...BASE_BODY, stream: true })
-  const text = await res.text()
-
-  assert.equal(
-    text,
-    'event: message_start\ndata: {}\n\nevent: message_stop\ndata: {}\n\n',
-    'passthrough 的價值就在原始 bytes 原樣轉發，ping 也不能摻進去',
-  )
-  assert.equal(harness.logStore.list()[0].pings, 0)
-})
-
-/** 透過 createProxyServer 的 `pingIdleMs` 選項端到端驗證補 ping，不必等真正的 60 秒。 */
-test('端到端：provider 線安靜超過 pingIdleMs 就補 ping（不必等 60 秒）', async () => {
-  const upstream = http.createServer((req, res) => {
-    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
-    res.write('event: message_start\ndata: {}\n\n')
-    // 故意安靜 300ms，比下面設的 80ms pingIdleMs 久很多
-    setTimeout(() => {
-      res.write('event: message_stop\ndata: {}\n\n')
-      res.end()
-    }, 300)
-  })
-  const upstreamUrl = await listen(upstream)
-
-  const { defaultProvider, defaultRule, normalizeConfig } = await import('../src/config.mjs')
-  const config = normalizeConfig({
-    providers: [defaultProvider({ id: 'p', baseUrl: upstreamUrl, model: 'm' })],
-    rules: [defaultRule({ match: 'subagent', providerId: 'p' })],
-  })
-  const logStore = new TrafficLog(10)
-  const proxy = createProxyServer(() => config, logStore, {
-    getRuntime: () => ({ boundProxyPort: 8787 }),
-    pingIdleMs: 80,
-  })
-  const proxyUrl = await listen(proxy)
-
-  try {
-    const res = await fetch(`${proxyUrl}/v1/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-claude-code-agent-id': 'a' },
-      body: JSON.stringify({ ...BASE_BODY, stream: true }),
-    })
-    const text = await res.text()
-    assert.match(text, /event: ping/, '安靜超過 pingIdleMs 就該補 ping，不必等真的 60 秒')
-    assert.equal(logStore.list()[0].pings > 0, true)
-  } finally {
-    proxy.close()
-    upstream.close()
+test('兩條線的串流都一個合成 byte 都不加', async () => {
+  for (const headers of [SUBSCRIPTION_HEADERS, { ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }]) {
+    const res = await post(headers, { ...BASE_BODY, stream: true })
+    assert.equal(
+      await res.text(),
+      'event: message_start\ndata: {}\n\nevent: message_stop\ndata: {}\n\n',
+      '上游吐什麼 client 就收到什麼，router 不往串流裡摻東西',
+    )
   }
 })
