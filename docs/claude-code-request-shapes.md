@@ -1,6 +1,6 @@
 # Claude Code 實際送出的請求形狀（v2.1.274，2026-09）
 
-內建測試的每一項都照這裡記錄的形狀打。形狀抄錯，測到的就是別的東西 —— 這件事實際發生過：看圖測試第一版自己捏了一則「assistant 呼叫 Read」當歷史、沒附 thinking，DeepSeek 回 `400 The content[].thinking in the thinking mode must be passed back to the API`，結果被判成「看不到圖片」。
+[內建測試](providers.md#內建的測試)除了前三項單發請求，每一項都照這裡記錄的形狀打。形狀抄錯，測到的就是別的東西 —— 這件事實際發生過：看圖測試第一版自己捏了一則「assistant 呼叫 Read」當歷史、沒附 thinking，DeepSeek 回 `400 The content[].thinking in the thinking mode must be passed back to the API`，結果被判成「看不到圖片」。
 
 ## 怎麼抓的
 
@@ -64,7 +64,7 @@ node scripts/capture-shapes.mjs image,pdf             # 只跑其中幾個；--o
 
 不靠 `output_config.format`。Claude Code 在工具清單裡多掛一個 `StructuredOutput` 工具，`input_schema` 就是 script 給的 schema，沒有 `tool_choice` 強制；輸出由 Claude Code 自己驗證，不合格重試（`MAX_STRUCTURED_OUTPUT_RETRIES`，預設 5）。所以在第三方上它就是一般的工具呼叫能力，不需要上游支援 structured outputs。
 
-Workflow agent 的工具清單裡沒有 `Agent` 與 `Workflow`，與 README「三種來源」一節的舊實測一致。
+Workflow agent 的工具清單裡沒有 `Agent` 與 `Workflow`，與 [routing.md](routing.md#三種來源分別是什麼)「三種來源分別是什麼」一節的舊實測一致。
 
 `output_config.format`（`json_schema`）只出現在主對話的背景請求上，例如產生 session 標題那一筆（`thinking: disabled`、沒有 agent-id），一律走訂閱。
 

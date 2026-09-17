@@ -11,7 +11,11 @@ traffic.log.1
 # Claude Code 本地設定：內含機器專屬的 router 位址，不進版控
 .claude/
 
-# impeccable / design canvas 的產出物：可從 design/*.dc.html 重新 seed 出來
-design/subagent-handoff-console.html
-.impeccable/review/
-.impeccable/questions/
+# impeccable 設計工具的本機狀態（decision.json 記錄的視覺世界、外部圖片參照等）
+.impeccable/
+
+# 零 npm 依賴是刻意的約束，但還是要擋掉萬一手滑裝進來的東西
+node_modules/
+
+.env
+.DS_Store

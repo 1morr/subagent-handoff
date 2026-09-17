@@ -9,7 +9,7 @@ const HOST = '127.0.0.1'
 // package.json 的 engines 只有 npm 在 engine-strict 下才會擋，直接 `node src/index.mjs` 不會。
 // 舊 Node 的失敗點在第一次呼叫 fetch（連通性測試或轉發時）才炸，訊息完全指不回版本。
 if (Number(process.versions.node.split('.')[0]) < 20) {
-  console.error(`✗ subagent-handoff 需要 Node 20 以上，目前是 ${process.version}`)
+  console.error(`✗ subagent-handoff needs Node 20 or later; this is ${process.version}`)
   process.exit(1)
 }
 
@@ -33,10 +33,11 @@ const bootedWith = {
 
 const getConfig = () => config
 const getRuntime = () => {
-  // 講清楚是「哪一項」要重啟：只說「需要重啟」會讓人回頭找不到自己改了什麼
+  // 講清楚是「哪一項」要重啟：只說「需要重啟」會讓人回頭找不到自己改了什麼。
+  // 這裡刻意存英文穩定代碼（GUI 是雙語的），app.js 拿代碼去 i18n 目錄查表翻譯。
   const reasons = []
-  if (config.proxyPort !== bootedWith.proxyPort || config.adminPort !== bootedWith.adminPort) reasons.push('埠號')
-  if (JSON.stringify(config.trafficLog) !== bootedWith.trafficLog) reasons.push('流量記錄落檔')
+  if (config.proxyPort !== bootedWith.proxyPort || config.adminPort !== bootedWith.adminPort) reasons.push('port')
+  if (JSON.stringify(config.trafficLog) !== bootedWith.trafficLog) reasons.push('trafficLog')
   return {
     boundProxyPort: bootedWith.proxyPort,
     boundAdminPort: bootedWith.adminPort,
@@ -51,15 +52,28 @@ async function setConfig(next) {
   return config
 }
 
-const proxy = createProxyServer(getConfig, log)
+const proxy = createProxyServer(getConfig, log, { getRuntime })
 const admin = createAdminServer({ getConfig, setConfig, log, getRuntime })
+
+/**
+ * 最後一道防線。proxy 這條線服務機器上所有的 Claude Code session，一個意外的例外
+ * 不該讓整個 process 死掉、切斷所有還在跑的 session —— 但這只是保底，不是常態；
+ * proxy.mjs 自己的請求處理已經包了一層 try/catch，這裡接的是那層之外、理論上
+ * 不該發生的東西（例如某個第三方套件在 process 層級丟出的例外）。
+ */
+process.on('unhandledRejection', (reason) => {
+  console.error(`✗ unhandled rejection (the process stays up): ${reason?.stack ?? reason}`)
+})
+process.on('uncaughtException', (err) => {
+  console.error(`✗ uncaught exception (the process stays up): ${err?.stack ?? err}`)
+})
 
 function listen(server, port, label) {
   return new Promise((resolve, reject) => {
     server.once('error', (err) => {
       reject(
         err.code === 'EADDRINUSE'
-          ? new Error(`${label} 埠 ${port} 已被佔用，改一下 ${CONFIG_PATH} 裡的埠再啟動`)
+          ? new Error(`${label} port ${port} is already in use — change it in ${CONFIG_PATH} and start again`)
           : err,
       )
     })
@@ -84,15 +98,15 @@ try {
 }
 
 console.log(`
-  subagent-handoff 已啟動
+  subagent-handoff is running
 
   Proxy   http://${HOST}:${config.proxyPort}
   GUI     http://${HOST}:${config.adminPort}
-  設定檔  ${CONFIG_PATH}
-  流量記錄 ${trafficLogPath || '(不落檔)'}
+  Config   ${CONFIG_PATH}
+  Traffic  ${trafficLogPath || '(not written to disk)'}
 
-  在 Claude Code 的 settings.json 裡設 ANTHROPIC_BASE_URL 指向上面的 Proxy，
-  且不要設 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY，訂閱登入才會保留。
+  Point ANTHROPIC_BASE_URL at the proxy above in Claude Code settings.json, and
+  leave ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY unset to keep the subscription.
 `)
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

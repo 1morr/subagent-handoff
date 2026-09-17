@@ -13,6 +13,15 @@
  */
 export const PASSTHROUGH_ID = 'passthrough'
 
+/**
+ * 流量記錄裡 `target` 欄位在走 passthrough／完全沒送出時的固定值。GUI 是雙語的
+ * （見 src/ui/i18n/），所以這裡刻意存英文穩定字串，前端拿它當 key 查表翻譯，
+ * 不要直接把某一種語言的顯示文字存進 log —— 那樣另一個語言的使用者就看不懂了。
+ * src/ui/app.js 的 PASSTHROUGH_TARGET／NOT_SENT_TARGET 必須跟這兩個值完全一致。
+ */
+export const PASSTHROUGH_LABEL = 'passthrough (subscription)'
+export const NOT_SENT_LABEL = 'not sent'
+
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

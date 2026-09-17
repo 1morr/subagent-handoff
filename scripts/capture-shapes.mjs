@@ -310,7 +310,7 @@ async function main() {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !INHERITED_ENV.test(k)))
   env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${server.address().port}`
   const claude = process.env.CLAUDE_BIN ?? 'claude'
-  console.log(`輸出：${outDir}`)
+  console.log(`output: ${outDir}`)
 
   for (const scenario of runs) {
     current = scenario
@@ -335,7 +335,7 @@ async function main() {
       const timer = setTimeout(() => child.kill(), RUN_TIMEOUT_MS)
       child.on('error', (err) => {
         clearTimeout(timer)
-        resolve(`${err.code ?? err.message}（找不到 claude 的話用 CLAUDE_BIN 指定執行檔）`)
+        resolve(`${err.code ?? err.message} (set CLAUDE_BIN if claude is not on PATH)`)
       })
       child.on('exit', (exitCode) => {
         clearTimeout(timer)
@@ -344,7 +344,7 @@ async function main() {
       })
     })
     const requests = fs.readFileSync(logPath, 'utf8').split('\n').filter((line) => line.includes(`"run":"${scenario}"`)).length
-    console.log(`${scenario}: exit ${code}・${requests} 筆請求・${Math.round((Date.now() - started) / 1000)}s`)
+    console.log(`${scenario}: exit ${code} · ${requests} requests · ${Math.round((Date.now() - started) / 1000)}s`)
   }
   server.close()
 }

@@ -31,7 +31,7 @@ export function newId(prefix) {
 export function defaultProvider(over = {}) {
   return {
     id: newId('p'),
-    label: '新 Provider',
+    label: 'New Provider',
     baseUrl: '',
     apiKey: '',
     /** 空字串 = 不改寫，原樣把 Claude Code 要求的 model 名送過去。 */
@@ -198,18 +198,108 @@ function asPort(v, fallback) {
   return Number.isInteger(n) && n > 0 && n < 65536 ? n : fallback
 }
 
-function trimSlash(url) {
+export function trimSlash(url) {
   return typeof url === 'string' ? url.trim().replace(/\/+$/, '') : ''
 }
 
-function normalizeHeaders(raw) {
+/**
+ * baseUrl 會被原樣接在 `target = baseUrl + req.url` 上再交給 fetch，
+ * 沒有 scheme 檢查的話可以指到 `http://169.254.169.254` 之類的位址，
+ * 而且憑證會一起帶過去。空字串（尚未設定）算合法，其餘一律要求 http/https。
+ *
+ * @returns {{ ok: true, value: string } | { ok: false, error: string }}
+ */
+export function validateBaseUrl(raw) {
+  const trimmed = typeof raw === 'string' ? raw.trim() : ''
+  if (!trimmed) return { ok: true, value: '' }
+  let parsed
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    return { ok: false, error: `not a valid URL: ${trimmed}` }
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, error: `must be http:// or https://, not ${parsed.protocol}//` }
+  }
+  return { ok: true, value: trimSlash(trimmed) }
+}
+
+/** provider 的 baseUrl：驗證失敗就清空（未設定），並在 console 留下原因，不讓載入整個炸掉。 */
+function normalizeProviderBaseUrl(raw, label) {
+  const result = validateBaseUrl(raw)
+  if (result.ok) return result.value
+  console.error(`✗ provider "${label}" has an invalid baseUrl (${result.error}); it has been cleared and the provider will not be used until you fix it`)
+  return ''
+}
+
+/** passthrough 的 baseUrl：一定要有個值可用，驗證失敗就退回預設。 */
+function normalizePassthroughBaseUrl(raw, fallback) {
+  const trimmed = typeof raw === 'string' ? raw.trim() : ''
+  if (!trimmed) return fallback
+  const result = validateBaseUrl(trimmed)
+  if (!result.ok) {
+    console.error(`✗ passthrough.baseUrl is invalid (${result.error}); falling back to ${fallback}`)
+    return fallback
+  }
+  return result.value
+}
+
+/**
+ * HTTP header 名稱允許的字元集（RFC 7230 token）。CR/LF 之類的字元 undici 的 Headers
+ * 本來就會拒收，但拒收的時機是送出去的那一刻，那時候只剩一個看不出原因的 502。
+ * 這裡提前擋，直接講是哪個名字不合法。
+ */
+const HEADER_TOKEN_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+
+export function isValidHeaderName(name) {
+  return typeof name === 'string' && HEADER_TOKEN_RE.test(name)
+}
+
+function normalizeHeaders(raw, label) {
   if (!raw || typeof raw !== 'object') return {}
   const out = {}
   for (const [k, v] of Object.entries(raw)) {
     const name = String(k).trim()
-    if (name && typeof v === 'string') out[name] = v
+    if (!name || typeof v !== 'string') continue
+    if (!isValidHeaderName(name)) {
+      console.error(`✗ provider "${label}" has an invalid extraHeaders name; skipping ${JSON.stringify(name)}`)
+      continue
+    }
+    out[name] = v
   }
   return out
+}
+
+/**
+ * `PUT /api/config` 存檔前的把關。normalizeConfig 遇到壞資料是「修掉」而不是拋錯
+ * （config.json 被手改壞掉時，載入不該讓整個 proxy 起不來），但使用者從 GUI 主動送出
+ * 壞資料時應該看到明確的錯誤，而不是被靜默清空、或者送出去才炸成一個看不懂的 502。
+ * 這裡驗證的是**送進來的原始資料**，在還沒被 normalizeConfig 悄悄修正之前。
+ *
+ * @returns {string[]} 問題清單；空陣列＝可以存
+ */
+export function describeConfigProblems(raw) {
+  const problems = []
+  const cfg = raw && typeof raw === 'object' ? raw : {}
+
+  if (cfg.passthrough) {
+    const result = validateBaseUrl(cfg.passthrough.baseUrl)
+    if (!result.ok) problems.push(`passthrough.baseUrl: ${result.error}`)
+  }
+
+  for (const p of Array.isArray(cfg.providers) ? cfg.providers : []) {
+    if (!p || typeof p !== 'object') continue
+    const label = String(p.label ?? p.id ?? 'Unnamed')
+    const result = validateBaseUrl(p.baseUrl)
+    if (!result.ok) problems.push(`provider "${label}" baseUrl: ${result.error}`)
+    for (const key of Object.keys(p.extraHeaders && typeof p.extraHeaders === 'object' ? p.extraHeaders : {})) {
+      if (!isValidHeaderName(key)) {
+        problems.push(`provider "${label}" has an invalid extraHeaders header name: ${JSON.stringify(key)}`)
+      }
+    }
+  }
+
+  return problems
 }
 
 export function normalizeConfig(raw) {
@@ -222,8 +312,8 @@ export function normalizeConfig(raw) {
           ...p,
           // PASSTHROUGH_ID 是規則用來指回訂閱的保留值，不能讓 provider 佔走
           id: typeof p.id === 'string' && p.id && p.id !== PASSTHROUGH_ID ? p.id : newId('p'),
-          label: String(p.label ?? '').trim() || '未命名',
-          baseUrl: trimSlash(p.baseUrl),
+          label: String(p.label ?? '').trim() || 'Unnamed',
+          baseUrl: normalizeProviderBaseUrl(p.baseUrl, String(p.label ?? p.id ?? 'Unnamed')),
           apiKey: typeof p.apiKey === 'string' ? p.apiKey : '',
           model: String(p.model ?? '').trim(),
           authStyle: p.authStyle === 'x-api-key' ? 'x-api-key' : 'bearer',
@@ -233,7 +323,7 @@ export function normalizeConfig(raw) {
           dropBeta: p.dropBeta !== false,
           maxOutputTokens: Number.isInteger(p.maxOutputTokens) && p.maxOutputTokens > 0 ? p.maxOutputTokens : null,
           retry: normalizeRetryOverride(p.retry),
-          extraHeaders: normalizeHeaders(p.extraHeaders),
+          extraHeaders: normalizeHeaders(p.extraHeaders, String(p.label ?? p.id ?? 'Unnamed')),
         }),
       )
     : base.providers
@@ -259,7 +349,7 @@ export function normalizeConfig(raw) {
     // 下限抓 1MB：比這還小的上限只會把正常請求全部擋掉
     maxRequestBytes: Math.max(1_000_000, asPositive(cfg.maxRequestBytes, base.maxRequestBytes, 1_000_000_000)),
     passthrough: {
-      baseUrl: trimSlash(cfg.passthrough?.baseUrl) || base.passthrough.baseUrl,
+      baseUrl: normalizePassthroughBaseUrl(cfg.passthrough?.baseUrl, base.passthrough.baseUrl),
       // 完全沒有這個鍵＝舊版設定檔，套用新預設把節流重送關掉 —— 載入就直接修好
       retry:
         cfg.passthrough?.retry === undefined
@@ -283,7 +373,7 @@ export async function loadConfig() {
       await saveConfig(cfg)
       return cfg
     }
-    throw new Error(`讀取 ${CONFIG_PATH} 失敗：${err.message}`)
+    throw new Error(`Could not read ${CONFIG_PATH}: ${err.message}`)
   }
 }
 
@@ -291,7 +381,9 @@ export async function saveConfig(cfg) {
   const normalized = normalizeConfig(cfg)
   await mkdir(path.dirname(CONFIG_PATH), { recursive: true })
   const tmp = `${CONFIG_PATH}.${process.pid}.tmp`
-  await writeFile(tmp, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8')
+  // config.json 裡有第三方 API key，0600 讓同機的其他使用者讀不到。
+  // rename 會保留 tmp 檔的 mode，所以正式檔也是 0600。Windows 上這個選項會被忽略，無害。
+  await writeFile(tmp, `${JSON.stringify(normalized, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
   await rename(tmp, CONFIG_PATH)
   return normalized
 }
@@ -313,14 +405,25 @@ export function toClientConfig(cfg) {
   }
 }
 
-/** 收到瀏覽器的版本：把 KEEP_SECRET 還原成現存的 key。 */
+/**
+ * 收到瀏覽器的版本：把 KEEP_SECRET 還原成現存的 key。
+ *
+ * 只有在送回來的 baseUrl 跟已存的完全一樣時才還原：否則 `PUT /api/config` 就能一邊把
+ * baseUrl 換成攻擊者的網域、一邊用 KEEP_SECRET 把已存的真 key 綁過去 —— 這正是
+ * `POST /api/test` 那個「拿 baseUrl 換 API key」原始問題的另一種寫法。baseUrl 對不上
+ * 時不還原，逼使用者直接帶入新 key，而不是讓遮罩值悄悄失效變成空字串以外的東西。
+ */
 export function fromClientConfig(incoming, current) {
   const byId = new Map(current.providers.map((p) => [p.id, p]))
   return normalizeConfig({
     ...incoming,
     providers: (incoming.providers ?? []).map((p) => {
       const { apiKeyHint, ...rest } = p
-      if (rest.apiKey === KEEP_SECRET) rest.apiKey = byId.get(rest.id)?.apiKey ?? ''
+      if (rest.apiKey === KEEP_SECRET) {
+        const stored = byId.get(rest.id)
+        const submitted = validateBaseUrl(rest.baseUrl)
+        rest.apiKey = stored && submitted.ok && submitted.value === stored.baseUrl ? stored.apiKey : ''
+      }
       return rest
     }),
   })

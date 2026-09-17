@@ -190,7 +190,7 @@ async function judgeReply(response, started, judge) {
     return {
       ok: false,
       ms: Date.now() - started,
-      error: `沒有文字回覆（stop_reason=${json.stop_reason}），無法判定${json.stop_reason === 'max_tokens' ? ' —— 思考把 max_tokens 吃光了' : ''}`,
+      error: `no text reply (stop_reason=${json.stop_reason}), cannot judge${json.stop_reason === 'max_tokens' ? ' — thinking used up max_tokens' : ''}`,
     }
   }
   return { ms: Date.now() - started, ...judge(text) }
@@ -210,11 +210,11 @@ async function testConnectivity(provider, model) {
   const text = textOf(json.content ?? [])
   const reply = text
     ? JSON.stringify(text.slice(0, 40))
-    : `是空的（stop_reason=${json.stop_reason}${json.stop_reason === 'max_tokens' ? '，思考把 max_tokens 吃光了' : ''}）`
+    : `empty (stop_reason=${json.stop_reason}${json.stop_reason === 'max_tokens' ? ', thinking used up max_tokens' : ''})`
   return {
     ok: true,
     ms: Date.now() - started,
-    detail: `上游回報 model=${json.model ?? '?'}・回覆 ${reply}・in ${json.usage?.input_tokens ?? '?'} / out ${
+    detail: `upstream reported model=${json.model ?? '?'} · reply ${reply} · in ${json.usage?.input_tokens ?? '?'} / out ${
       json.usage?.output_tokens ?? '?'
     } tokens`,
   }
@@ -234,7 +234,7 @@ async function testStreaming(provider, model) {
     return {
       ok: false,
       ms: Date.now() - started,
-      error: `content-type 是 ${contentType || '(空)'}，不是 text/event-stream，上游沒有真的串流`,
+      error: `content-type is ${contentType || '(empty)'}, not text/event-stream — upstream did not actually stream`,
     }
   }
 
@@ -244,8 +244,8 @@ async function testStreaming(provider, model) {
   return {
     ok: sawDelta && sawStop,
     ms: Date.now() - started,
-    detail: `首位元組 ${stream.firstByteMs}ms・${stream.bytes} bytes・events: ${[...stream.events].join(', ') || '(無)'}`,
-    error: sawDelta && sawStop ? undefined : '缺少 content_block_delta 或 message_stop 事件',
+    detail: `first byte ${stream.firstByteMs}ms · ${stream.bytes} bytes · events: ${[...stream.events].join(', ') || '(none)'}`,
+    error: sawDelta && sawStop ? undefined : 'missing content_block_delta or message_stop event',
   }
 }
 
@@ -274,9 +274,9 @@ async function testTools(provider, model) {
     ok: Boolean(toolUse),
     ms: Date.now() - started,
     detail: toolUse
-      ? `呼叫了 ${toolUse.name}(${JSON.stringify(toolUse.input)})・stop_reason=${json.stop_reason}`
-      : `stop_reason=${json.stop_reason}，沒有 tool_use block`,
-    error: toolUse ? undefined : '上游沒有發出工具呼叫，Claude Code 在這個 provider 上會無法運作',
+      ? `called ${toolUse.name}(${JSON.stringify(toolUse.input)}) · stop_reason=${json.stop_reason}`
+      : `stop_reason=${json.stop_reason}, no tool_use block`,
+    error: toolUse ? undefined : 'upstream did not issue a tool call — Claude Code will not work on this provider',
   }
 }
 
@@ -336,14 +336,14 @@ async function testToolLoop(provider, model) {
     return {
       ok: false,
       ms: Date.now() - started,
-      error: `input_json_delta 拼回來不是合法 JSON：${JSON.stringify(turn1.jsonErrors[0])}`,
+      error: `input_json_delta did not reassemble into valid JSON: ${JSON.stringify(turn1.jsonErrors[0])}`,
     }
   }
   if (!toolUse) {
     return {
       ok: false,
       ms: Date.now() - started,
-      error: `第一輪沒有串流出 tool_use（stop_reason=${turn1.stopReason}${turn1.error ? `・${turn1.error}` : ''}）`,
+      error: `first turn streamed no tool_use (stop_reason=${turn1.stopReason}${turn1.error ? ` · ${turn1.error}` : ''})`,
     }
   }
 
@@ -363,8 +363,8 @@ async function testToolLoop(provider, model) {
     return {
       ok: false,
       ms: Date.now() - started,
-      detail: `送回的 assistant 訊息含 ${echoed.join(' + ')}`,
-      error: `送回 tool_result 那一輪被拒：${await errorDetail(second)}`,
+      detail: `echoed assistant message contains ${echoed.join(' + ')}`,
+      error: `the turn sending back tool_result was rejected: ${await errorDetail(second)}`,
     }
   }
   const turn2 = await readStream(second, started)
@@ -373,10 +373,10 @@ async function testToolLoop(provider, model) {
   return {
     ok,
     ms: Date.now() - started,
-    detail: `第一輪 ${toolUse.name}(${JSON.stringify(toolUse.input)})・送回 ${echoed.join(' + ')}・第二輪 stop_reason=${turn2.stopReason}`,
+    detail: `turn 1 ${toolUse.name}(${JSON.stringify(toolUse.input)}) · echoed ${echoed.join(' + ')} · turn 2 stop_reason=${turn2.stopReason}`,
     error: ok
       ? undefined
-      : `第二輪沒有用上 tool_result 的內容（回覆 ${JSON.stringify(reply.slice(0, 80))}${turn2.error ? `・${turn2.error}` : ''}）`,
+      : `turn 2 did not use the tool_result content (reply ${JSON.stringify(reply.slice(0, 80))}${turn2.error ? ` · ${turn2.error}` : ''})`,
   }
 }
 
@@ -398,7 +398,7 @@ async function testEffort(provider, model) {
     return {
       ok: false,
       ms: Date.now() - started,
-      error: 'dropFields 含 output_config，/effort 會在送出前被剝掉，對這個 provider 完全失效',
+      error: 'dropFields includes output_config, so /effort gets stripped before sending — it is fully disabled for this provider',
     }
   }
 
@@ -418,11 +418,11 @@ async function testEffort(provider, model) {
     return {
       ok: false,
       ms,
-      detail: `${EFFORT_LEVELS.length - rejected.length}/${EFFORT_LEVELS.length} 個檔位可用`,
+      detail: `${EFFORT_LEVELS.length - rejected.length}/${EFFORT_LEVELS.length} levels usable`,
       error: rejected[0],
     }
   }
-  return { ok: true, ms, detail: `五個檔位全數接受（${EFFORT_LEVELS.join(' / ')}）` }
+  return { ok: true, ms, detail: `all five levels accepted (${EFFORT_LEVELS.join(' / ')})` }
 }
 
 /**
@@ -454,14 +454,14 @@ async function testSystemMessages(provider, model) {
   })
   return judgeReply(response, started, (text) => {
     const missing = [
-      [early, '對話中間那則'],
-      [late, '結尾那則'],
+      [early, 'mid-conversation'],
+      [late, 'trailing'],
     ].filter(([code]) => !text.includes(code))
     return {
       ok: missing.length === 0,
-      detail: `回覆 ${JSON.stringify(text.slice(0, 80))}`,
+      detail: `reply ${JSON.stringify(text.slice(0, 80))}`,
       error: missing.length
-        ? `模型沒看見${missing.map(([, where]) => where).join('與')} system 訊息 —— 子 agent 會少掉 Claude Code 放在那裡的指示，而且不會報錯`
+        ? `the model did not see the ${missing.map(([, where]) => where).join(' and ')} system message — subagents lose the instructions Claude Code puts there, without any error`
         : undefined,
     }
   })
@@ -562,7 +562,7 @@ async function readFileTurns(provider, model, started, { instruction, resultCont
   const turn1 = await first.json()
   const toolUse = (turn1.content ?? []).find((b) => b.type === 'tool_use')
   if (!toolUse) {
-    return { ok: false, ms: Date.now() - started, error: `模型沒有呼叫 Read（stop_reason=${turn1.stop_reason}），無法判定` }
+    return { ok: false, ms: Date.now() - started, error: `the model did not call Read (stop_reason=${turn1.stop_reason}), cannot judge` }
   }
 
   const second = await call(provider, model, {
@@ -595,10 +595,10 @@ async function testVision(provider, model) {
       const ok = answer === expected
       return {
         ok,
-        detail: `預期 ${expected}・回答 ${answer}`,
+        detail: `expected ${expected} · answered ${answer}`,
         error: ok
           ? undefined
-          : '回答與圖片不符 —— 工具結果裡的圖片沒有抵達模型（或模型不支援視覺）。子 agent 讀圖片、看截圖時會照猜測回答',
+          : 'answer does not match the image — the image in the tool result never reached the model (or the model has no vision). Subagents reading images or screenshots will answer by guessing',
       }
     },
   })
@@ -620,8 +620,8 @@ async function testPdf(provider, model) {
       const ok = text.includes(code)
       return {
         ok,
-        detail: `預期 ${code}・回覆 ${JSON.stringify(text.slice(0, 60))}`,
-        error: ok ? undefined : 'PDF 內容沒有抵達模型 —— 子 agent 用 Read 讀 PDF 時只會看到檔名那一行',
+        detail: `expected ${code} · reply ${JSON.stringify(text.slice(0, 60))}`,
+        error: ok ? undefined : 'the PDF content never reached the model — subagents reading a PDF with Read only see the file name line',
       }
     },
   })
@@ -657,25 +657,29 @@ async function testWebSearch(provider, model) {
   return {
     ok,
     ms: Date.now() - started,
-    detail: `搜尋 ${searches} 次・${hits.length} 筆結果・stop_reason=${stream.stopReason}・in ${stream.usage?.input_tokens ?? '?'} tokens`,
+    detail: `${searches} searches · ${hits.length} results · stop_reason=${stream.stopReason} · in ${stream.usage?.input_tokens ?? '?'} tokens`,
     error: ok
       ? undefined
       : searches
-        ? `搜了但沒有拿到結果（${failures.join(', ') || stream.error || '結果是空的'}）`
-        : `上游沒有執行 web_search${stream.error ? `（${stream.error}）` : ''} —— 子 agent 的 WebSearch 會拿不到結果`,
+        ? `searched but got no results (${failures.join(', ') || stream.error || 'empty result'})`
+        : `upstream did not run web_search${stream.error ? ` (${stream.error})` : ''} — subagents' WebSearch will get no results`,
   }
 }
 
-/** tier：required ＝不過就跑不起來；capability ＝跑得起來，但那個能力靜默失效 */
+/**
+ * tier：required ＝不過就跑不起來；capability ＝跑得起來，但那個能力靜默失效。
+ * label 是英文預設值；GUI 是雙語的，實際顯示時 app.js 會照這裡的 id 去 i18n 目錄查表，
+ * 不吃這個欄位 —— label 只是給還沒套用 i18n 的呼叫端（例如日後的 CLI）當保底。
+ */
 const TESTS = {
-  connectivity: { label: '基本推論', tier: 'required', run: testConnectivity },
-  streaming: { label: 'SSE 串流', tier: 'required', run: testStreaming },
-  tools: { label: '工具呼叫', tier: 'required', run: testTools },
-  toolLoop: { label: '串流工具迴圈', tier: 'required', run: testToolLoop },
-  effort: { label: '思考檔位', tier: 'capability', run: testEffort },
-  systemMessages: { label: '中途 system 訊息', tier: 'capability', run: testSystemMessages },
-  vision: { label: '看圖', tier: 'capability', run: testVision },
-  pdf: { label: '讀 PDF', tier: 'capability', run: testPdf },
+  connectivity: { label: 'Basic inference', tier: 'required', run: testConnectivity },
+  streaming: { label: 'SSE streaming', tier: 'required', run: testStreaming },
+  tools: { label: 'Tool calling', tier: 'required', run: testTools },
+  toolLoop: { label: 'Streaming tool loop', tier: 'required', run: testToolLoop },
+  effort: { label: 'Thinking effort', tier: 'capability', run: testEffort },
+  systemMessages: { label: 'Mid-conversation system messages', tier: 'capability', run: testSystemMessages },
+  vision: { label: 'Vision', tier: 'capability', run: testVision },
+  pdf: { label: 'Reading PDFs', tier: 'capability', run: testPdf },
   webSearch: { label: 'WebSearch', tier: 'capability', optional: true, run: testWebSearch },
 }
 
@@ -684,9 +688,9 @@ export const DEFAULT_TEST_IDS = Object.keys(TESTS).filter((id) => !TESTS[id].opt
 
 export async function runProbes(provider, { model, tests = DEFAULT_TEST_IDS } = {}) {
   const target = (model ?? '').trim() || provider.model
-  const configFailure = (error) => ({ model: target, results: [{ id: 'config', label: '設定', tier: 'required', ok: false, error }] })
-  if (!provider.baseUrl) return configFailure('沒有填 Base URL')
-  if (!target) return configFailure('沒有 model 名可測，請在 provider 或測試欄位填一個')
+  const configFailure = (error) => ({ model: target, results: [{ id: 'config', label: 'Config', tier: 'required', ok: false, error }] })
+  if (!provider.baseUrl) return configFailure('Base URL is not set')
+  if (!target) return configFailure('no model name to test — fill one in on the provider or the test field')
 
   const results = []
   for (const id of tests) {
@@ -696,7 +700,7 @@ export async function runProbes(provider, { model, tests = DEFAULT_TEST_IDS } = 
       const outcome = await test.run(provider, target)
       results.push({ id, label: test.label, tier: test.tier, ...outcome })
     } catch (err) {
-      const message = err.name === 'TimeoutError' ? `逾時（>${TIMEOUT_MS / 1000}s）` : String(err.message ?? err)
+      const message = err.name === 'TimeoutError' ? `timed out (>${TIMEOUT_MS / 1000}s)` : String(err.message ?? err)
       results.push({ id, label: test.label, tier: test.tier, ok: false, error: message })
     }
   }
