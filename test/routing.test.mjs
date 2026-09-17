@@ -188,6 +188,18 @@ test('modelGlob 沒命中就落回訂閱', async () => {
   assert.equal(harness.upstream.state.received[0].body.model, 'claude-opus-5', 'glob 不合就不該改寫')
 })
 
+test('流量記錄靠 providerId 與 target 有沒有值分辨去向，GUI 不必比對任何字串', async () => {
+  await (await post(SUBSCRIPTION_HEADERS, BASE_BODY)).text()
+  const sub = harness.logStore.list()[0]
+  assert.equal(sub.providerId, null, '訂閱線沒有 providerId')
+  assert.ok(sub.target, '訂閱線一定有 target，否則 GUI 會把它當成沒送出')
+
+  await (await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY)).text()
+  const prv = harness.logStore.list()[0]
+  assert.equal(prv.providerId, 'kimi')
+  assert.equal(prv.target, 'Kimi', 'provider 線的 target 是使用者填的 label，GUI 原樣顯示')
+})
+
 // ── 指向 passthrough 的規則 ────────────────────────────────────────
 test('規則指向 passthrough 時走訂閱線，不帶 provider 憑證', async () => {
   // 第三方配額快用完，把子 agent 整批切回訂閱的情境

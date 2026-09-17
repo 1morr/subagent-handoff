@@ -177,7 +177,7 @@
   .cell.warnink { color: #82590f; }
   .cell.okink { color: var(--ink); font-weight: 700; }
 
-  /* 批註印在條上。這一塊就是舊版全部藏在 title tooltip 裡的東西 */
+  /* 批註印在條上，不藏進 title tooltip：鍵盤、觸控都取得到，也選得起來 */
   .annot { display: grid; grid-template-columns: 46px 1fr; background: var(--stock); }
   .annot > .gutter { opacity: .34; }
   .annot > .body {
@@ -246,7 +246,7 @@
   .clearance .w-sm { width: 84px; } .clearance .w-md { width: 130px; }
   .arrow { flex: none; }
 
-  /* ── 圖例：舊版靠 README 教你怎麼讀，這裡印在機架上 ─────────────── */
+  /* ── 圖例：直接印在機架上，不必另外讀文檔 ─────────────────────── */
   .legend { display: flex; align-items: center; flex-wrap: wrap; border: 1px solid var(--rail); background: var(--panel); }
   .legend > div { display: flex; align-items: center; gap: 9px; padding: 9px 16px; border-right: 1px solid var(--rail); }
   .legend .chip { font: 600 11px/1 var(--sign); letter-spacing: .08em; padding: 3px 6px; color: #10161a; }

@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createProxyServer, TrafficLog, findStreamError, createPinger, createUsageTap } from '../src/proxy.mjs'
-import { NOT_SENT_LABEL } from '../src/routing.mjs'
 import { createHarness, makePost, listen, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
 import { USAGE_STREAM } from './fixtures/fake-upstream.mjs'
 
@@ -100,7 +99,8 @@ test('body 超過上限時當場擋下來，一個 byte 都不往上游送', asy
 
     const entry = harness.logStore.list()[0]
     assert.equal(entry.status, 413)
-    assert.equal(entry.target, NOT_SENT_LABEL)
+    assert.equal(entry.target, null, '沒送出去就沒有去向')
+    assert.equal(entry.providerId, null)
     assert.match(entry.error, /exceeds the .* byte limit/)
     assert.equal(entry.kind, 'main', 'kind 只看 header，body 收不完也判得出來')
   } finally {
@@ -141,7 +141,8 @@ test('讀 request body 途中斷線就收手，不拿空 body 往上游打', asy
 
   assert.equal(harness.upstream.state.received.length, 0, '沒有人在等回應了，不該再浪費一次上游來回')
   const entry = harness.logStore.list()[0]
-  assert.equal(entry.target, NOT_SENT_LABEL)
+  assert.equal(entry.target, null, '沒送出去就沒有去向')
+  assert.equal(entry.providerId, null)
   assert.match(entry.error, /failed to read request body/)
 })
 

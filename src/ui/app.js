@@ -18,12 +18,6 @@ import zhHant from './i18n/zh-Hant.js'
 const CATALOGS = { en, 'zh-Hant': zhHant }
 const LANG_KEY = 'subagent-handoff:lang'
 const KEEP = '__keep__'
-// 這兩個是流量記錄裡 target 欄位在走 passthrough／完全沒送出時的固定值，
-// 必須跟 src/routing.mjs 的 PASSTHROUGH_LABEL／NOT_SENT_LABEL 一字不差 ——
-// 兩邊各自拿它們當比對／儲存用的穩定英文代碼，顯示時才轉成當前語言的文字，
-// 這樣資料本身不綁死某一種語言。
-const PASSTHROUGH_TARGET = 'passthrough (subscription)'
-const NOT_SENT_TARGET = 'not sent'
 
 function detectLang() {
   try {
@@ -139,17 +133,19 @@ function parseHeaders(text) {
 const formatHeaders = (obj) => Object.entries(obj ?? {}).map(([k, v]) => `${k}: ${v}`).join('\n')
 
 // ── 進條的判讀 ────────────────────────────────────────────────────
-// 這一組函式是整個重設計的核心：舊版把這些答案全塞在 title tooltip 裡，
-// 鍵盤取不到、觸控取不到、選不起來也複製不了，README 得用整節教人該把滑鼠移到哪。
+// 這一組函式的答案都印在條上，不塞進 title tooltip：tooltip 鍵盤取不到、觸控取不到，
+// 選不起來也複製不了。
 
-/** 這一筆停在哪個席位。null = 還沒送出去（被擋在 router 這關） */
+/** 這一筆停在哪個席位。null = 還沒送出去（被擋在 router 這關），那種記錄沒有 target */
 function sectorOf(e) {
   if (e.providerId) return 'prv'
-  if (e.target === PASSTHROUGH_TARGET) return 'sub'
+  if (e.target != null) return 'sub'
   return null
 }
 
 const isAborted = (e) => !!e.error && /abort/i.test(e.error)
+/** 有狀態碼又有錯誤＝回應已經開始轉給 client 才斷掉，不是連不上上游 */
+const isStreamCut = (e) => !!e.error && !isAborted(e) && e.status != null
 const effortStripped = (e) => !!e.effort && e.sentEffort !== e.effort
 
 /** 進行中 / 順利 / 有事發生 / 被擋下。顏色不是唯一訊號 —— 每一級都有機架位置與印字旗標。 */
@@ -166,12 +162,11 @@ function stateOf(e) {
 }
 const FLAG = { clr: 'CLR', chk: 'CHK', hold: 'HOLD', live: '···' }
 
-/** 流量記錄裡的 target 是穩定的英文代碼（passthrough／not sent 兩種）或 provider 自己的
- *  label；只有前者需要照語言翻譯，provider label 是使用者自己填的資料，原樣顯示。 */
-function displayTarget(target) {
-  if (target === PASSTHROUGH_TARGET) return t('rack.target.passthrough')
-  if (target === NOT_SENT_TARGET) return t('rack.target.notSent')
-  return target
+/** provider 的 label 是使用者自己填的，原樣顯示；訂閱線與沒送出的照語言翻譯。
+ *  吃流量記錄與規則預覽共有的 { providerId, target }，跟 sectorOf 用同一套判斷。 */
+function displayTarget(e) {
+  if (e.providerId) return e.target
+  return e.target != null ? t('rack.target.passthrough') : t('rack.target.notSent')
 }
 
 /** anthropic-ratelimit-*-reset 可能是 unix 秒數也可能是 RFC3339，兩種都認，都不是就原樣顯示。 */
@@ -184,6 +179,7 @@ function resetLabel(raw) {
 
 /** 常駐在批註欄的一行摘要。航管的進條右側就是控制員寫字的地方。 */
 function marginNote(e) {
+  if (isStreamCut(e)) return t('rack.note.streamCut', { error: e.error })
   if (e.error && !isAborted(e)) return t('rack.note.fetchFailed', { error: e.error })
   if (isAborted(e)) return t('rack.note.aborted')
   if (e.status >= 400) {
@@ -204,10 +200,13 @@ function marginNote(e) {
 function annotation(e) {
   const rows = []
   if (e.detail) rows.push([t('rack.ann.upstreamSaid'), e.detail, true])
-  if (e.error) rows.push([isAborted(e) ? t('rack.ann.aborted') : t('rack.ann.fetchFailed'), e.error, !isAborted(e)])
+  if (e.error) {
+    const label = isAborted(e) ? t('rack.ann.aborted') : isStreamCut(e) ? t('rack.ann.streamCut') : t('rack.ann.fetchFailed')
+    rows.push([label, e.error, !isAborted(e)])
+  }
   rows.push([t('rack.ann.ruleHit'), e.ruleId
-    ? `${e.ruleId} → ${displayTarget(e.target)}`
-    : t('rack.ann.noRuleHit', { target: displayTarget(e.target ?? NOT_SENT_TARGET) })])
+    ? `${e.ruleId} → ${displayTarget(e)}`
+    : t('rack.ann.noRuleHit', { target: displayTarget(e) })])
   if (e.retryAfter) rows.push(['retry-after', `${e.retryAfter}s`, true])
   if (e.rateLimit) {
     rows.push([t('rack.ann.rateLimited'), Object.entries(e.rateLimit).map(([k, v]) => `${k}=${v}`).join(' · '), true])
@@ -803,7 +802,7 @@ function renderRules() {
             <dl style="margin:0;display:grid;grid-template-columns:80px 1fr;gap:3px 10px">
               <dt class="lbl" style="color:#8f8878">${t('rules.result.classifiedAs')}</dt><dd style="margin:0;font:11.5px var(--data);color:#3c4149">${
                 esc(kindLabels[pv.kind] ?? pv.kind)}</dd>
-              <dt class="lbl" style="color:#8f8878">${t('rules.result.target')}</dt><dd style="margin:0;font:11.5px var(--data);color:var(--ink)">${esc(displayTarget(pv.target))}</dd>
+              <dt class="lbl" style="color:#8f8878">${t('rules.result.target')}</dt><dd style="margin:0;font:11.5px var(--data);color:var(--ink)">${esc(displayTarget(pv))}</dd>
               <dt class="lbl" style="color:#8f8878">${t('rack.col.sentModel')}</dt><dd style="margin:0;font:11.5px var(--data);color:var(--ink)">${
                 pv.requestedModel === pv.sentModel ? esc(pv.sentModel) : `${esc(pv.requestedModel)} → ${esc(pv.sentModel)}`}</dd>
               <dt class="lbl" style="color:#8f8878">${t('rules.result.matched')}</dt><dd style="margin:0;font:11.5px var(--data);color:#3c4149">${
@@ -1034,7 +1033,18 @@ document.addEventListener('input', (ev) => {
     const r = S.config.rules.find((x) => x.id === row.dataset.rid)
     if (!r) return
     r[f] = el.type === 'checkbox' ? el.checked : el.value
+    const hadPreview = S.preview != null
     markDirty()
+    // 模擬是對著改之前的規則跑的，第一個字打下去標記就該收掉。只有這一下要重繪，重繪完把游標
+    // 放回原處。不等 change 事件：它在失焦時才來，那時重繪會換掉使用者正要按下去的「預覽」鍵，
+    // 滑鼠按下與放開落在不同的元素上，那一下點擊就不算數。
+    if (hadPreview && el.type === 'text') {
+      const { selectionStart, selectionEnd } = el
+      render()
+      const again = document.querySelector(`[data-rid="${CSS.escape(r.id)}"] [data-f="${f}"]`)
+      again?.focus()
+      again?.setSelectionRange(selectionStart, selectionEnd)
+    }
   }
 })
 

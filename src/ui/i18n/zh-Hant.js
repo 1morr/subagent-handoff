@@ -2,8 +2,8 @@
  * 繁體中文語系目錄。navigator.language 以 zh 開頭、或使用者在語言選單裡選了
  * 「繁體中文」並存進 localStorage 時使用。
  *
- * 這份字串本來就是這個 GUI 唯一的語言，是從 app.js／index.html 抽出來的，
- * 用字照抄舊版、只是搬了位置 —— 不是重新翻譯。key 定義與插值語法見 en.js 開頭的說明。
+ * 這份字串是從 app.js／index.html 抽出來的中文原文，不是由 en.js 翻譯過來的。
+ * key 定義與插值語法見 en.js 開頭的說明。
  */
 export default {
   // ── 共用 ──────────────────────────────────────────────────────
@@ -70,6 +70,7 @@ export default {
   'rack.target.passthrough': 'passthrough（訂閱）',
   'rack.target.notSent': '未送出',
   'rack.note.fetchFailed': 'router 連不上上游・{error}',
+  'rack.note.streamCut': '串流中途斷線・{error}',
   'rack.note.aborted': '不是錯誤・Claude Code 自己收手',
   'rack.note.blockedRetryAfter': '上游擋的・{secs}s 後重試',
   'rack.note.blockedReset': '上游擋的・{reset}',
@@ -82,6 +83,7 @@ export default {
   'rack.ann.upstreamSaid': '上游說法',
   'rack.ann.aborted': '中止',
   'rack.ann.fetchFailed': 'router 連不上上游',
+  'rack.ann.streamCut': '串流中途斷線',
   'rack.ann.ruleHit': '命中規則',
   'rack.ann.noRuleHit': '無規則命中 · {target}',
   'rack.ann.rateLimited': '限流',

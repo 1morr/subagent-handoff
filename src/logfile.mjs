@@ -45,8 +45,8 @@ export function createFileSink({ file, maxBytes, baseRetryMs = BASE_RETRY_MS, ma
       size += bytes
       backoffMs = baseRetryMs
     } catch (err) {
-      // Windows 上這種失敗常常是暫時的（tail、編輯器暫時鎖住檔案）：冷卻一段時間再試，
-      // 而不是永久放棄 —— 舊版一次失敗就再也不寫，鎖一放開也不會恢復。
+      // Windows 上這種失敗常常是暫時的（tail、編輯器暫時鎖住檔案），鎖一放開就寫得進去：
+      // 冷卻一段時間再試，而不是永久放棄。
       cooldownUntil = ts + backoffMs
       console.error(
         `✗ could not write the traffic log to ${file}: ${err.message} (retrying in ${Math.round(backoffMs / 1000)}s; until then it is kept in memory only)`,

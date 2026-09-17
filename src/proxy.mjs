@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { once } from 'node:events'
-import { describeRequest, resolveModel, resolveRoute, PASSTHROUGH_LABEL, NOT_SENT_LABEL } from './routing.mjs'
+import { describeRequest, resolveModel, resolveRoute, PASSTHROUGH_LABEL } from './routing.mjs'
 import { isLocalRequest, rejectForeignOrigin } from './guard.mjs'
 
 /** fetch 會自動解壓，所以 content-encoding 一定要拿掉，否則 client 會二次解壓。 */
@@ -368,6 +368,7 @@ function baseEntry(req, ctx, over) {
     sessionId: ctx.sessionId,
     cwd: null,
     requestedModel: ctx.model,
+    // null ＝ 沒送出去（body 讀不完或超過上限）
     target: null,
     providerId: null,
     ruleId: null,
@@ -438,7 +439,6 @@ export function createProxyServer(getConfig, log, options = {}) {
           const ctx = describeRequest(req.headers, null)
           log.finish(log.start(baseEntry(req, ctx, {
             cwd: sessionCwd.lookup(ctx.sessionId),
-            target: NOT_SENT_LABEL,
             ms: Date.now() - started,
             error: `failed to read request body: ${err.message}`,
           })))
@@ -452,7 +452,6 @@ export function createProxyServer(getConfig, log, options = {}) {
         const ctx = describeRequest(req.headers, null)
         log.finish(log.start(baseEntry(req, ctx, {
           cwd: sessionCwd.lookup(ctx.sessionId),
-          target: NOT_SENT_LABEL,
           status: 413,
           ms: Date.now() - started,
           error: tooLarge,
