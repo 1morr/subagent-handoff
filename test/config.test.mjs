@@ -37,6 +37,7 @@ test('normalizeConfig 修掉壞資料而不是拋錯', () => {
   assert.equal(cfg.proxyPort, 8787)
   assert.ok(Array.isArray(cfg.providers))
   assert.equal(cfg.rules[0].match, 'subagent')
+  assert.equal(cfg.rules[0].enabled, false, '認不得的 match 要關掉，不能變成一條生效的 subagent 規則')
   assert.equal(cfg.passthrough.baseUrl, 'https://api.anthropic.com')
 })
 

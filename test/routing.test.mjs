@@ -5,16 +5,15 @@ import {
   globMatch, describeRequest, resolveRoute, resolveModel, extractCwd, PASSTHROUGH_ID,
 } from '../src/routing.mjs'
 import { normalizeConfig, defaultConfig, defaultProvider, defaultRule } from '../src/config.mjs'
-import { createHarness, makePost, makeAdminApi, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
+import { createHarness, makePost, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
 
 const DEFAULT_RULES = () => [defaultRule({ id: 'r1', match: 'subagent', providerId: 'kimi' })]
 
-let harness, post, adminApi
+let harness, post
 
 before(async () => {
   harness = await createHarness()
   post = makePost(harness.proxyUrl, harness.upstream)
-  adminApi = makeAdminApi(harness.adminUrl)
 })
 after(() => harness.close())
 // 每個測試都可能改 config.rules；不管測試本身成功或失敗都要復原，
@@ -245,47 +244,6 @@ test('指向不存在的 provider 時退回訂閱，而不是讓請求失敗', a
   assert.equal(harness.upstream.state.received[0].body.model, 'claude-opus-5')
 })
 
-// ── 依 agent 身分分流 ──────────────────────────────────────────────
-test('agentIdGlob 篩得出 teammate，主對話永遠不會被捲進去', () => {
-  const cfg = normalizeConfig({
-    providers: [defaultProvider({ id: 'cheap', baseUrl: 'https://x.test' })],
-    rules: [defaultRule({ id: 'r-explore', match: 'any', agentIdGlob: 'Explore*', providerId: 'cheap' })],
-  })
-
-  const hit = describeRequest({ 'x-claude-code-agent-id': 'Explore-1' }, {})
-  assert.equal(resolveRoute(cfg, hit).kind, 'provider')
-
-  const miss = describeRequest({ 'x-claude-code-agent-id': 'Plan-1' }, {})
-  assert.equal(resolveRoute(cfg, miss).kind, 'passthrough', '名字對不上就落到下一條')
-
-  const main = describeRequest({}, {})
-  assert.equal(resolveRoute(cfg, main).kind, 'passthrough', '主對話沒有 agent-id，不該被 agent 規則命中')
-})
-
-test('agentIdGlob 預設 * 不影響任何既有規則', () => {
-  const cfg = normalizeConfig({
-    providers: [defaultProvider({ id: 'k', baseUrl: 'https://x.test' })],
-    rules: [defaultRule({ id: 'r', match: 'subagent', providerId: 'k' })],
-  })
-  assert.equal(cfg.rules[0].agentIdGlob, '*')
-  assert.equal(resolveRoute(cfg, describeRequest({ 'x-claude-code-agent-id': 'whatever' }, {})).kind, 'provider')
-})
-
-test('規則預覽吃得下 agentId', async () => {
-  const { json } = await adminApi('POST', '/api/routing/preview', {
-    kind: 'subagent',
-    model: 'claude-opus-5',
-    agentId: 'Explore-7',
-    config: {
-      ...(await adminApi('GET', '/api/state')).json.config,
-      rules: [defaultRule({ id: 'r-x', match: 'subagent', agentIdGlob: 'Explore*', providerId: 'kimi' })],
-    },
-  })
-  assert.equal(json.agentId, 'Explore-7')
-  assert.equal(json.ruleId, 'r-x')
-  assert.equal(json.target, 'Kimi')
-})
-
 // ── 純函數 ────────────────────────────────────────────────────────
 test('globMatch', () => {
   assert.ok(globMatch('*', 'anything'))
@@ -296,12 +254,12 @@ test('globMatch', () => {
   assert.ok(!globMatch('claude-haiku*', 'claude-opus-5'), '. 之類的字元不可被當成萬用')
 })
 
-test('describeRequest 依 header 判定來源', () => {
+test('describeRequest 依 header 判定來源，巢狀的子 agent 也是子 agent', () => {
   assert.equal(describeRequest({}, {}).kind, 'main')
   assert.equal(describeRequest({ 'x-claude-code-agent-id': 'a' }, {}).kind, 'subagent')
   assert.equal(
     describeRequest({ 'x-claude-code-agent-id': 'a', 'x-claude-code-parent-agent-id': 'p' }, {}).kind,
-    'nested',
+    'subagent',
   )
 })
 
@@ -352,19 +310,33 @@ test('開箱的預設設定一筆流量都不改道 —— 分流要等使用者
   assert.equal(resolveRoute(cfg, main).kind, 'passthrough', '主對話永遠留在訂閱')
 })
 
-test('subagent 規則涵蓋巢狀，nested 規則不涵蓋第一層', () => {
+test('main 規則不碰子 agent，subagent 規則不碰主對話', () => {
   const cfg = normalizeConfig({
     providers: [defaultProvider({ id: 'k', baseUrl: 'https://x.test', model: 'm' })],
-    rules: [defaultRule({ match: 'nested', providerId: 'k' })],
+    rules: [defaultRule({ match: 'main', providerId: 'k' })],
   })
-  assert.equal(resolveRoute(cfg, describeRequest({ 'x-claude-code-agent-id': 'a' }, {})).kind, 'passthrough')
-  assert.equal(
-    resolveRoute(cfg, describeRequest({ 'x-claude-code-agent-id': 'a', 'x-claude-code-parent-agent-id': 'p' }, {})).kind,
-    'provider',
-  )
+  const main = describeRequest({}, {})
+  const sub = describeRequest({ 'x-claude-code-agent-id': 'a' }, {})
+  assert.equal(resolveRoute(cfg, main).kind, 'provider')
+  assert.equal(resolveRoute(cfg, sub).kind, 'passthrough')
 
   cfg.rules = [defaultRule({ match: 'subagent', providerId: 'k' })]
-  assert.equal(resolveRoute(cfg, describeRequest({ 'x-claude-code-agent-id': 'a' }, {})).kind, 'provider')
+  assert.equal(resolveRoute(cfg, main).kind, 'passthrough')
+  assert.equal(resolveRoute(cfg, sub).kind, 'provider')
+})
+
+test('舊設定檔裡已經拿掉的 any / nested 規則載入後是關的，不會悄悄換成別的範圍', () => {
+  const cfg = normalizeConfig({
+    providers: [defaultProvider({ id: 'k', baseUrl: 'https://x.test', model: 'm' })],
+    rules: [
+      { id: 'old-any', match: 'any', providerId: 'k', agentIdGlob: 'Explore*' },
+      { id: 'old-nested', match: 'nested', providerId: 'k' },
+      { id: 'no-match', providerId: 'k' },
+    ],
+  })
+  assert.deepEqual(cfg.rules.map((r) => [r.id, r.enabled]), [['old-any', false], ['old-nested', false], ['no-match', true]])
+  assert.ok(!('agentIdGlob' in cfg.rules[0]), '拿掉的欄位下次存檔就消失')
+  assert.equal(resolveRoute(cfg, describeRequest({}, {})).kind, 'passthrough', 'any 曾經涵蓋主對話，關掉之後不能還命中')
 })
 
 test('resolveRoute 認得指向 passthrough 的規則，並和「沒命中」區分開', () => {

@@ -41,7 +41,7 @@ const S = {
   tests: {}, busy: {}, logs: [], open: null,
   logFilter: 'all',
   // 預覽的輸入也放 state，否則每次預覽完重繪都會被模板的預設值蓋回去
-  preview: null, pvKind: 'subagent', pvModel: 'claude-opus-5', pvAgent: '',
+  preview: null, pvKind: 'subagent', pvModel: 'claude-opus-5',
   // 「交還給訂閱」的還原點：記下被改掉的規則原本指向哪裡
   flipBackup: null,
 }
@@ -621,16 +621,13 @@ function renderProviders() {
 
 // ── 路由規則 ───────────────────────────────────────────────────────
 const MATCH_LABELS = () => ({
-  any: t('rules.match.any'),
   main: t('rules.match.main'),
   subagent: t('rules.match.subagent'),
-  nested: t('rules.match.nested'),
 })
 
 const KIND_LABELS = () => ({
   main: t('rules.kind.main'),
   subagent: t('rules.kind.subagent'),
-  nested: t('rules.kind.nested'),
 })
 
 function renderRules() {
@@ -667,9 +664,6 @@ function renderRules() {
             .map(([k, v]) => `<option value="${k}" ${r.match === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
           <span class="word">${t('rules.wordModel')}</span>
           <input type="text" class="w-sm" data-f="modelGlob" value="${esc(r.modelGlob)}" title="${t('rules.modelGlobTitle')}">
-          <span class="word">${t('rules.wordAgent')}</span>
-          <input type="text" class="w-sm" data-f="agentIdGlob" value="${esc(r.agentIdGlob ?? '*')}"
-                 title="${t('rules.agentGlobTitle')}">
           <svg class="arrow" width="20" height="12" viewBox="0 0 20 12" fill="none" aria-hidden="true">
             <path d="M0 6h16M12 2l4 4-4 4" stroke="rgba(26,30,36,.45)" stroke-width="1.4" stroke-linecap="square"/>
           </svg>
@@ -698,11 +692,7 @@ function renderRules() {
         <span class="spacer"></span>
         ${sim ? `
         <span style="font:600 11px var(--han);color:var(--on-bay);border:1px solid var(--rail-lit);padding:3px 7px">${t('rules.simulating')}</span>
-        <span class="hint">${[
-          esc(kindLabels[sim.kind] ?? sim.kind),
-          `<code>${esc(sim.requestedModel)}</code>`,
-          sim.agentId ? `<code>${esc(sim.agentId)}</code>` : '',
-        ].filter(Boolean).join(t('rules.conditionSep'))}</span>
+        <span class="hint">${esc(kindLabels[sim.kind] ?? sim.kind)}${t('rules.conditionSep')}<code>${esc(sim.requestedModel)}</code></span>
         <button class="btn tiny" data-act="clear-preview">${t('rules.clearPreview')}</button>` : ''}
         <button class="btn" data-act="add-rule">${ICON.plus} ${t('rules.addRule')}</button>
       </div>
@@ -728,7 +718,6 @@ function renderRules() {
         <div class="marginal"><i></i><div>${t('rules.tip.quota')}</div></div>
         <div class="marginal"><i></i><div>${t('rules.tip.disable')}</div></div>
         <div class="marginal"><i></i><div>${t('rules.tip.ultracode')}</div></div>
-        <div class="marginal"><i></i><div>${t('rules.tip.agentMatch')}</div></div>
       </div>
     </section>
 
@@ -742,9 +731,6 @@ function renderRules() {
         </label>
         <label class="fld" style="flex:1;min-width:180px"><span class="lbl">${t('rules.requestedModelLabel')}</span>
           <input type="text" id="pv-model" list="model-hints" value="${esc(S.pvModel)}">
-        </label>
-        <label class="fld" style="flex:1;min-width:150px"><span class="lbl">${t('rules.agentIdLabel')}</span>
-          <input type="text" id="pv-agent" value="${esc(S.pvAgent)}" placeholder="Explore-1">
         </label>
         <button class="btn go" data-act="preview">${t('common.preview')}</button>
       </div>
@@ -770,7 +756,7 @@ function renderRules() {
 
 // ── 流量記錄 ───────────────────────────────────────────────────────
 function renderLogs() {
-  const filters = [['all', t('common.filterAll')], ['attn', t('common.filterAttn')], ['main', t('rules.kind.main')], ['subagent', t('rules.kind.subagent')], ['nested', t('logs.filterNested')]]
+  const filters = [['all', t('common.filterAll')], ['attn', t('common.filterAttn')], ['main', t('rules.kind.main')], ['subagent', t('rules.kind.subagent')]]
   const list = filteredLogs()
   const worst = S.logs.find((e) => stateOf(e) === 'hold')
 
@@ -1041,7 +1027,7 @@ document.addEventListener('click', async (ev) => {
     } else if (act === 'add-rule') {
       S.config.rules.push({
         id: 'r-' + Math.random().toString(36).slice(2, 10),
-        enabled: true, match: 'subagent', modelGlob: '*', agentIdGlob: '*',
+        enabled: true, match: 'subagent', modelGlob: '*',
         providerId: S.config.providers[0]?.id ?? 'passthrough', modelOverride: '',
       })
       markDirty(); render()
@@ -1088,10 +1074,7 @@ document.addEventListener('click', async (ev) => {
     } else if (act === 'preview') {
       S.pvKind = $('#pv-kind').value
       S.pvModel = $('#pv-model').value
-      S.pvAgent = $('#pv-agent').value
-      S.preview = await api('POST', '/api/routing/preview', {
-        kind: S.pvKind, model: S.pvModel, agentId: S.pvAgent, config: S.config,
-      })
+      S.preview = await api('POST', '/api/routing/preview', { kind: S.pvKind, model: S.pvModel, config: S.config })
       render()
     } else if (act === 'clear-preview') {
       S.preview = null

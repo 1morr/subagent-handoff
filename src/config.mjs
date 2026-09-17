@@ -15,7 +15,7 @@ export const KEEP_SECRET = '__keep__'
 
 export const MASKED_KEY_MOVED = 'baseUrl differs from the stored value — enter the API key again, the masked value cannot be reused'
 
-export const MATCH_KINDS = ['any', 'main', 'subagent', 'nested']
+export const MATCH_KINDS = ['main', 'subagent']
 
 export function newId(prefix) {
   return `${prefix}-${randomUUID().slice(0, 8)}`
@@ -39,17 +39,9 @@ export function defaultRule(over = {}) {
   return {
     id: newId('r'),
     enabled: true,
-    /** any | main | subagent | nested */
+    /** main | subagent */
     match: 'subagent',
     modelGlob: '*',
-    /**
-     * 比對 `x-claude-code-agent-id`，支援 `*`。`*` = 不篩。
-     *
-     * 一般 subagent 的 id 是每次 spawn 重新產生的隨機值，篩不出東西；但官方文檔載明
-     * **agent team 的 teammate 會沿用由名字衍生的穩定 id**，所以這個欄位的用途是
-     * 按角色分流（例如某個 teammate 走便宜的 provider、另一個留在訂閱）。
-     */
-    agentIdGlob: '*',
     /** provider 的 id，或 PASSTHROUGH_ID＝導回訂閱。 */
     providerId: '',
     /** 空字串 = 不改寫。有值時蓋過 provider 自己的 model；指向 passthrough 時也照樣生效。 */
@@ -229,18 +221,18 @@ export function normalizeConfig(raw) {
     : base.providers
 
   const rules = Array.isArray(cfg.rules)
-    ? cfg.rules.filter((r) => r && typeof r === 'object').map((r) =>
-        defaultRule({
-          ...r,
+    ? cfg.rules.filter((r) => r && typeof r === 'object').map((r) => {
+        const known = MATCH_KINDS.includes(r.match ?? 'subagent')
+        return {
           id: typeof r.id === 'string' && r.id ? r.id : newId('r'),
-          enabled: r.enabled !== false,
-          match: MATCH_KINDS.includes(r.match) ? r.match : 'subagent',
+          // 認不得的 match（例如已經拿掉的 any / nested）整條關掉，不悄悄換成範圍不同的 subagent
+          enabled: r.enabled !== false && known,
+          match: known ? (r.match ?? 'subagent') : 'subagent',
           modelGlob: String(r.modelGlob ?? '*').trim() || '*',
-          agentIdGlob: String(r.agentIdGlob ?? '*').trim() || '*',
           providerId: String(r.providerId ?? '').trim(),
           modelOverride: String(r.modelOverride ?? '').trim(),
-        }),
-      )
+        }
+      })
     : base.rules
 
   return {
