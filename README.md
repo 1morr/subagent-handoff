@@ -343,7 +343,9 @@ DeepSeek [自己的文檔](https://api-docs.deepseek.com/guides/thinking_mode)�
 照 Claude Code v2.1.274 實際送出的形狀打（抓包與完整結果見 [`docs/claude-code-request-shapes.md`](docs/claude-code-request-shapes.md)）：
 
 - **子 agent 讀不到 PDF。** Read 把 PDF 以 `document` block 放進工具結果，DeepSeek 把它換成 `[Unsupported Document]` 照樣回 200，模型只看得到檔名那一行。內建測試的「讀 PDF」會標出來。
-- **看圖可以。** 圖片放在工具結果裡（Read 讀圖、MCP 截圖都是這種）照樣看得到。
+  端到端實測時，一個子 agent 讀不到之後自己改用 Bash 看 PDF 的原始位元組，碰巧讀出了碼 —— 那是因為測試用的 PDF 沒壓縮，一般 PDF 行不通。
+- **看圖可以。** 圖片放在工具結果裡（Read 讀圖、MCP 截圖都是這種）照樣看得到；真的 Claude Code 子 agent 經過 router 讀隨機配色的圖，兩次都答對。
+- **快取命中很高。** 同一個子 agent 的後續請求 97–99%；設了 `CLAUDE_CODE_ATTRIBUTION_HEADER=0` 時，不同 session 之間也共用（見[已知限制](#已知限制)裡 `metadata` 那條）。
 - **WebSearch 可以，但貴。** 子 agent 的 WebSearch 會分到 DeepSeek、由它代為搜尋，Claude Code 解析得動它的回應；一次約 3 萬 input tokens。
 - **對話中間的 `role: "system"` 訊息看得到。** Claude Code 每一筆請求都有這種訊息，丟掉的話子 agent 會少一大段指示。
 - **開著思考時，帶 `tool_use` 的 assistant 歷史必須附上 thinking**，否則 400。正常流程碰不到。規則在 agent 跑到一半從訂閱切過來時，Anthropic 留下的 thinking 送得過去；只有 `redacted_thinking` 會被拒。
@@ -406,7 +408,7 @@ GUI 上必要項目沒過的那列用告警框框住；能力項目沒過的只�
   3. 最後才動 `dropFields`，而且一次只加一個。整組刪掉會連帶關掉 `/effort`，且請求照樣 200，只是模型變笨
 - `dropFields`、`maxOutputTokens`、`extraHeaders` 只作用在要送去 provider 的請求。passthrough（訂閱）那條線是原始 bytes 原樣轉發，連 JSON 都不重新序列化，主對話的思考檔位不受任何影響 —— 唯一的例外是規則設了 `modelOverride`，那筆會重新序列化，但也只換 `model` 一個欄位。
 - **送去 provider 的請求一律拿掉 `metadata`。** Claude Code 在 `metadata.user_id` 裡放了 claude.ai 的 `account_uuid` 與 `device_id`（實測 v2.1.274），那是訂閱帳號的識別資訊。這一項沒有開關；訂閱線照舊原樣轉發。點開進條的「送出前改寫」會看到 `-metadata`。
-  代價：DeepSeek 的[文檔](https://api-docs.deepseek.com/quick_start/rate_limit)說它拿 `user_id` 做 KV cache 與排程隔離，拿掉之後所有請求落在同一個（空 id 的）分區。那種隔離是給一把 key 服務很多終端使用者用的，單人用不到；一般帳號的並發上限本來也是所有 `user_id` 合計。
+  對快取的影響是**正面的**：DeepSeek 拿 `user_id` 做 KV cache 分區（[文檔](https://api-docs.deepseek.com/quick_start/rate_limit)），而 Claude Code 的 `user_id` 裡帶著 `session_id`，等於每個 session 各自一個分區、新 session 一律從冷快取開始。實測（2026-09，`deepseek-flash`）同一分區重送命中 94–96%、換分區 0%，空 id 的分區快取照常；拿掉之後，新 session 的第一筆子 agent 請求就命中了上一個 session 留下的快取（92%）。一般帳號的並發上限本來也是所有 `user_id` 合計，拿掉不影響。
 - `/v1/messages/count_tokens` 若 provider 不支援會回 404，Claude Code 會自動退回用推論端點估算，不影響運作。
 - 建議一併設 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`。Claude Code 會在 system prompt 前面加一段 attribution block，只有 `api.anthropic.com` 會自動剝除，第三方 provider 會把它當 prompt 收下去。
 

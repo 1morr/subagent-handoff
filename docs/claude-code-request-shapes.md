@@ -77,8 +77,17 @@ Workflow agent 的工具清單裡沒有 `Agent` 與 `Workflow`，與 README「�
 | 完全不帶 `thinking` 欄位 | 預設會思考；`max_tokens` 給得小時全被思考吃光，回覆是空字串 |
 | `cache_control` | 被忽略，但回應裡有 `cache_read_input_tokens`：它有自己的自動前綴快取 |
 | 串流的 `usage` | `message_start` 就帶正確的 `input_tokens`，Claude Code 算 context 用量靠這個 |
-| `metadata.user_id` | 沒實測。[文檔](https://api-docs.deepseek.com/quick_start/rate_limit)說拿來做內容安全歸屬、KV cache 隔離與排程隔離，空 id 算一個獨立分區。router 拿掉之後所有子 agent 請求落在同一個分區 |
+| `metadata.user_id` | [文檔](https://api-docs.deepseek.com/quick_start/rate_limit)說拿來做內容安全歸屬、KV cache 隔離與排程隔離。實測是真的隔離：約 4K tokens 的隨機前綴，同一個 `user_id` 重送命中 94–96%，換 `user_id` 或拿掉都是 0%；不帶 `user_id` 的那個分區照常快取（94–96%）。兩輪結果相同 |
 | context 上限 | 文檔：`deepseek-v4-flash` / `deepseek-v4-pro` 都是 1M，最大輸出 384K。Claude Code 替 sonnet 子 agent 假設 200K、`opus[1m]` 假設 1M（抓包的 `modelUsage.contextWindow`），都不超過 |
+
+### 端到端：真的 Claude Code 經過 router
+
+`claude -p --model sonnet`，主對話走訂閱，叫一個 sonnet 子 agent（分到 DeepSeek）讀一張隨機配色的 PNG 和一份含隨機碼的 PDF；設了 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`，同一個流程跑兩個獨立 session。
+
+- 看圖：兩個 session 都答對。
+- PDF：第一個 session 試了 `pages` 參數（沒裝 `pdftoppm`，失敗）後誠實回 `NONE`；第二個 session 改用 Bash 看 PDF 的原始位元組，讀出了碼 —— 測試 PDF 沒壓縮才行得通。
+- 快取（流量記錄的 `usage`）：子 agent 在同一 session 內 97–99%；**第二個 session 的第一筆子 agent 請求就命中 92%**，吃到的是第一個 session 留下的快取。帶著 Claude Code 原本的 `metadata`（`user_id` 含 `session_id`）時，照上面的分區實驗這一筆會是 0%。主對話走訂閱，第二輪起 99–100%。
+- 每一筆子 agent 請求的「送出前改寫」都有 `-metadata`。
 
 對照 2026-08 在 `deepseek-v4-pro` 上的結論「多輪的 thinking block 不強制回傳」：那次沒有記下歷史裡有沒有 `tool_use`。這次在 `deepseek-flash` 上確認的是 —— 純文字的 assistant 歷史不附 thinking 照收（「中途 system 訊息」那項的歷史就是這種），帶 `tool_use` 的必須附。正常流程碰不到，Claude Code 送回去的本來就是 DeepSeek 自己吐的那一則。
 
