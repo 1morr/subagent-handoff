@@ -41,7 +41,7 @@ web
 
 ## Capabilities and Constraints
 
-**功能**（五個分頁）：Providers（憑證、model 改寫、authStyle、dropFields、extraHeaders、max_tokens 夾制、retry 覆寫、照 Claude Code 真實請求形狀打的測試：必要 4 項＋能力 4 項＋選配 WebSearch）、路由規則（passthrough 預設去向 + 由上而下第一條命中的規則清單 + 規則預覽）、流量記錄（每 3 秒輪詢，11 欄）、進階（全域 retry、落檔、請求上限）、接入說明。
+**功能**（五個分頁）：Providers（憑證、model 改寫、authStyle、dropFields、extraHeaders、max_tokens 夾制、retry 覆寫、照 Claude Code 真實請求形狀打的測試：必要 4 項＋能力 4 項＋選配 WebSearch）、路由規則（passthrough 預設去向 + 由上而下第一條命中的規則清單 + 規則預覽）、流量記錄（每 3 秒輪詢，11 欄；攤開有每筆的 token 用量與快取命中）、機架（兩個席位各自的快取命中率）、進階（全域 retry、落檔、請求上限）、接入說明。
 
 **術語**（不可改寫，程式與文檔共用）：`main` / `subagent` / `nested`（請求來源）、`passthrough`（訂閱那條線）、`provider`、`rule`、`modelOverride`、`dropFields`、`effort`。
 

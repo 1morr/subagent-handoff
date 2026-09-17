@@ -196,6 +196,62 @@ export function findStreamError(chunk) {
   return summarizeUpstreamError(Buffer.from(text.slice(start < 0 ? mark : start, end < 0 ? undefined : end)))
 }
 
+const USAGE_FIELDS = [
+  ['input_tokens', 'input'],
+  ['cache_read_input_tokens', 'cacheRead'],
+  ['cache_creation_input_tokens', 'cacheWrite'],
+  ['output_tokens', 'output'],
+]
+
+/**
+ * 邊轉發邊從 SSE 串流讀出 token 用量，拿來算快取命中率。
+ *
+ * 只解析 message_start 與 message_delta 兩種事件、只留四個數字；文字與思考內容所在的事件連 JSON 都不解。
+ * 語意照 Anthropic：input_tokens 是沒命中快取的部分，cache_read / cache_creation 另計，三者加總才是整個 prompt。
+ * message_delta 帶的是累計值，所以後到的蓋過先到的（DeepSeek 在 message_delta 裡把四個數字重送一次，同一套語意）。
+ */
+export function createUsageTap() {
+  const decoder = new TextDecoder()
+  let pending = ''
+  let usage = null
+
+  const take = (rawLine) => {
+    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine
+    if (!line.startsWith('data:')) return
+    if (!line.includes('"message_start"') && !line.includes('"message_delta"')) return
+    let event
+    try {
+      event = JSON.parse(line.slice(5))
+    } catch {
+      return
+    }
+    const raw = event.type === 'message_start' ? event.message?.usage : event.type === 'message_delta' ? event.usage : null
+    if (!raw) return
+    usage ??= {}
+    for (const [key, field] of USAGE_FIELDS) if (Number.isFinite(raw[key])) usage[field] = raw[key]
+  }
+
+  return {
+    /** 每一塊上游資料都餵進來；切在行中間、甚至切在多位元組字元中間都沒關係 */
+    push(chunk) {
+      pending += decoder.decode(chunk, { stream: true })
+      let at
+      while ((at = pending.indexOf('\n')) >= 0) {
+        take(pending.slice(0, at))
+        pending = pending.slice(at + 1)
+      }
+    },
+    /** @returns {{input:number, cacheRead:number, cacheWrite:number, output:number} | null} 上游沒回報用量就是 null */
+    result() {
+      pending += decoder.decode()
+      if (pending) take(pending)
+      pending = ''
+      if (!Number.isFinite(usage?.input)) return null
+      return { input: usage.input, cacheRead: usage.cacheRead ?? 0, cacheWrite: usage.cacheWrite ?? 0, output: usage.output ?? 0 }
+    },
+  }
+}
+
 /**
  * 兩條線都值得重送的狀態：上游自己出錯（5xx）或明講「現在別來」（503 / 529）。
  * 其餘 4xx 是請求本身的問題，重送幾次都一樣。
@@ -385,6 +441,8 @@ function baseEntry(req, ctx, over) {
     rateLimit: null,
     pings: 0,
     requestId: null,
+    // token 用量，只有串流回應才有；非串流的回應 router 不緩衝，讀不到
+    usage: null,
     detail: null,
     attempts: 0,
     retries: [],
@@ -522,6 +580,7 @@ export function createProxyServer(getConfig, log) {
     // 上游是不是串流：串流斷掉時的收尾方式跟一般回應不一樣
     let sse = false
     let pinger = null
+    let usageTap = null
 
     try {
       const init = {
@@ -591,9 +650,12 @@ export function createProxyServer(getConfig, log) {
       // 標記有可能被切在兩塊之間，所以每塊都帶上一塊的尾巴一起看
       let carry = Buffer.alloc(0)
       if (sse && route.kind === 'provider') pinger = createPinger(res)
+      // 兩條線都讀：訂閱線的快取命中一樣值得看，而且只讀不改，原始 bytes 照樣原封轉發
+      if (sse) usageTap = createUsageTap()
       if (upstream.body) {
         for await (const chunk of upstream.body) {
           pinger?.saw(chunk)
+          usageTap?.push(chunk)
           if (sse && entry.detail === null) {
             const window = carry.length ? Buffer.concat([carry, chunk]) : chunk
             entry.detail = findStreamError(window)
@@ -625,6 +687,8 @@ export function createProxyServer(getConfig, log) {
       }
     } finally {
       entry.pings = pinger?.stop() ?? 0
+      // 串流中途斷掉也留下已經讀到的部分：message_start 通常早就到了
+      if (usageTap) entry.usage = usageTap.result()
       entry.ms = Date.now() - started
       log.finish(entry)
     }

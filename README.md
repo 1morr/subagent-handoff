@@ -178,6 +178,24 @@ grep -v '"status":200' traffic.log | jq -r '[.ts, .target, .status, .detail] | @
 
 超過 `trafficLog.maxBytes` 會輪替成 `traffic.log.1`，只留一份舊的，所以磁碟最多佔兩倍。`trafficLog.file` 留空就完全不落檔。
 
+### 快取命中率
+
+兩條線的串流回應都帶 `usage`，router 邊轉發邊讀出四個數字記進流量記錄的 `usage` 欄位：`input`（沒命中快取的部分）、`cacheRead`、`cacheWrite`、`output`。只讀 `message_start` 與 `message_delta` 兩種事件，文字與思考內容所在的事件連解析都不做，轉發的 bytes 一個都不動。
+
+- **機架**分頁的兩張席位卡各有一格「快取命中」：`快取讀 ÷（未命中 ＋ 快取寫 ＋ 快取讀）`，**以 token 加權**，範圍是記憶體裡那個席位的全部進條（最多 300 筆）。不跟分流帶用同一個 5 分鐘窗，因為快取是看趨勢的數字，窗太短只剩雜訊。
+- 點開任一張進條，「用量」那一行是這一筆的明細。
+- 非串流的回應 router 不緩衝，讀不到用量，不算進去。Claude Code 的推論一律走串流，實務上只漏掉少數背景請求。
+
+實測（2026-09）一次子 agent 讀檔：主對話走訂閱，第二輪起 99–100%；子 agent 走 DeepSeek，第一筆 0%、之後 97–99%。
+
+```bash
+# 各席位的快取命中率（token 加權）
+jq -rs 'map(select(.usage)) | group_by(.providerId) | .[] |
+  { seat: (.[0].target), read: (map(.usage.cacheRead) | add),
+    prompt: (map(.usage.input + .usage.cacheRead + .usage.cacheWrite) | add) } |
+  "\(.seat)\t\((100 * .read / .prompt) | floor)%"' traffic.log
+```
+
 ### 上游暫時性失敗時 router 自己重送
 
 Anthropic 的 529、第三方的 5xx、還有連線被中間的東西掐掉，都會讓 Claude Code 中斷對話並開始倒數（`attempt 9/10`）。這類失敗大多重送一次就過了，所以 router 先扛。節流（`429`）是唯一的例外，它該不該扛取決於是誰擋的 —— 見下面那段。

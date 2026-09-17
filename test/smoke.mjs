@@ -10,7 +10,7 @@ import { after, before } from 'node:test'
 import {
   createProxyServer, TrafficLog, SessionCwd, rewriteBodyForProvider, rewriteModel,
   summarizeUpstreamError, findStreamError, parseRetryAfter, retryDelay, sseError, collectRateLimit,
-  createPinger,
+  createPinger, createUsageTap,
 } from '../src/proxy.mjs'
 import { globMatch, describeRequest, resolveRoute, resolveModel, resolveRetryPolicy, extractCwd, PASSTHROUGH_ID } from '../src/routing.mjs'
 import {
@@ -69,6 +69,20 @@ before(async () => {
         'anthropic-ratelimit-unified-reset': '1756598400',
       })
       res.end(JSON.stringify({ type: 'error', error: { type: 'rate_limit_error', message: 'Error' } }))
+      return
+    }
+
+    // 帶 usage 的串流，故意切得很難讀：切在 JSON 中間、切在多位元組字元中間、最後一行沒換行
+    if (req.url.includes('usage=split')) {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+      const bytes = Buffer.from(USAGE_STREAM)
+      const cuts = [40, bytes.indexOf(Buffer.from('快')) + 1, bytes.length - 20, bytes.length]
+      let from = 0
+      for (const to of cuts) {
+        res.write(bytes.subarray(from, to))
+        from = to
+      }
+      res.end()
       return
     }
 
@@ -1579,6 +1593,55 @@ test('createPinger：收到上游資料就重置計時，res 收掉之後不再�
   res.writableEnded = true
   await sleep(200)
   assert.equal(pinger.stop(), 0, '回應已經收掉還寫就會炸在 stream 上')
+})
+
+// ── token 用量與快取命中 ───────────────────────────────────────────
+
+/** Anthropic 的形狀：輸入側的數字在 message_start，message_delta 帶累計的輸出 */
+const USAGE_STREAM = [
+  'event: message_start',
+  'data: {"type":"message_start","message":{"model":"claude-opus-5","usage":{"input_tokens":223,"cache_creation_input_tokens":40,"cache_read_input_tokens":3712,"output_tokens":1}}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"快取命中"}}',
+  '',
+  'event: message_delta',
+  'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":16}}',
+  '',
+  'event: message_stop',
+  'data: {"type":"message_stop"}',
+].join('\n')
+
+test('createUsageTap：切在 JSON 與多位元組字元中間也讀得出來，message_delta 的累計值蓋過先到的', () => {
+  const bytes = Buffer.from(USAGE_STREAM)
+  const tap = createUsageTap()
+  for (let at = 0; at < bytes.length; at += 7) tap.push(bytes.subarray(at, at + 7))
+  assert.deepEqual(tap.result(), { input: 223, cacheRead: 3712, cacheWrite: 40, output: 16 })
+})
+
+test('createUsageTap：DeepSeek 在 message_delta 裡把四個數字重送一次，照樣收', () => {
+  const tap = createUsageTap()
+  tap.push(Buffer.from('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":3935,"output_tokens":0}}}\n\n'))
+  tap.push(Buffer.from('event: message_delta\ndata: {"type":"message_delta","usage":{"input_tokens":223,"cache_read_input_tokens":3712,"cache_creation_input_tokens":0,"output_tokens":11}}'))
+  assert.deepEqual(tap.result(), { input: 223, cacheRead: 3712, cacheWrite: 0, output: 11 })
+})
+
+test('createUsageTap：上游沒回報用量就是 null，不捏造 0', () => {
+  const tap = createUsageTap()
+  tap.push(Buffer.from('event: message_start\ndata: {}\n\nevent: message_stop\ndata: {}\n\n'))
+  assert.equal(tap.result(), null)
+})
+
+test('兩條線都把 token 用量記進流量記錄，而且轉發的 bytes 一個都沒動', async () => {
+  for (const headers of [SUBSCRIPTION_HEADERS, { ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }]) {
+    const res = await post(headers, { ...BASE_BODY, stream: true }, 'beta=true&usage=split')
+    assert.equal(await res.text(), USAGE_STREAM, '讀 usage 只能是旁觀，不能改到 client 收到的串流')
+
+    const entry = logStore.list()[0]
+    assert.deepEqual(entry.usage, { input: 223, cacheRead: 3712, cacheWrite: 40, output: 16 })
+    assert.ok(Object.values(entry.usage).every(Number.isFinite), 'usage 只能是數字')
+    assert.ok(!JSON.stringify(entry).includes('快取命中'), '回應內容不能被記進流量記錄')
+  }
 })
 
 test('訂閱線的串流一個合成 byte 都不加', async () => {

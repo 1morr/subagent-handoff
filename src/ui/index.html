@@ -464,6 +464,12 @@ function annotation(e) {
     rows.push(['修法', '到 Providers 把 output_config 從「移除的 body 欄位」拿掉'])
   }
   if (e.pings) rows.push(['keep-alive', `router 補了 ${e.pings} 個 ping · 上游安靜超過 60 秒`])
+  if (e.usage) {
+    const u = e.usage
+    const prompt = u.input + u.cacheRead + u.cacheWrite
+    rows.push(['用量', `prompt ${prompt}（快取讀 ${u.cacheRead} · 快取寫 ${u.cacheWrite} · 未命中 ${u.input}）· 輸出 ${u.output}${
+      prompt ? ` · 快取命中 ${Math.round(u.cacheRead / prompt * 100)}%` : ''}`])
+  }
   if ((e.changes || []).length) rows.push(['送出前改寫', e.changes.join(' · ')])
   if (e.shape) {
     const s = e.shape
@@ -579,8 +585,34 @@ function overview() {
     win, routed, sub, prv, subPct, prvPct: routed ? 100 - subPct : 0,
     subLive: live(sub), prvLive: live(prv), rl, prvName,
     subBuckets, prvBuckets, peak,
+    subCache: cacheStats(S.logs.filter((e) => sectorOf(e) === 'sub')),
+    prvCache: cacheStats(S.logs.filter((e) => sectorOf(e) === 'prv')),
     blocked: win.filter((e) => stateOf(e) === 'hold').length,
   }
+}
+
+/**
+ * 快取命中率 = 快取讀 ÷ 整個 prompt（未命中 + 快取寫 + 快取讀），token 加權，不是逐筆平均 ——
+ * 一筆 3 萬 tokens 的子 agent 請求跟一筆 40 tokens 的標題請求不該同權。
+ * 取記憶體裡這個席位的全部進條（最多 300 筆），不跟分流帶用同一個 5 分鐘窗：快取是看趨勢的數字，窗太短就只剩雜訊。
+ */
+function cacheStats(entries) {
+  const measured = entries.filter((e) => e.usage)
+  const sum = (key) => measured.reduce((n, e) => n + (e.usage[key] || 0), 0)
+  const read = sum('cacheRead')
+  const prompt = sum('input') + read + sum('cacheWrite')
+  return { n: measured.length, read, prompt, rate: prompt ? read / prompt : null }
+}
+const tokenCount = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(n))
+
+function cacheCell(c) {
+  return `
+          <div class="fld" style="gap:2px">
+            <span class="num" style="font-size:22px;line-height:1">${c.rate == null ? '–' : `${Math.round(c.rate * 100)}%`}</span>
+            <span class="lbl">快取命中</span>
+            <span class="lbl" style="letter-spacing:.04em">${
+              c.n ? `最近 ${c.n} 筆 · ${tokenCount(c.read)} / ${tokenCount(c.prompt)}` : '還沒有串流用量'}</span>
+          </div>`
 }
 
 /** 近 4 分鐘切成 8 個 30 秒桶。柱高就是那 30 秒的請求數 —— 高度承載資料，不是裝飾。 */
@@ -660,6 +692,7 @@ function renderBay() {
             <span class="lbl">在途請求</span>
             <span class="lbl" style="letter-spacing:.04em">近 4 分鐘 ${o.sub.length} 筆</span>
           </div>
+          ${cacheCell(o.subCache)}
           <span class="spacer"></span>
           ${rlBar}
         </div>
@@ -683,6 +716,7 @@ function renderBay() {
             <span class="lbl">在途請求</span>
             <span class="lbl" style="letter-spacing:.04em">近 4 分鐘 ${o.prv.length} 筆</span>
           </div>
+          ${cacheCell(o.prvCache)}
           <span class="spacer"></span>
           <div class="fld" style="align-items:flex-end">
             <span class="lbl">送出的 model</span>
