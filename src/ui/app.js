@@ -499,18 +499,13 @@ function filteredLogs() {
 // 目錄查表，查不到（例如日後新增的測項）才退回伺服器給的 label。
 const PROBE_LABEL_KEY = {
   connectivity: 'providers.testConnectivity', streaming: 'providers.testStreaming', tools: 'providers.testTools',
-  toolLoop: 'providers.testToolLoop', effort: 'providers.testEffort', systemMessages: 'providers.testSystemMessages',
-  vision: 'providers.testVision', pdf: 'providers.testPdf', webSearch: 'providers.testWebSearch', config: 'providers.testConfig',
+  toolLoop: 'providers.testToolLoop', config: 'providers.testConfig',
 }
 const probeLabel = (r) => (PROBE_LABEL_KEY[r.id] && t(PROBE_LABEL_KEY[r.id]) !== PROBE_LABEL_KEY[r.id]) ? t(PROBE_LABEL_KEY[r.id]) : r.label
 
 function probeRow(r) {
-  // 必要項目沒過＝被擋下（整圈告警框）；能力項目沒過＝跑得起來但出了事，推出機架、不發告警色。
-  // 兩種都印 FAIL，差別在位置與框 —— 把「看不到 PDF」畫得跟「連不上」一樣響就是在誇大。
-  // 沒有 tier 的（設定錯誤、連 admin 都打不到）一律當必要看待
-  const required = r.tier !== 'capability'
-  const cls = r.ok ? 'clr' : required ? 'hold' : 'chk'
-  const tabStyle = r.ok ? 'background:var(--sub)' : required ? 'background:var(--alarm)' : ''
+  const cls = r.ok ? 'clr' : 'hold'
+  const tabStyle = r.ok ? 'background:var(--sub)' : 'background:var(--alarm)'
   return `
     <div class="slot ${cls}">
       <div class="strip" style="cursor:default">
@@ -520,7 +515,6 @@ function probeRow(r) {
         <span style="padding:9px 12px;display:flex;flex-direction:column;gap:4px;min-width:0">
           <span style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap">
             <span style="font-weight:700;color:var(--ink);font-size:12.5px">${esc(probeLabel(r))}</span>
-            <span style="font:11px var(--han);color:var(--ink-dim)">${required ? t('providers.tierRequired') : t('providers.tierCapability')}</span>
             ${r.ms != null ? `<span class="num" style="font-size:11px;color:var(--ink-dim)">${r.ms}ms</span>` : ''}
           </span>
           ${r.detail ? `<span class="num" style="font-size:11px;color:var(--ink-dim);word-break:break-word">${esc(r.detail)}</span>` : ''}
@@ -532,14 +526,9 @@ function probeRow(r) {
 
 /** 測試結果底下那一行結論。回傳 HTML：測項名稱已過 esc()，字串本身帶 <strong> 之類的標記。 */
 function probeSummary(results) {
-  // 只單獨跑過 WebSearch 時，還不能對整個 provider 下結論
-  if (!results.some((r) => r.tier !== 'capability')) return t('providers.notTested')
-  const names = (list) => list.map((r) => esc(probeLabel(r))).join(t('providers.listSep'))
-  const blocked = results.filter((r) => !r.ok && r.tier !== 'capability')
-  const degraded = results.filter((r) => !r.ok && r.tier === 'capability')
-  if (blocked.length) return t('providers.requiredFailed', { names: names(blocked) })
-  if (degraded.length) return t('providers.capabilityFailed', { names: names(degraded) })
-  return t('providers.allPass')
+  const failed = results.filter((r) => !r.ok)
+  if (!failed.length) return t('providers.allPass')
+  return t('providers.requiredFailed', { names: failed.map((r) => esc(probeLabel(r))).join(t('providers.listSep')) })
 }
 
 function providerCard(p) {
@@ -588,9 +577,7 @@ function providerCard(p) {
           <input type="text" data-f="testModel" value="${esc(t2?.model ?? '')}">
         </label>
         <button class="btn go" data-act="test" ${busy ? 'disabled' : ''}>${busy ? t('common.testing') : t('providers.runTest')}</button>
-        <button class="btn" data-act="test-websearch" ${busy ? 'disabled' : ''}>${t('providers.runWebSearchTest')}</button>
       </div>
-      <span class="hint">${t('providers.webSearchHint')}</span>
       ${t2?.results?.length ? `<div class="rack" style="padding:3px 26px 3px 3px">${t2.results.map(probeRow).join('')}</div>` : ''}
       <span class="hint">${t2?.results?.length ? probeSummary(t2.results) : t('providers.notTested')}</span>
     </div>
@@ -982,17 +969,12 @@ document.addEventListener('click', async (ev) => {
       applyState(await api('PUT', '/api/config', S.config))
       render()
       toast(act === 'flip' ? t('bay.flipToast') : t('bay.unflipToast'))
-    } else if (act === 'test' || act === 'test-websearch') {
+    } else if (act === 'test') {
       const provider = S.config.providers.find((p) => p.id === pid)
-      const webSearchOnly = act === 'test-websearch'
       S.busy[pid] = true; render()
       try {
-        const out = await api('POST', '/api/test', {
-          provider, model: S.tests[pid]?.model, tests: webSearchOnly ? ['webSearch'] : undefined,
-        })
-        // WebSearch 單獨跑，結果併進既有那組，不把剛跑完的預設項目洗掉
-        const kept = webSearchOnly ? (S.tests[pid]?.results ?? []).filter((r) => r.id !== 'webSearch') : []
-        S.tests[pid] = { ...out, results: [...kept, ...out.results], model: S.tests[pid]?.model ?? '' }
+        const out = await api('POST', '/api/test', { provider, model: S.tests[pid]?.model })
+        S.tests[pid] = { ...out, model: S.tests[pid]?.model ?? '' }
       } catch (err) {
         S.tests[pid] = { results: [{ id: 'x', label: t('common.test'), ok: false, error: err.message }] }
       } finally {

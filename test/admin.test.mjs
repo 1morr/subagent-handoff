@@ -89,7 +89,6 @@ test('PUT /api/config：baseUrl scheme 不合法時 400，且不寫入設定', a
 test('POST /api/test：baseUrl 跟已存的不同又沿用遮罩值時，拒絕並且不外流 key', async () => {
   const { status, json } = await adminApi('POST', '/api/test', {
     provider: { id: 'kimi', apiKey: KEEP_SECRET, baseUrl: 'http://127.0.0.1:1', authStyle: 'bearer' },
-    tests: ['connectivity'],
   })
   assert.equal(status, 400)
   assert.match(json.error, /baseUrl/)
@@ -99,7 +98,6 @@ test('POST /api/test：baseUrl 跟已存的一樣時，KEEP_SECRET 正常還原�
   const stored = harness.getConfig().providers.find((p) => p.id === 'kimi')
   const { status, json } = await adminApi('POST', '/api/test', {
     provider: { id: 'kimi', apiKey: KEEP_SECRET, baseUrl: stored.baseUrl, authStyle: 'bearer', model: stored.model },
-    tests: ['connectivity'],
   })
   assert.equal(status, 200)
   assert.equal(json.results[0].ok, true, JSON.stringify(json.results))
@@ -110,7 +108,6 @@ test('POST /api/test：baseUrl 跟已存的一樣時，KEEP_SECRET 正常還原�
 test('POST /api/test：baseUrl scheme 不合法時 400', async () => {
   const { status, json } = await adminApi('POST', '/api/test', {
     provider: { id: 'kimi', apiKey: 'sk-explicit', baseUrl: 'ftp://x', authStyle: 'bearer' },
-    tests: ['connectivity'],
   })
   assert.equal(status, 400)
   assert.match(json.error, /http/)

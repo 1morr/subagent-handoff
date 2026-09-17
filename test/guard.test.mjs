@@ -36,7 +36,6 @@ test('admin：POST /api/test 的簡單請求 CSRF 被擋下 —— 真 key 不�
     headers: { 'content-type': 'text/plain', origin: 'https://evil.example', host: new URL(harness.adminUrl).host },
     body: JSON.stringify({
       provider: { id: 'kimi', apiKey: '__keep__', baseUrl: 'http://127.0.0.1:1', authStyle: 'bearer' },
-      tests: ['connectivity'],
     }),
   })
   assert.equal(res.status, 403)

@@ -113,12 +113,12 @@ export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
       }
 
       if (route === 'POST /api/test') {
-        const { provider, model, tests } = await readJson(req)
+        const { provider, model } = await readJson(req)
         if (!provider || typeof provider !== 'object') return send(res, 400, { error: 'missing provider' })
         const problem = providerProblem(provider, getConfig())
         if (problem) return send(res, 400, { error: problem })
         // 前端只拿得到遮罩，測試未儲存的設定時要把真 key 補回來（baseUrl 沒換才行，上面已經擋過）
-        send(res, 200, await runProbes(fromClientProvider(provider, getConfig()), { model, tests }))
+        send(res, 200, await runProbes(fromClientProvider(provider, getConfig()), { model }))
         return
       }
 
