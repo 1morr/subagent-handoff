@@ -124,46 +124,49 @@ export function restoreMaskedKey(submitted, current) {
 }
 
 /**
- * `PUT /api/config` 存檔前的把關。normalizeConfig 遇到壞資料是「修掉」而不是拋錯
- * （config.json 被手改壞掉時，載入不該讓整個 proxy 起不來），但使用者從 GUI 主動送出
- * 壞資料時應該看到明確的錯誤，而不是被靜默清空、或者送出去才炸成一個看不懂的 502。
- * 這裡驗證的是**送進來的原始資料**，在還沒被 normalizeConfig 悄悄修正之前。
+ * 瀏覽器送來的 provider 能不能用。存檔（`PUT /api/config`）與測試（`POST /api/test`）共用這一道把關。
+ *
+ * normalizeConfig 遇到壞資料是「修掉」而不是拋錯（config.json 被手改壞掉時，載入不該讓整個 proxy
+ * 起不來），但使用者從 GUI 主動送出壞資料時應該看到明確的錯誤，所以這裡看的是還沒被修正的原始資料。
  *
  * @param {object} current 目前生效的設定，用來判斷遮罩值能不能換回真 key
- * @returns {string[]} 問題清單；空陣列＝可以存
+ * @returns {string | null} 問題描述；null ＝ 可以用
  */
+export function providerProblem(p, current) {
+  const url = validateBaseUrl(p?.baseUrl)
+  if (!url.ok) return `baseUrl: ${url.error}`
+  if (p.apiKey === KEEP_SECRET && restoreMaskedKey(p, current) === null) return MASKED_KEY_MOVED
+  return null
+}
+
+/** @returns {string[]} 每個有問題的 provider 一行；空陣列＝可以存 */
 export function describeConfigProblems(raw, current) {
-  const problems = []
-  const cfg = raw && typeof raw === 'object' ? raw : {}
+  const providers = Array.isArray(raw?.providers) ? raw.providers.filter((p) => p && typeof p === 'object') : []
+  return providers.flatMap((p) => {
+    const problem = providerProblem(p, current)
+    return problem ? [`provider "${String(p.label ?? p.id ?? 'Unnamed')}": ${problem}`] : []
+  })
+}
 
-  for (const p of Array.isArray(cfg.providers) ? cfg.providers : []) {
-    if (!p || typeof p !== 'object') continue
-    const label = String(p.label ?? p.id ?? 'Unnamed')
-    const result = validateBaseUrl(p.baseUrl)
-    if (!result.ok) problems.push(`provider "${label}" baseUrl: ${result.error}`)
-    if (result.ok && p.apiKey === KEEP_SECRET && restoreMaskedKey(p, current) === null) {
-      problems.push(`provider "${label}": ${MASKED_KEY_MOVED}`)
-    }
+/** 逐欄挑出來，不整包展開：設定檔裡已經不認得的舊欄位（例如拿掉的 dropFields）下次存檔就消失 */
+function normalizeProvider(p) {
+  return {
+    // PASSTHROUGH_ID 是規則用來指回訂閱的保留值，不能讓 provider 佔走
+    id: typeof p.id === 'string' && p.id && p.id !== PASSTHROUGH_ID ? p.id : newId('p'),
+    label: String(p.label ?? '').trim() || 'Unnamed',
+    baseUrl: normalizeProviderBaseUrl(p.baseUrl, String(p.label ?? p.id ?? 'Unnamed')),
+    apiKey: typeof p.apiKey === 'string' ? p.apiKey : '',
+    model: String(p.model ?? '').trim(),
+    authStyle: p.authStyle === 'x-api-key' ? 'x-api-key' : 'bearer',
   }
-
-  return problems
 }
 
 export function normalizeConfig(raw) {
   const base = defaultConfig()
   const cfg = raw && typeof raw === 'object' ? raw : {}
 
-  // 逐欄挑出來，不整包展開：設定檔裡已經不認得的舊欄位（例如拿掉的 dropFields）下次存檔就消失
   const providers = Array.isArray(cfg.providers)
-    ? cfg.providers.filter((p) => p && typeof p === 'object').map((p) => ({
-        // PASSTHROUGH_ID 是規則用來指回訂閱的保留值，不能讓 provider 佔走
-        id: typeof p.id === 'string' && p.id && p.id !== PASSTHROUGH_ID ? p.id : newId('p'),
-        label: String(p.label ?? '').trim() || 'Unnamed',
-        baseUrl: normalizeProviderBaseUrl(p.baseUrl, String(p.label ?? p.id ?? 'Unnamed')),
-        apiKey: typeof p.apiKey === 'string' ? p.apiKey : '',
-        model: String(p.model ?? '').trim(),
-        authStyle: p.authStyle === 'x-api-key' ? 'x-api-key' : 'bearer',
-      }))
+    ? cfg.providers.filter((p) => p && typeof p === 'object').map(normalizeProvider)
     : base.providers
 
   const rules = Array.isArray(cfg.rules)
@@ -232,18 +235,16 @@ export function toClientConfig(cfg) {
 }
 
 /**
- * 收到瀏覽器的版本：把 KEEP_SECRET 還原成現存的 key（規則見 restoreMaskedKey）。
+ * 收到瀏覽器的 provider：把 KEEP_SECRET 還原成現存的 key（規則見 restoreMaskedKey）。
  *
- * 存檔路徑已經先被 describeConfigProblems 擋過，走到這裡還還原不了的只剩規則預覽，
+ * 存檔與測試都已經先被 providerProblem 擋過，走到這裡還還原不了的只剩規則預覽，
  * 它用不到 key，所以給空字串就好。
  */
+export function fromClientProvider(p, current) {
+  return normalizeProvider(p.apiKey === KEEP_SECRET ? { ...p, apiKey: restoreMaskedKey(p, current) ?? '' } : p)
+}
+
 export function fromClientConfig(incoming, current) {
-  return normalizeConfig({
-    ...incoming,
-    providers: (incoming.providers ?? []).map((p) => {
-      const { apiKeyHint, ...rest } = p
-      if (rest.apiKey === KEEP_SECRET) rest.apiKey = restoreMaskedKey(rest, current) ?? ''
-      return rest
-    }),
-  })
+  const providers = Array.isArray(incoming.providers) ? incoming.providers.filter((p) => p && typeof p === 'object') : []
+  return normalizeConfig({ ...incoming, providers: providers.map((p) => fromClientProvider(p, current)) })
 }

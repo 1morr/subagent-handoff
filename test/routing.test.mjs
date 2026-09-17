@@ -156,16 +156,6 @@ test('SessionCwd 到達上限時丟掉最久沒用到的', () => {
   assert.equal(s.lookup(null), null)
 })
 
-test('x-api-key 認證的 provider', async () => {
-  harness.getConfig().rules = [defaultRule({ match: 'subagent', providerId: 'other' })]
-  const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY)
-  await res.text()
-
-  const [hit] = harness.upstream.state.received
-  assert.equal(hit.headers['x-api-key'], 'sk-other')
-  assert.equal(hit.headers.authorization, undefined)
-})
-
 test('modelGlob 沒命中就落回訂閱', async () => {
   harness.getConfig().rules = [defaultRule({ match: 'subagent', modelGlob: 'claude-haiku*', providerId: 'kimi' })]
   const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY)

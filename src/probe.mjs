@@ -25,21 +25,9 @@
 
 import { randomInt } from 'node:crypto'
 import zlib from 'node:zlib'
+import { buildProviderHeaders, rewriteBodyForProvider } from './proxy.mjs'
 
 const TIMEOUT_MS = 45_000
-
-function headersFor(provider) {
-  const headers = {
-    'content-type': 'application/json',
-    'anthropic-version': '2023-06-01',
-    accept: 'application/json',
-  }
-  if (provider.apiKey) {
-    if (provider.authStyle === 'x-api-key') headers['x-api-key'] = provider.apiKey
-    else headers.authorization = `Bearer ${provider.apiKey}`
-  }
-  return headers
-}
 
 async function errorDetail(response) {
   const text = await response.text().catch(() => '')
@@ -47,14 +35,14 @@ async function errorDetail(response) {
   return trimmed || `HTTP ${response.status} ${response.statusText}`
 }
 
-async function call(provider, model, payload) {
-  const response = await fetch(`${provider.baseUrl}/v1/messages`, {
+/** header 與 body 用 proxy 轉發子 agent 請求的同一套函式組，測到的就是真的會送出去的樣子。 */
+function call(provider, model, payload) {
+  return fetch(`${provider.baseUrl}/v1/messages`, {
     method: 'POST',
-    headers: headersFor(provider),
-    body: JSON.stringify({ model, ...payload }),
+    headers: buildProviderHeaders({}, provider),
+    body: JSON.stringify(rewriteBodyForProvider(payload, model).body),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   })
-  return response
 }
 
 const textOf = (blocks) =>

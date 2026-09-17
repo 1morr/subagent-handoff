@@ -88,7 +88,7 @@ function buildPassthroughHeaders(incoming) {
   return headers
 }
 
-function buildProviderHeaders(incoming, provider) {
+export function buildProviderHeaders(incoming, provider) {
   const headers = {
     'content-type': 'application/json',
     'anthropic-version': incoming['anthropic-version'] ?? '2023-06-01',

@@ -3,8 +3,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  CONFIG_PATH, KEEP_SECRET, MASKED_KEY_MOVED, fromClientConfig, toClientConfig, validateBaseUrl,
-  describeConfigProblems, restoreMaskedKey,
+  CONFIG_PATH, fromClientConfig, fromClientProvider, toClientConfig, describeConfigProblems, providerProblem,
 } from './config.mjs'
 import { describeRequest, resolveModel, resolveRoute, PASSTHROUGH_LABEL } from './routing.mjs'
 import { runProbes } from './probe.mjs'
@@ -106,8 +105,6 @@ export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
 
       if (route === 'PUT /api/config') {
         const incoming = await readJson(req)
-        // 驗證送進來的原始資料（還沒被 normalizeConfig 悄悄修正之前），
-        // 壞的 baseUrl / header 名稱要讓使用者看到明確原因，不是被靜默清空
         const problems = describeConfigProblems(incoming, getConfig())
         if (problems.length) return send(res, 400, { error: problems.join('；') })
         const saved = await setConfig(fromClientConfig(incoming, getConfig()))
@@ -117,19 +114,11 @@ export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
 
       if (route === 'POST /api/test') {
         const { provider, model, tests } = await readJson(req)
-        if (!provider) return send(res, 400, { error: 'missing provider' })
-
-        const baseUrlCheck = validateBaseUrl(provider?.baseUrl)
-        if (!baseUrlCheck.ok) return send(res, 400, { error: `baseUrl: ${baseUrlCheck.error}` })
-
-        // 前端只拿得到遮罩，測試未儲存的設定時要把真 key 補回來（baseUrl 沒換才行）
-        const resolved = { ...provider, baseUrl: baseUrlCheck.value }
-        if (resolved.apiKey === KEEP_SECRET) {
-          const key = restoreMaskedKey(resolved, getConfig())
-          if (key === null) return send(res, 400, { error: MASKED_KEY_MOVED })
-          resolved.apiKey = key
-        }
-        send(res, 200, await runProbes(resolved, { model, tests }))
+        if (!provider || typeof provider !== 'object') return send(res, 400, { error: 'missing provider' })
+        const problem = providerProblem(provider, getConfig())
+        if (problem) return send(res, 400, { error: problem })
+        // 前端只拿得到遮罩，測試未儲存的設定時要把真 key 補回來（baseUrl 沒換才行，上面已經擋過）
+        send(res, 200, await runProbes(fromClientProvider(provider, getConfig()), { model, tests }))
         return
       }
 
