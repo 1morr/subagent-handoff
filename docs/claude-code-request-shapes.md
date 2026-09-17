@@ -99,7 +99,35 @@ Workflow agent 的工具清單裡沒有 `Agent` 與 `Workflow`，與 README「�
 
 對照 2026-08 在 `deepseek-v4-pro` 上的結論「多輪的 thinking block 不強制回傳」：那次沒有記下歷史裡有沒有 `tool_use`。這次在 `deepseek-flash` 上確認的是 —— 純文字的 assistant 歷史不附 thinking 照收（「中途 system 訊息」那項的歷史就是這種），帶 `tool_use` 的必須附。正常流程碰不到，Claude Code 送回去的本來就是 DeepSeek 自己吐的那一則。
 
+### context 超限
+
+DeepSeek 超限時的回應（實測：一筆約 115 萬 tokens 的請求，2 秒內被拒，沒進推論）：
+
+```text
+HTTP 400  content-type: application/octet-stream
+{"error":{"message":"This model's maximum context length is 1048576 tokens. However, you requested 1150953 tokens (1150952 in the messages, 1 in the completion). Please reduce the length of the messages or completion.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}
+```
+
+OpenAI 的措辭、外面沒有 Anthropic 的 `type: "error"`，而且**上限把 `max_tokens` 算在內**。
+
+Claude Code 這一側用假上游量（一次性腳本，沒有進 repo）：子 agent 讀一次檔，下一筆請求回 400，看它接著送什麼。
+
+| 子 agent 收到的錯誤 | Claude Code 的反應 |
+| --- | --- |
+| `prompt is too long: 250000 tokens > 200000 maximum` | 送一筆摘要請求，而且先截掉較舊的對話（開頭換成 `[earlier conversation truncated for compaction retry]`），再用摘要後的 context 繼續。task completed |
+| `capability_rejected: prompt_too_long` | 也壓縮，但摘要請求沒截舊對話，比超限的那一筆還大 |
+| OpenAI 措辭，包在 Anthropic 的格式裡 | 不重試、不壓縮。task failed：`Agent terminated early due to an API error` |
+| DeepSeek 原樣的回應 | 同上，failed |
+| DeepSeek 原樣的回應，經過 router | router 改寫成第一列的格式；壓縮後繼續，completed |
+
+主動壓縮也量了：在 `message_start` 回報很大的 `input_tokens`，看下一筆是不是摘要請求。
+
+- sonnet 子 agent（Claude Code 當成 200K）：回報 190K 就壓縮。
+- 從 `opus[1m]` 繼承模型的子 agent（當成 1M，`max_tokens` 128000）：回報到 1,100,000 都照常送，不主動壓縮。
+
+所以在 DeepSeek 上，1M 的子 agent 累積到約 92 萬 tokens（1,048,576 − 128,000）一定撞上 400，活不活得下來全看 Claude Code 認不認得那個錯誤。router 在 provider 線上把 OpenAI 措辭的超限錯誤改寫成 `prompt is too long: <requested> tokens > <limit> maximum`，數字照搬。反過來調 Claude Code 的壓縮門檻行不通：`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` 是全域的，主對話會一起被拖累。
+
 ## 還沒驗的
 
-- **context 超限時的行為**：Claude Code 以為自己在跟 Claude 講話，照 Claude 的 context 大小決定何時壓縮（sonnet 200K、`opus[1m]` 1M），provider 端沒辦法告訴它真正的上限 —— `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` 是全域的，只能調低，主對話會一起被拖累。上游上限比這個小時會先撞 400，而 Claude Code 的自動恢復靠比對錯誤訊息的文字；gateway 文檔提到可以在錯誤訊息裡帶 `capability_rejected: prompt_too_long` 讓它認得。DeepSeek 是 1M，碰不到，所以沒做也沒測。
+- **別家 provider 的超限措辭**：router 只認 DeepSeek 實測到的那一句 OpenAI 措辭。措辭不同的 provider，子 agent 超限時照樣會失敗；要接的時候先打一筆超限請求看它回什麼。
 - **`redacted_thinking` 實際多常出現**：只有 Anthropic 那側產生、而且規則在 agent 跑到一半從訂閱切到 DeepSeek 時才會碰到。上面那筆 400 是人為構造的。

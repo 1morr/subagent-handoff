@@ -349,6 +349,8 @@ DeepSeek [自己的文檔](https://api-docs.deepseek.com/guides/thinking_mode)�
 - **WebSearch 可以，但貴。** 子 agent 的 WebSearch 會分到 DeepSeek、由它代為搜尋，Claude Code 解析得動它的回應；一次約 3 萬 input tokens。
 - **對話中間的 `role: "system"` 訊息看得到。** Claude Code 每一筆請求都有這種訊息，丟掉的話子 agent 會少一大段指示。
 - **開著思考時，帶 `tool_use` 的 assistant 歷史必須附上 thinking**，否則 400。正常流程碰不到。規則在 agent 跑到一半從訂閱切過來時，Anthropic 留下的 thinking 送得過去；只有 `redacted_thinking` 會被拒。
+- **context 超限的錯誤 router 會改寫。** DeepSeek 的上限是 1,048,576 tokens，**`max_tokens` 也算在內**；超過時回 OpenAI 措辭的 400，Claude Code 認不得，子 agent 直接以 API error 結束。provider 線上 router 把它改寫成 Anthropic 的 `prompt is too long: <requested> tokens > <limit> maximum`，Claude Code 就會先壓縮再接著做 —— 端到端實測，改寫前 task failed，改寫後 completed。
+  會撞到的是 Claude Code 當成 1M 的子 agent（例如從 `opus[1m]` 繼承模型）：實測它不主動壓縮，`max_tokens` 又是 128000，累積到約 92 萬 tokens 就撞線。sonnet 子 agent 在 200K 前就自己壓縮，碰不到。點開那筆進條，「上游說法」會寫著已轉換。
 
 ### 內建的測試
 
@@ -406,6 +408,7 @@ GUI 上必要項目沒過的那列用告警框框住；能力項目沒過的只�
   1. 把 `dropBeta` 關掉，讓 header 與 body 成對抵達上游
   2. 還是不行就在 Claude Code 那頭設 `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`，兩半一起不送 —— 這是官方指定的解法，代價是它**全域生效**，訂閱線也會少掉那些 capability
   3. 最後才動 `dropFields`，而且一次只加一個。整組刪掉會連帶關掉 `/effort`，且請求照樣 200，只是模型變笨
+- provider 線上唯一會被改寫的回應是 **context 超限的錯誤**（原因見 [DeepSeek 補測](#deepseek-補測2026-09deepseek-flash)），其餘錯誤回應原樣轉出。
 - `dropFields`、`maxOutputTokens`、`extraHeaders` 只作用在要送去 provider 的請求。passthrough（訂閱）那條線是原始 bytes 原樣轉發，連 JSON 都不重新序列化，主對話的思考檔位不受任何影響 —— 唯一的例外是規則設了 `modelOverride`，那筆會重新序列化，但也只換 `model` 一個欄位。
 - **送去 provider 的請求一律拿掉 `metadata`。** Claude Code 在 `metadata.user_id` 裡放了 claude.ai 的 `account_uuid` 與 `device_id`（實測 v2.1.274），那是訂閱帳號的識別資訊。這一項沒有開關；訂閱線照舊原樣轉發。點開進條的「送出前改寫」會看到 `-metadata`。
   對快取的影響是**正面的**：DeepSeek 拿 `user_id` 做 KV cache 分區（[文檔](https://api-docs.deepseek.com/quick_start/rate_limit)），而 Claude Code 的 `user_id` 裡帶著 `session_id`，等於每個 session 各自一個分區、新 session 一律從冷快取開始。實測（2026-09，`deepseek-flash`）同一分區重送命中 94–96%、換分區 0%，空 id 的分區快取照常；拿掉之後，新 session 的第一筆子 agent 請求就命中了上一個 session 留下的快取（92%）。一般帳號的並發上限本來也是所有 `user_id` 合計，拿掉不影響。

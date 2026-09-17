@@ -168,6 +168,27 @@ export function summarizeUpstreamError(buf) {
   return truncate(text.replace(/\s+/g, ' '))
 }
 
+/**
+ * Claude Code 撞到 context 上限時會自己壓縮再送，但它靠比對錯誤文字來認（`prompt is too long`）。
+ * DeepSeek 回的是 OpenAI 的措辭，外面也沒包 Anthropic 的 `type: "error"`（實測 2026-09）；原樣轉回去，
+ * 子 agent 就以 API error 結束，做到一半的東西全丟。實測 1M 的子 agent 不會主動壓縮，全靠這一條認出來。
+ */
+const OPENAI_CONTEXT_OVERFLOW = /maximum context length is (\d+) tokens\. However, you requested (\d+) tokens/
+
+/**
+ * 數字照搬：實測帶數字時，Claude Code 的摘要請求會先截掉較舊的對話；不帶的話，摘要請求比超限的那筆還大。
+ * DeepSeek 的 requested 含 max_tokens，比 prompt 本身大，截得保守一點不礙事。
+ */
+export function translateContextOverflow(buf) {
+  const hit = OPENAI_CONTEXT_OVERFLOW.exec(buf.toString('utf8'))
+  if (!hit) return null
+  const [, limit, requested] = hit
+  return Buffer.from(JSON.stringify({
+    type: 'error',
+    error: { type: 'invalid_request_error', message: `prompt is too long: ${requested} tokens > ${limit} maximum` },
+  }))
+}
+
 /** SSE 的 error 事件長這樣：`data: {"type":"error","error":{…}}`。認這個標記就夠，不必解析整個串流。 */
 const SSE_ERROR_MARK = '"type":"error"'
 
@@ -635,16 +656,25 @@ export function createProxyServer(getConfig, log) {
         if (!HOP_BY_HOP.has(key.toLowerCase())) outHeaders[key] = value
       })
       sse = (upstream.headers.get('content-type') ?? '').includes('event-stream')
-      res.writeHead(upstream.status, outHeaders)
-      res.flushHeaders()
 
-      // 錯誤回應不是串流，而且一定很小。整包收下來才記得住「為什麼失敗」，再原樣轉出去
+      // 錯誤回應不是串流，而且一定很小。整包收下來才記得住「為什麼失敗」，再轉出去
       if (upstream.status >= 400) {
-        const failure = Buffer.from(await upstream.arrayBuffer())
+        let failure = Buffer.from(await upstream.arrayBuffer())
         entry.detail = summarizeUpstreamError(failure)
+        // 訂閱線本來就是 Anthropic 的措辭，一個字都不動
+        const overflow = route.kind === 'provider' ? translateContextOverflow(failure) : null
+        if (overflow) {
+          failure = overflow
+          outHeaders['content-type'] = 'application/json'
+          entry.detail += '（已轉成 prompt is too long，讓 Claude Code 自己壓縮）'
+        }
+        res.writeHead(upstream.status, outHeaders)
         res.end(failure)
         return
       }
+
+      res.writeHead(upstream.status, outHeaders)
+      res.flushHeaders()
 
       // 逐塊寫出，不緩衝：Claude Code 會數 SSE 位元組，靜默 300 秒就中斷串流
       // 標記有可能被切在兩塊之間，所以每塊都帶上一塊的尾巴一起看

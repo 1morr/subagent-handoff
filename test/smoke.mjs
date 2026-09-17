@@ -10,7 +10,7 @@ import { after, before } from 'node:test'
 import {
   createProxyServer, TrafficLog, SessionCwd, rewriteBodyForProvider, rewriteModel,
   summarizeUpstreamError, findStreamError, parseRetryAfter, retryDelay, sseError, collectRateLimit,
-  createPinger, createUsageTap,
+  createPinger, createUsageTap, translateContextOverflow,
 } from '../src/proxy.mjs'
 import { globMatch, describeRequest, resolveRoute, resolveModel, resolveRetryPolicy, extractCwd, PASSTHROUGH_ID } from '../src/routing.mjs'
 import {
@@ -70,6 +70,13 @@ before(async () => {
         'anthropic-ratelimit-unified-reset': '1756598400',
       })
       res.end(JSON.stringify({ type: 'error', error: { type: 'rate_limit_error', message: 'Error' } }))
+      return
+    }
+
+    // DeepSeek 超過 context 上限時的原樣回應（實測 2026-09）：OpenAI 的措辭、沒有外層 type、content-type 不是 JSON
+    if (req.url.includes('fail=overflow')) {
+      res.writeHead(400, { 'content-type': 'application/octet-stream' })
+      res.end(DEEPSEEK_OVERFLOW)
       return
     }
 
@@ -434,6 +441,41 @@ test('上游被節流時原樣轉出，並把 retry-after 與上游的說法記�
   assert.equal(entry.requestId, 'req_fake_1')
   assert.match(entry.detail, /rate_limit_error/, '只記一個 429 等於查不出原因，上游的說法要留著')
   assert.equal(entry.attempts, 1, 'retry-after 要等 146 秒，這種等待不該由 router 扛著不放')
+})
+
+const DEEPSEEK_OVERFLOW = JSON.stringify({
+  error: {
+    message: "This model's maximum context length is 1048576 tokens. However, you requested 1150953 tokens (1150952 in the messages, 1 in the completion). Please reduce the length of the messages or completion.",
+    type: 'invalid_request_error',
+    param: null,
+    code: 'invalid_request_error',
+  },
+})
+
+test('provider 說 context 超限時，轉成 Claude Code 認得、會自己壓縮的那一句', async () => {
+  const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY, 'fail=overflow')
+
+  assert.equal(res.status, 400)
+  assert.equal(res.headers.get('content-type'), 'application/json')
+  assert.deepEqual(await res.json(), {
+    type: 'error',
+    error: { type: 'invalid_request_error', message: 'prompt is too long: 1150953 tokens > 1048576 maximum' },
+  }, '數字要照搬：Claude Code 靠它決定摘要請求先截掉多少舊對話')
+
+  const entry = logStore.list()[0]
+  assert.match(entry.detail, /maximum context length is 1048576 tokens/, '流量記錄要留上游原本的說法')
+  assert.match(entry.detail, /已轉成 prompt is too long/, '改寫過回應要看得出來')
+})
+
+test('訂閱線的錯誤回應不改寫，別的 400 也不改寫', async () => {
+  const res = await post(SUBSCRIPTION_HEADERS, BASE_BODY, 'fail=overflow')
+  assert.equal(await res.text(), DEEPSEEK_OVERFLOW, '訂閱線的錯誤 body 要一個字不差')
+  assert.doesNotMatch(logStore.list()[0].detail, /已轉成/)
+
+  const other = Buffer.from(JSON.stringify({ error: { message: 'The content[].thinking in the thinking mode must be passed back to the API.', type: 'invalid_request_error' } }))
+  assert.equal(translateContextOverflow(other), null)
+  const anthropic = Buffer.from(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'prompt is too long: 210000 tokens > 200000 maximum' } }))
+  assert.equal(translateContextOverflow(anthropic), null, 'Claude Code 本來就認得的不必再包一層')
 })
 
 test('流量記錄留下請求形狀，但一樣不留內容', async () => {
