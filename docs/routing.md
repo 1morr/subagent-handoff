@@ -103,6 +103,6 @@ agent 規則把主對話也捲進去。
 
 ## `modelGlob` / `agentIdGlob` 比對不分大小寫
 
-舊版文檔沒提過這件事：`globMatch`（`src/routing.mjs`）把 pattern 轉成的正規表示式
+`globMatch`（`src/routing.mjs`）把 pattern 轉成的正規表示式
 帶了 `i` flag，所以 `Explore*` 跟 `explore*` 對同一個 agent id 的比對結果一樣。
 寫規則時不用刻意對齊 teammate 名字的大小寫。

@@ -90,8 +90,11 @@ network` 只說了「在等」，沒說是誰擋的。答案在流量記錄的**
   被推出機架整格、加一圈朱紅框，批註欄寫著「上游擋的」；點開看上游自己的說法
   （`rate_limit_error: …`、`overloaded_error: …`），以及 `retry-after` 與
   `request-id`。
-- 狀態欄直接寫著 `fetch failed` / `terminated` 這類文字 → **router 連不上
-  上游**，client 收到的是 router 合成的 502。
+- 狀態欄直接寫著 `fetch failed` 這類文字 → **router 連不上上游**，client 收到的
+  是 router 合成的 502，Claude Code 會照它自己的退避重試。
+- 狀態欄寫著 `terminated` → **串流送到一半上游斷了**，router 也把 client 那頭的
+  連線切斷，讓 Claude Code 當成連線錯誤重送（為什麼不補 error 事件見
+  [reliability.md](reliability.md)）。
 - `client aborted` → 是 Claude Code 自己收手（按了 esc、subagent 被取消、上一輪
   結束）。這不是錯誤。
 - **完全沒有對應的那一筆** → 請求根本沒送到 router，問題在 Claude Code 到
@@ -100,7 +103,7 @@ network` 只說了「在等」，沒說是誰擋的。答案在流量記錄的**
 上游**有給** `retry-after` 時，畫面上倒數的秒數就是它的值，所以狀態欄顯示
 `429 ·146s 後重試` 而畫面寫 `will retry in 2m 26s` 是同一件事，不是 router 卡住。
 
-但訂閱線的 429 實測**不帶** `retry-after`（21 筆全部是空的），那時候畫面的倒數
+但訂閱線的 429 實測**不帶** `retry-after`（22 筆全部是空的），那時候畫面的倒數
 是 Claude Code 自己算的。這種情況下限流資訊在 `anthropic-ratelimit-*` 那組
 header 上，router 會整組收進流量記錄（`collectRateLimit`，`src/proxy.mjs`）：
 批註欄改寫「上游擋的・3586s 後重置」，點開進條的「限流」那一行有完整的鍵值。
@@ -116,6 +119,6 @@ header 上，router 會整組收進流量記錄（`collectRateLimit`，`src/prox
 
 ## 另見
 
-- [reliability.md](reliability.md) —— router 自己重送、補 ping 的機制本身。
+- [reliability.md](reliability.md) —— 為什麼不自己重送、補 ping 與串流斷線的機制本身。
 - [measurements.md](measurements.md) —— 這些行為背後的實測樣本數。
 - [ui-notes.md](ui-notes.md) —— Rack 分頁的視覺編碼規則。

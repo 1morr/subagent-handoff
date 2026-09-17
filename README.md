@@ -115,7 +115,7 @@ Rules are evaluated top to bottom and the first match wins.
 | `rules[].providerId` | Which provider, or the reserved value `passthrough` to send it back to the subscription |
 | `rules[].modelOverride` | Rewrites `model`, beating `providers[].model`. Works on `passthrough` too |
 
-Full reference including retry policy, traffic logging, and every clamped range:
+Full reference including traffic logging and every clamped range:
 [docs/configuration.md](docs/configuration.md).
 
 **Two things worth knowing.** When a third-party quota runs dry, switch that
@@ -161,7 +161,7 @@ The in-depth docs are written in Traditional Chinese.
 | [docs/configuration.md](docs/configuration.md) | Every config field, default and clamp |
 | [docs/routing.md](docs/routing.md) | Rule matching, model overrides, quota switching |
 | [docs/observability.md](docs/observability.md) | The traffic log, cache hit rates, and reading the rack |
-| [docs/reliability.md](docs/reliability.md) | Retry, backoff, and why the subscription line does not retry 429 |
+| [docs/reliability.md](docs/reliability.md) | Why the router hands failures straight back to Claude Code, keep-alive pings, and mid-stream disconnects |
 | [docs/providers.md](docs/providers.md) | Provider compatibility notes, the built-in tests, and measurements |
 | [docs/claude-code-request-shapes.md](docs/claude-code-request-shapes.md) | The request shapes Claude Code actually sends and how DeepSeek handles each; recapture with `node scripts/capture-shapes.mjs` after a Claude Code upgrade |
 | [docs/security.md](docs/security.md) | Threat model and what is and is not protected |

@@ -98,7 +98,7 @@ npm run demo      # synthetic traffic against a local fake upstream
 | `rules[].providerId` | 指定哪個供應商，或用保留值 `passthrough` 把請求送回訂閱額度 |
 | `rules[].modelOverride` | 改寫 `model`，優先權高於 `providers[].model`。對 `passthrough` 一樣有效 |
 
-完整參考文件（含重試策略、流量記錄，以及每個數值的限制範圍）：[docs/configuration.md](docs/configuration.md)。
+完整參考文件（含流量記錄，以及每個數值的限制範圍）：[docs/configuration.md](docs/configuration.md)。
 
 **有兩件事值得知道。** 第三方額度用完時，把那條規則的目標切成 `passthrough`，而不是直接停用它 —— 停用會讓流量往下掉到*下一條*規則，而指到 passthrough 才是真正把它停在訂閱額度上。另外，`modelOverride` 是唯一能讓子代理使用跟主對話不同模型的方法，因為 `agent()` 在沒有指定模型時會繼承主對話的模型，而這件事 Claude Code 本身沒辦法改。
 
@@ -131,7 +131,7 @@ npm test     # node --test, no dependencies, no network
 | [docs/configuration.md](docs/configuration.md) | 每個設定欄位、預設值與限制範圍 |
 | [docs/routing.md](docs/routing.md) | 規則匹配、model 覆寫、額度切換 |
 | [docs/observability.md](docs/observability.md) | 流量記錄、快取命中率，以及怎麼看懂 Rack 分頁 |
-| [docs/reliability.md](docs/reliability.md) | 重試、退避，以及為什麼訂閱這條線不重試 429 |
+| [docs/reliability.md](docs/reliability.md) | 為什麼失敗直接交回 Claude Code、keep-alive ping，以及串流中途斷線 |
 | [docs/providers.md](docs/providers.md) | 供應商相容性筆記、內建測試與實測數據 |
 | [docs/claude-code-request-shapes.md](docs/claude-code-request-shapes.md) | Claude Code 實際送出的請求形狀，以及 DeepSeek 對每一種的實測反應；Claude Code 升級後用 `node scripts/capture-shapes.mjs` 重抓 |
 | [docs/security.md](docs/security.md) | 威脅模型，以及哪些有保護、哪些沒有 |
