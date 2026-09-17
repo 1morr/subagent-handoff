@@ -130,4 +130,4 @@ Claude Code 這一側用假上游量（一次性腳本，沒有進 repo）：子
 ## 還沒驗的
 
 - **別家 provider 的超限措辭**：router 只認 DeepSeek 實測到的那一句 OpenAI 措辭。措辭不同的 provider，子 agent 超限時照樣會失敗；要接的時候先打一筆超限請求看它回什麼。
-- **`redacted_thinking` 實際多常出現**：只有 Anthropic 那側產生、而且規則在 agent 跑到一半從訂閱切到 DeepSeek 時才會碰到。上面那筆 400 是人為構造的。
+- **`redacted_thinking`**：DeepSeek 收到會 400，只在規則於 agent 跑到一半從訂閱切到 DeepSeek 時碰得到。本機 1639 份 Claude Code 對話記錄（2026-08～09，含子 agent）裡帶 thinking 的超過 5 萬行，`redacted_thinking` block 一個都沒有，所以沒處理。前提是 Claude Code 會把它原樣存進記錄 —— 沒有實例可以確認。

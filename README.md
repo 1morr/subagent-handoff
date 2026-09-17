@@ -348,7 +348,7 @@ DeepSeek [自己的文檔](https://api-docs.deepseek.com/guides/thinking_mode)�
 - **快取命中很高。** 同一個子 agent 的後續請求 97–99%；設了 `CLAUDE_CODE_ATTRIBUTION_HEADER=0` 時，不同 session 之間也共用（見[已知限制](#已知限制)裡 `metadata` 那條）。
 - **WebSearch 可以，但貴。** 子 agent 的 WebSearch 會分到 DeepSeek、由它代為搜尋，Claude Code 解析得動它的回應；一次約 3 萬 input tokens。
 - **對話中間的 `role: "system"` 訊息看得到。** Claude Code 每一筆請求都有這種訊息，丟掉的話子 agent 會少一大段指示。
-- **開著思考時，帶 `tool_use` 的 assistant 歷史必須附上 thinking**，否則 400。正常流程碰不到。規則在 agent 跑到一半從訂閱切過來時，Anthropic 留下的 thinking 送得過去；只有 `redacted_thinking` 會被拒。
+- **開著思考時，帶 `tool_use` 的 assistant 歷史必須附上 thinking**，否則 400。正常流程碰不到。規則在 agent 跑到一半從訂閱切過來時，Anthropic 留下的 thinking 送得過去；只有 `redacted_thinking` 會被拒，但本機 1639 份對話記錄裡一次都沒出現過。
 - **context 超限的錯誤 router 會改寫。** DeepSeek 的上限是 1,048,576 tokens，**`max_tokens` 也算在內**；超過時回 OpenAI 措辭的 400，Claude Code 認不得，子 agent 直接以 API error 結束。provider 線上 router 把它改寫成 Anthropic 的 `prompt is too long: <requested> tokens > <limit> maximum`，Claude Code 就會先壓縮再接著做 —— 端到端實測，改寫前 task failed，改寫後 completed。
   會撞到的是 Claude Code 當成 1M 的子 agent（例如從 `opus[1m]` 繼承模型）：實測它不主動壓縮，`max_tokens` 又是 128000，累積到約 92 萬 tokens 就撞線。sonnet 子 agent 在 200K 前就自己壓縮，碰不到。點開那筆進條，「上游說法」會寫著已轉換。
 
