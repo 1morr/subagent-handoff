@@ -48,7 +48,7 @@
   .disp { font-family: var(--han); font-weight: 700; letter-spacing: 0; }
   .num  { font-family: var(--data); font-variant-numeric: tabular-nums; }
   .lbl  { font-family: var(--sign); font-weight: 500; letter-spacing: .10em;
-          text-transform: uppercase; font-size: 10px; color: var(--on-bay-dim); }
+          text-transform: uppercase; font-size: 11px; color: var(--on-bay-dim); }
   .spacer { flex: 1; }
   .dim { color: var(--on-bay-dim); }
 
@@ -84,7 +84,7 @@
   .btn.danger { color: var(--alarm); border-color: var(--alarm); }
   .btn:disabled { opacity: .38; cursor: not-allowed; }
   .btn:disabled:hover { background: transparent; }
-  .btn.tiny { padding: 5px 8px; font-size: 10px; }
+  .btn.tiny { padding: 5px 8px; font-size: 11px; }
   .btn { display: inline-flex; align-items: center; gap: 6px; }
   .btn > svg { flex: none; }
 
@@ -160,7 +160,7 @@
   .tab .code { font: 600 11px/1 var(--sign); letter-spacing: .06em; }
   /* CHK / HOLD 的旗標翻成反白小塊 —— 第三個通道走明度與形狀，不再多發一個色相
      （多一個色相就會跟席位編碼的琥珀撞義） */
-  .tab .flag { font: 600 10px/1 var(--sign); letter-spacing: .08em; padding: 1px 4px; }
+  .tab .flag { font: 600 11px/1 var(--sign); letter-spacing: .08em; padding: 1px 4px; }
   .slot.chk .tab .flag, .slot.hold .tab .flag { background: rgba(16,22,26,.86); }
   .slot.chk .tab.sub .flag, .slot.hold .tab.sub .flag { color: var(--sub); }
   .slot.chk .tab.prv .flag, .slot.hold .tab.prv .flag { color: var(--prv); }
@@ -185,7 +185,7 @@
     padding: 10px 12px 12px; border-top: 1px solid rgba(26,30,36,.2); background: rgba(26,30,36,.045);
   }
   .annot dl { margin: 0; display: grid; grid-template-columns: 104px 1fr; gap: 3px 12px; }
-  .annot dt { font: 500 10px/1.6 var(--sign); letter-spacing: .10em; text-transform: uppercase; color: var(--ink-dim); }
+  .annot dt { font: 500 11px/1.6 var(--sign); letter-spacing: .10em; text-transform: uppercase; color: var(--ink-dim); }
   .annot dd { margin: 0; font: 11.5px/1.55 var(--data); color: #3c4149; word-break: break-word; }
   .annot dd.bad { color: #8f2c18; }
 
@@ -226,7 +226,7 @@
   }
   .clearance.hit > .ord { background: var(--sub); color: #10161a; }
   .clearance > .ord > b { font: 700 15px/1 var(--data); }
-  .clearance > .ord > span { font: 500 8px/1 var(--sign); letter-spacing: .08em; opacity: .8; }
+  .clearance > .ord > span { font: 500 11px/1 var(--sign); letter-spacing: .08em; }
   .clearance > .say { background: var(--stock); color: var(--ink); }
   .clearance .line { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 9px 11px; }
   .clearance .word { font: 12px var(--han); color: var(--ink-dim); }
@@ -250,7 +250,7 @@
   /* ── 圖例：舊版靠 README 教你怎麼讀，這裡印在機架上 ─────────────── */
   .legend { display: flex; align-items: center; flex-wrap: wrap; border: 1px solid var(--rail); background: var(--panel); }
   .legend > div { display: flex; align-items: center; gap: 9px; padding: 9px 16px; border-right: 1px solid var(--rail); }
-  .legend .chip { font: 600 10px/1 var(--sign); letter-spacing: .08em; padding: 3px 6px; color: #10161a; }
+  .legend .chip { font: 600 11px/1 var(--sign); letter-spacing: .08em; padding: 3px 6px; color: #10161a; }
 
   .empty { padding: 26px; text-align: center; color: var(--on-bay-dim); }
   #restart-note:not(:empty) { padding: 0 26px; margin-top: 14px; }
@@ -986,7 +986,7 @@ function renderRules() {
           : '這一筆由 HIT 那條吃下，SHDW 那幾條這一筆用不到'}</span>
         <span class="spacer"></span>
         ${sim ? `
-        <span class="sign" style="font-size:10px;color:var(--on-bay);border:1px solid var(--rail-lit);padding:3px 7px">模擬中</span>
+        <span style="font:600 11px var(--han);color:var(--on-bay);border:1px solid var(--rail-lit);padding:3px 7px">模擬中</span>
         <span class="hint">${esc(KIND_LABELS[sim.kind] ?? sim.kind)}・<code>${esc(sim.requestedModel)}</code>${
           sim.agentId ? `・<code>${esc(sim.agentId)}</code>` : ''}</span>
         <button class="btn tiny" data-act="clear-preview">清除模擬</button>` : ''}
