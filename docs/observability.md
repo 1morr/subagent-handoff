@@ -28,18 +28,21 @@ You have been invoked in the following environment:
 router 只用一條 regex（`src/routing.mjs` 的 `CWD_RE`）挖出這行路徑，其餘內容一概
 不留 —— 測試裡有一條斷言守著這件事。
 
-麻煩的是**子 agent 的 system prompt 沒有這個區段**（v2.1.227 實測），而子 agent
-正是分流的主要對象。所幸實測子 agent 與主對話共用同一個
-`x-claude-code-session-id`，所以由主對話的請求把 cwd 記進一張 `sessionId → cwd`
-的表（`SessionCwd`，`src/proxy.mjs`，LRU，預設上限 200 筆），子 agent 再回查。
+不是每一筆都帶得出來。**背景請求 —— 上下文壓縮、產生 session 標題、額度探針 ——
+沒有 Environment 區段**（抓包確認，那幾筆 `messages` 只有一則）。它們與主對話共用
+同一個 `x-claude-code-session-id`，所以由帶得出 cwd 的請求把它記進一張
+`sessionId → cwd` 的表（`SessionCwd`，`src/proxy.mjs`，LRU，預設上限 200 筆），
+其餘回查。
 
-區段搬進 `messages` 之後，子 agent 那則 `role: "system"` 訊息裡帶不帶 Environment
-**還沒驗**（2026-09-19 只抓到主對話的請求）。帶的話這張表就是多餘的，可以整個拿掉；
-在驗之前照舊留著 —— 它不會讓答案變錯，最多是白記一份。
+**子 agent 已經不需要這張表了。** v2.1.227 時它的 system prompt 確實沒有 Environment
+區段，這張表原本就是為它做的；區段搬進 `messages` 之後，子 agent 的請求自己就帶著
+（實測 2026-09-19，抓一筆真的子 agent 請求，`messages[1]` 那則 `role: "system"` 裡有）。
 
-因此有一個已知空窗：**router 啟動後，某個 session 的主對話還沒發過任何請求，就
-先冒出子 agent 流量**，那幾筆的目錄欄會是 `–`。實務上主對話一定先講話，很難
-碰到。
+表還是得留著，因為背景請求還在靠它。同一個 session 的兩筆 `messages` 只有一則的
+請求就是現成的對照：表還沒建立時目錄欄是空的，建立之後同樣形狀的請求就填得出來。
+
+因此有一個已知空窗：**router 啟動後，某個 session 第一筆流量就是背景請求**，
+那一筆的目錄欄會是 `–`。實務上正常的對話請求一定先到，很難碰到。
 
 欄位只顯示目錄名，點開進條看完整路徑。
 
@@ -141,9 +144,19 @@ header 上，router 會整組收進流量記錄（`collectRateLimit`，`src/prox
 ```
 
 讀舊欄位會兩個都拿到 `NaN`，於是畫面掉進「限流資訊已回報」的退路再接上 reset 倒數
-—— `unified-status` 明明是 `allowed`，看起來卻像正在被限流。所以：**有 reset 時間
-不等於被擋**，柱子平常是席位色，只有 `unified-status` 不是 `allowed` 時才轉紅並加註
-「上游正在限流」。
+—— `unified-status` 明明是 `allowed`，看起來卻像正在被限流。**有 reset 時間不等於
+被擋**：每一筆成功的回應都帶著它。
+
+`unified-status` 是一族值，不是二選一。實測看過兩個：
+
+| 值 | 意思 | 畫面 |
+| --- | --- | --- |
+| `allowed` | 照常放行 | 席位色（青） |
+| `allowed_warning` | 跨過上游自己的警告門檻（同一組 header 的 `unified-5h-surpassed-threshold`，實測 `0.9`，當時 utilization `0.93`），**請求照樣 200** | 琥珀色 ＋「接近上限」 |
+| 其他（不以 `allowed` 開頭） | 真的被擋 | 朱紅 ＋「上游正在限流」 |
+
+判斷用「開不開頭是 `allowed`」而不是「等不等於 `allowed`」—— 後者會把
+`allowed_warning` 說成限流，那正是這個欄位原本犯的錯，只是換一個值再犯一次。
 
 目錄欄是 `–` 時，批註欄會寫「cwd 表還沒建立」；連 session id 都沒有時會改寫
 「沒有 session id・不是 Claude Code 送來的」—— 那筆是別的東西打到了 router 的

@@ -61,8 +61,33 @@ const LIVE_HEADERS = {
 }
 
 test('quotaWindow 讀 unified-5h-utilization 算出已用百分比', () => {
-  assert.deepEqual(quotaWindow(LIVE_HEADERS), { used: 63, throttled: false, reset: '1789765800' })
+  assert.deepEqual(quotaWindow(LIVE_HEADERS), {
+    used: 63, throttled: false, nearLimit: false, reset: '1789765800',
+  })
   assert.equal(quotaWindow(null), null)
+})
+
+/**
+ * `unified-status` 是一族值，不是二選一。實測（2026-09-18，5 小時窗 93%）拿到
+ * `allowed_warning`：上游跨過自己的警告門檻（同一組 header 的
+ * unified-5h-surpassed-threshold = 0.9），但請求照樣 200。
+ * 用 `!== 'allowed'` 判斷會把它說成「上游正在限流」—— 使用者正在用，畫面卻在報警。
+ */
+test('allowed_warning 是接近上限，不是被擋', () => {
+  const warned = quotaWindow({ ...LIVE_HEADERS, 'unified-status': 'allowed_warning', 'unified-5h-utilization': '0.93' })
+  assert.equal(warned.throttled, false, '還在放行')
+  assert.equal(warned.nearLimit, true)
+  assert.equal(warned.used, 93)
+
+  const plain = quotaWindow(LIVE_HEADERS)
+  assert.equal(plain.nearLimit, false, '單純的 allowed 不該被說成接近上限')
+
+  // 不以 allowed 開頭的才是真的擋人
+  for (const status of ['rejected', 'blocked', 'throttled']) {
+    const s = quotaWindow({ ...LIVE_HEADERS, 'unified-status': status })
+    assert.equal(s.throttled, true, `${status} 應該算被擋`)
+    assert.equal(s.nearLimit, false, `${status} 不該同時是接近上限`)
+  }
 })
 
 /**
@@ -76,6 +101,7 @@ test('有 reset 時間不等於被限流 —— 只認 unified-status', () => {
 
   // 沒有 status header 就當沒被擋，不要靠 reset 的有無猜
   assert.equal(quotaWindow({ 'unified-reset': '1789765800' }).throttled, false)
+  assert.equal(quotaWindow({ 'unified-reset': '1789765800' }).nearLimit, false)
 })
 
 test('讀不到用量比例時回 null，讓畫面說「沒回報」而不是猜一個數字', () => {

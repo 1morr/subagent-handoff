@@ -96,6 +96,7 @@ export default {
   'bay.quotaWindowUsed': '5 小時額度窗・已用',
   'bay.quotaNoUtilization': '上游沒回報用量',
   'bay.quotaThrottled': '上游正在限流',
+  'bay.quotaNearLimit': '接近上限',
   'bay.quotaWindow': '5 小時額度窗',
   'bay.noRateLimitYet': '上游還沒回報過額度窗',
   'bay.segSub': 'SUB 訂閱',

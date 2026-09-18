@@ -98,6 +98,7 @@ export default {
   'bay.quotaWindowUsed': '5-hour quota window · used',
   'bay.quotaNoUtilization': 'upstream reported no utilization',
   'bay.quotaThrottled': 'upstream is throttling',
+  'bay.quotaNearLimit': 'close to the limit',
   'bay.quotaWindow': '5-hour quota window',
   'bay.noRateLimitYet': "upstream hasn't reported a quota window yet",
   'bay.segSub': 'SUB subscription',

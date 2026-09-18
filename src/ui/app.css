@@ -213,9 +213,11 @@
   .load > i { width: 9px; min-height: 2px; background: #2c333d; }
   .load > i.on.sub { background: var(--sub); } .load > i.on.prv { background: var(--prv); }
   .meter { width: 176px; height: 10px; background: #10141a; border: 1px solid var(--rail); display: flex; }
-  /* 額度窗每一筆回應都畫得出來，所以平常是席位色；紅色留給上游真的擋人的時候（.hot），
+  /* 額度窗每一筆回應都畫得出來，所以平常是席位色；.warm 是上游跨過自己的警告門檻
+     （allowed_warning，照樣放行），紅色留給真的擋人的時候（.hot）——
      否則一條長駐的紅柱會被讀成「正在被限流」 */
   .meter > i { background: var(--sub); }
+  .meter.warm > i { background: var(--prv); }
   .meter.hot > i { background: var(--alarm); }
 
   /* ── 排程句：整條規則讀得出來，欄位本身就是句子裡的字段 ─────────── */

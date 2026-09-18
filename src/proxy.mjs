@@ -18,8 +18,12 @@ const HOP_BY_HOP = new Set([
 ])
 
 /**
- * subagent 的 system prompt 不含 cwd（實測 v2.1.227），但它與主對話共用 session id，
- * 所以讓主對話的請求把 cwd 記下來，子 agent 再回查。只存路徑字串，不碰 prompt。
+ * 背景請求（上下文壓縮、產生標題、額度探針）沒有 Environment 區段，所以認不出 cwd，
+ * 但它們與主對話共用 session id：讓帶得出 cwd 的請求記下來，其餘回查。
+ * 只存路徑字串，不碰 prompt。
+ *
+ * 這張表原本是為子 agent 做的（v2.1.227 的子 agent system prompt 不含那個區段）。
+ * 區段搬進 messages 之後子 agent 自己就帶著了（實測 2026-09-19），留著是為了背景請求。
  */
 export class SessionCwd {
   constructor(limit = 200) {

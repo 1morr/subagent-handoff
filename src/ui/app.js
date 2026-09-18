@@ -338,19 +338,20 @@ function renderBay() {
 
   const q = quotaWindow(o.rl)
   const rlBar = q ? (() => {
-    // 染紅只給真的被擋下的：上游每一筆成功的回應都帶額度 header，那不是警訊。
-    // 沒被擋時連 color 都不寫，讓它沿用席位卡自己的字色 —— 寫死 var(--ink) 是紙面板的
-    // 深色字，印在深色的席位卡上等於看不見。
-    const tone = q.throttled ? ';color:var(--alarm)' : ''
+    // 三段：放行／接近上限／真的被擋。染紅只給最後一種 —— 上游每一筆成功的回應都帶
+    // 額度 header，那不是警訊。放行時連 color 都不寫，讓它沿用席位卡自己的字色：
+    // 寫死 var(--ink) 是紙面板的深色字，印在深色的席位卡上等於看不見。
+    const tone = q.throttled ? ';color:var(--alarm)' : q.nearLimit ? ';color:var(--prv)' : ''
+    const fill = q.throttled ? ' hot' : q.nearLimit ? ' warm' : ''
     const parts = [
       q.used == null ? t('bay.quotaNoUtilization') : `${q.used}%`,
-      q.throttled ? t('bay.quotaThrottled') : '',
+      q.throttled ? t('bay.quotaThrottled') : q.nearLimit ? t('bay.quotaNearLimit') : '',
       q.reset ? esc(resetLabel(q.reset)) : '',
     ].filter(Boolean)
     return `
       <div class="fld" style="align-items:flex-end">
         <span class="lbl">${t('bay.quotaWindowUsed')}</span>
-        ${q.used == null ? '' : `<div class="meter${q.throttled ? ' hot' : ''}"><i style="width:${q.used}%"></i></div>`}
+        ${q.used == null ? '' : `<div class="meter${fill}"><i style="width:${q.used}%"></i></div>`}
         <span class="num" style="font-size:11px${tone}">${parts.join(' · ')}</span>
       </div>`
   })() : `
