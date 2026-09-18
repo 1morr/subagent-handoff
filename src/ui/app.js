@@ -14,6 +14,7 @@
  */
 import en from './i18n/en.js'
 import zhHant from './i18n/zh-Hant.js'
+import { isAborted, isStreamCut, stateOf, quotaWindow } from './readout.mjs'
 
 const CATALOGS = { en, 'zh-Hant': zhHant }
 const LANG_KEY = 'subagent-handoff:lang'
@@ -116,20 +117,6 @@ function sectorOf(e) {
   return null
 }
 
-const isAborted = (e) => !!e.error && /abort/i.test(e.error)
-/** 有狀態碼又有錯誤＝回應已經開始轉給 client 才斷掉，不是連不上上游 */
-const isStreamCut = (e) => !!e.error && !isAborted(e) && e.status != null
-
-/** 進行中 / 順利 / 有事發生 / 被擋下。顏色不是唯一訊號 —— 每一級都有機架位置與印字旗標。 */
-function stateOf(e) {
-  if (e.error && !isAborted(e)) return 'hold'
-  if (e.status >= 400) return 'hold'
-  if (e.status == null && !e.error) return 'live'
-  if (isAborted(e)) return 'chk'
-  if (e.detail) return 'chk'                    // 200 但串流裡夾著 error 事件
-  if (!e.cwd) return 'chk'
-  return 'clr'
-}
 const FLAG = { clr: 'CLR', chk: 'CHK', hold: 'HOLD', live: '···' }
 
 /** provider 的 label 是使用者自己填的，原樣顯示；訂閱線與沒送出的照語言翻譯。
@@ -349,19 +336,22 @@ function renderBay() {
   const o = overview()
   const toProvider = S.config.rules.some((r) => r.enabled && r.providerId && r.providerId !== 'passthrough')
 
-  const rlBar = o.rl ? (() => {
-    const rem = Number(o.rl['unified-remaining'])
-    const lim = Number(o.rl['unified-limit'])
-    const used = Number.isFinite(rem) && Number.isFinite(lim) && lim > 0
-      ? Math.round((lim - rem) / lim * 100) : null
-    const reset = o.rl['unified-reset']
+  const q = quotaWindow(o.rl)
+  const rlBar = q ? (() => {
+    // 染紅只給真的被擋下的：上游每一筆成功的回應都帶額度 header，那不是警訊。
+    // 沒被擋時連 color 都不寫，讓它沿用席位卡自己的字色 —— 寫死 var(--ink) 是紙面板的
+    // 深色字，印在深色的席位卡上等於看不見。
+    const tone = q.throttled ? ';color:var(--alarm)' : ''
+    const parts = [
+      q.used == null ? t('bay.quotaNoUtilization') : `${q.used}%`,
+      q.throttled ? t('bay.quotaThrottled') : '',
+      q.reset ? esc(resetLabel(q.reset)) : '',
+    ].filter(Boolean)
     return `
       <div class="fld" style="align-items:flex-end">
         <span class="lbl">${t('bay.quotaWindowUsed')}</span>
-        ${used == null ? '' : `<div class="meter"><i style="width:${used}%"></i></div>`}
-        <span class="num" style="font-size:11px;color:var(--alarm)">${
-          Number.isFinite(rem) && Number.isFinite(lim) ? `${lim - rem} / ${lim}` : t('bay.rateLimitReported')
-        }${reset ? ` · ${esc(resetLabel(reset))}` : ''}</span>
+        ${q.used == null ? '' : `<div class="meter${q.throttled ? ' hot' : ''}"><i style="width:${q.used}%"></i></div>`}
+        <span class="num" style="font-size:11px${tone}">${parts.join(' · ')}</span>
       </div>`
   })() : `
       <div class="fld" style="align-items:flex-end">

@@ -11,7 +11,7 @@ reading the rack」。這裡講流量記錄「目錄」欄怎麼來的、記錄�
 同時開好幾個專案時，用來分辨哪一筆流量出自哪個 session。
 
 header 裡**沒有** cwd（實測 v2.1.227 的 21 個 header 全查過），唯一的來源是
-system prompt 最後一塊的 Environment 區段：
+Environment 區段：
 
 ```
 # Environment
@@ -19,19 +19,35 @@ You have been invoked in the following environment:
  - Primary working directory: C:\Users\dev\code\bridge
 ```
 
-router 只用一條 regex（`src/routing.mjs` 的 `CWD_RE`）挖出這行路徑，system
-prompt 的其他內容一概不留 —— 測試裡有一條斷言守著這件事。
+**這個區段搬過家。** 原本在 system prompt 的最後一塊，後來搬進 `messages` 裡那則
+`role: "system"` 訊息（實測 2026-09-19 抓包確認）。只看 `body.system` 的那段期間
+目錄欄整欄是空的 —— 流量記錄看得出斷點：2026-08-19 那天 2711 筆有 2669 筆抓得到，
+08-30 之後 0 筆。`extractCwd` 現在兩個位置都掃，`messages` 只掃 `role: "system"` 的
+那幾則：整包掃下去，1M context 的請求每一筆都要在幾 MB 的文字上跑一次正則。
 
-麻煩的是**子 agent 的 system prompt 沒有這個區段**，而子 agent 正是分流的主要
-對象。所幸實測子 agent 與主對話共用同一個 `x-claude-code-session-id`，所以由主
-對話的請求把 cwd 記進一張 `sessionId → cwd` 的表（`SessionCwd`，`src/proxy.mjs`，
-LRU，預設上限 200 筆），子 agent 再回查。
+router 只用一條 regex（`src/routing.mjs` 的 `CWD_RE`）挖出這行路徑，其餘內容一概
+不留 —— 測試裡有一條斷言守著這件事。
+
+麻煩的是**子 agent 的 system prompt 沒有這個區段**（v2.1.227 實測），而子 agent
+正是分流的主要對象。所幸實測子 agent 與主對話共用同一個
+`x-claude-code-session-id`，所以由主對話的請求把 cwd 記進一張 `sessionId → cwd`
+的表（`SessionCwd`，`src/proxy.mjs`，LRU，預設上限 200 筆），子 agent 再回查。
+
+區段搬進 `messages` 之後，子 agent 那則 `role: "system"` 訊息裡帶不帶 Environment
+**還沒驗**（2026-09-19 只抓到主對話的請求）。帶的話這張表就是多餘的，可以整個拿掉；
+在驗之前照舊留著 —— 它不會讓答案變錯，最多是白記一份。
 
 因此有一個已知空窗：**router 啟動後，某個 session 的主對話還沒發過任何請求，就
 先冒出子 agent 流量**，那幾筆的目錄欄會是 `–`。實務上主對話一定先講話，很難
 碰到。
 
 欄位只顯示目錄名，點開進條看完整路徑。
+
+**目錄認不出來不算異常。** 曾經有一條「沒有 cwd 就標 CHK」的規則（`stateOf`，
+`src/ui/readout.mjs`）。區段搬家之後 cwd 全空，於是每一筆跑完的請求都成了 CHK，
+機架與流量頁的「只看異常」跟「全部」再也分不出來。那條規則連在正常情況下都會誤報
+—— 背景請求（壓縮、標題）本來就沒有 Environment 區段。目錄是觀測缺口，不是請求
+出事，現在只在批註欄留一行字。
 
 ## 流量記錄會留在磁碟上
 
@@ -108,6 +124,26 @@ network` 只說了「在等」，沒說是誰擋的。答案在流量記錄的**
 是 Claude Code 自己算的。這種情況下限流資訊在 `anthropic-ratelimit-*` 那組
 header 上，router 會整組收進流量記錄（`collectRateLimit`，`src/proxy.mjs`）：
 批註欄改寫「上游擋的・3586s 後重置」，點開進條的「限流」那一行有完整的鍵值。
+
+### 機架上的「5 小時額度窗」
+
+同一組 header 也餵機架頂上那條額度窗（`quotaWindow`，`src/ui/readout.mjs`）。
+**欄位名換過。** Anthropic 現在回報的是比例與狀態，不再有 `unified-remaining` /
+`unified-limit`（實測 2026-09-19）：
+
+```jsonc
+{
+  "unified-status": "allowed",         // ← 現在擋不擋你，只有這一個算數
+  "unified-5h-utilization": "0.63",    // ← 已用比例，畫面的百分比與柱高
+  "unified-7d-utilization": "0.31",
+  "unified-reset": "1789765800"        // 每一筆成功的回應都有
+}
+```
+
+讀舊欄位會兩個都拿到 `NaN`，於是畫面掉進「限流資訊已回報」的退路再接上 reset 倒數
+—— `unified-status` 明明是 `allowed`，看起來卻像正在被限流。所以：**有 reset 時間
+不等於被擋**，柱子平常是席位色，只有 `unified-status` 不是 `allowed` 時才轉紅並加註
+「上游正在限流」。
 
 目錄欄是 `–` 時，批註欄會寫「cwd 表還沒建立」；連 session id 都沒有時會改寫
 「沒有 session id・不是 Claude Code 送來的」—— 那筆是別的東西打到了 router 的

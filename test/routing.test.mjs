@@ -272,6 +272,36 @@ test('extractCwd 從 system prompt 的 Environment 區段挖出 cwd', () => {
   assert.equal(extractCwd(null), null)
 })
 
+/**
+ * Environment 區段後來搬進 messages 裡那則 `role: "system"` 訊息（實測 2026-09-19）。
+ * 只看 `body.system` 的話每一筆 cwd 都是 null，流量記錄整欄空掉。
+ */
+test('extractCwd 也從 messages 裡的 role: "system" 訊息挖得出 cwd', () => {
+  const envText = '# Environment\nYou have been invoked in the following environment: \n'
+    + ' - Primary working directory: C:\\Users\\dev\\code\\bridge\n - Platform: win32\n'
+  const body = {
+    system: [{ type: 'text', text: 'You are Claude Code, Anthropic official CLI.' }],
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: '幫我看一下這個 bug' }] },
+      { role: 'system', content: [{ type: 'text', text: envText }] },
+    ],
+  }
+  assert.equal(extractCwd(body), 'C:\\Users\\dev\\code\\bridge')
+
+  // system 區塊優先：兩邊都有時不該回傳 messages 那個
+  assert.equal(
+    extractCwd({ ...body, system: [{ type: 'text', text: ' - Primary working directory: /from/system' }] }),
+    '/from/system',
+  )
+
+  // 只掃 role: "system"。user／assistant 訊息在 1M context 下動輒好幾 MB，
+  // 每筆請求都拿正則掃過去只是白燒 CPU —— Environment 區段不在那裡。
+  assert.equal(extractCwd({ messages: [{ role: 'user', content: [{ type: 'text', text: envText }] }] }), null)
+
+  assert.equal(extractCwd({ messages: 'not-an-array' }), null)
+  assert.equal(extractCwd({ messages: [{ role: 'system', content: '沒有環境區段' }] }), null)
+})
+
 test('describeRequest 抽出 effort 與 thinking 型態', () => {
   // 實測 Claude Code v2.1.227：--effort xhigh 送的是 output_config.effort，thinking 只帶 type
   const ctx = describeRequest({}, {

@@ -30,21 +30,42 @@ export function globMatch(glob, value) {
 }
 
 /**
- * Claude Code 把 cwd 寫在 system prompt 最後一塊的 Environment 區段，header 裡沒有這項。
- * 這裡只挖出那一行路徑當中繼資料，system prompt 的其他內容一律不留。
+ * Claude Code 把 cwd 寫在 Environment 區段，header 裡沒有這項。
+ * 這裡只挖出那一行路徑當中繼資料，區段的其他內容一律不留。
  */
 const CWD_RE = /^[ \t]*-?[ \t]*Primary working directory:[ \t]*(.+?)[ \t]*$/m
 
-export function extractCwd(body) {
-  const system = body?.system
-  if (typeof system === 'string') return CWD_RE.exec(system)?.[1] ?? null
-  if (!Array.isArray(system)) return null
-  // Environment 區段在最後一塊，從後往前找比較快
-  for (let i = system.length - 1; i >= 0; i--) {
-    const text = system[i]?.text
+/** text block 陣列或單一字串都吃。Environment 在最後一塊，從後往前找比較快。 */
+function scanText(content) {
+  if (typeof content === 'string') return CWD_RE.exec(content)?.[1] ?? null
+  if (!Array.isArray(content)) return null
+  for (let i = content.length - 1; i >= 0; i--) {
+    const text = content[i]?.text
     if (typeof text !== 'string') continue
     const hit = CWD_RE.exec(text)
     if (hit) return hit[1]
+  }
+  return null
+}
+
+/**
+ * 兩個位置都掃：Environment 區段原本在 system prompt 的最後一塊，後來搬進 `messages`
+ * 裡那則 `role: "system"` 訊息（實測 2026-09-19；流量記錄顯示 2026-08-19 還抓得到、
+ * 08-30 起全空，是那之間某次 Claude Code 更新搬的）。
+ *
+ * `messages` 只掃 `role: "system"` 的：整包掃下去，1M context 的請求每一筆都要在幾 MB
+ * 的文字上跑一次正則，而背景請求（壓縮、標題）根本沒有 Environment 區段，掃到底也是白掃。
+ */
+export function extractCwd(body) {
+  const fromSystem = scanText(body?.system)
+  if (fromSystem) return fromSystem
+
+  const messages = body?.messages
+  if (!Array.isArray(messages)) return null
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role !== 'system') continue
+    const hit = scanText(messages[i].content)
+    if (hit) return hit
   }
   return null
 }

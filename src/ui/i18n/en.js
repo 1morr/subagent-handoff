@@ -96,9 +96,10 @@ export default {
   // ── 機架分頁 ──────────────────────────────────────────────────
   'bay.noProviderSet': 'not set',
   'bay.quotaWindowUsed': '5-hour quota window · used',
-  'bay.rateLimitReported': 'rate limit info reported',
+  'bay.quotaNoUtilization': 'upstream reported no utilization',
+  'bay.quotaThrottled': 'upstream is throttling',
   'bay.quotaWindow': '5-hour quota window',
-  'bay.noRateLimitYet': "upstream hasn't reported a rate limit yet",
+  'bay.noRateLimitYet': "upstream hasn't reported a quota window yet",
   'bay.segSub': 'SUB subscription',
   'bay.qtyPct': '{count} requests · {pct}%',
   'bay.noTrafficBand': 'No traffic in the last 5 minutes. Once Claude Code points here, this band will show the routing split.',

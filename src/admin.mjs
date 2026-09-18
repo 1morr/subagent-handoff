@@ -21,6 +21,8 @@ const STATIC_ROUTES = {
   'GET /index.html': { file: 'index.html', type: 'text/html; charset=utf-8' },
   'GET /app.js': { file: 'app.js', type: 'text/javascript; charset=utf-8' },
   'GET /app.css': { file: 'app.css', type: 'text/css; charset=utf-8' },
+  // 進條與額度窗的判讀，拆出來是為了能在 Node 的測試裡 import（app.js 動 document，不行）
+  'GET /readout.mjs': { file: 'readout.mjs', type: 'text/javascript; charset=utf-8' },
   // i18n 字典檔：app.js 用相對路徑（./i18n/en.js）靜態 import，跟 app.js 一樣是外部
   // 檔案、同源，CSP 的 script-src 'self' 已經涵蓋，不必額外放寬。
   'GET /i18n/en.js': { file: 'i18n/en.js', type: 'text/javascript; charset=utf-8' },

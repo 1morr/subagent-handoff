@@ -194,6 +194,14 @@ test('GET /app.js 與 GET /app.css 吐得出拆分後的檔案', async () => {
   assert.match(await css.text(), /--bay/)
 })
 
+// app.js 用相對路徑靜態 import 它，沒吐出去的話整個 GUI 載不起來（白畫面，只有 console 有話說）
+test('GET /readout.mjs 吐得出判讀模組', async () => {
+  const res = await fetch(harness.adminUrl + '/readout.mjs')
+  assert.equal(res.status, 200)
+  assert.match(res.headers.get('content-type'), /javascript/)
+  assert.match(await res.text(), /export function stateOf/)
+})
+
 // ── i18n 字典檔 ────────────────────────────────────────────────────
 
 /** 只在其中一份出現的鍵。GUI 查不到鍵會退回英文或直接印出鍵名，漏翻的地方光看畫面很難發現 */
@@ -231,7 +239,7 @@ test('GET /i18n/en.js 與 GET /i18n/zh-Hant.js 吐得出雙語字典，且跟 ap
 
 // ── 安全性 header ─────────────────────────────────────────────────
 test('每個回應都帶 X-Frame-Options 與 X-Content-Type-Options', async () => {
-  for (const path of ['/', '/api/state', '/app.js', '/app.css', '/i18n/en.js', '/i18n/zh-Hant.js', '/api/nope']) {
+  for (const path of ['/', '/api/state', '/app.js', '/app.css', '/readout.mjs', '/i18n/en.js', '/i18n/zh-Hant.js', '/api/nope']) {
     const res = await fetch(harness.adminUrl + path)
     assert.equal(res.headers.get('x-frame-options'), 'DENY', `${path} 缺少 X-Frame-Options`)
     assert.equal(res.headers.get('x-content-type-options'), 'nosniff', `${path} 缺少 X-Content-Type-Options`)

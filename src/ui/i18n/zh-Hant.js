@@ -94,9 +94,10 @@ export default {
   // ── 機架分頁 ──────────────────────────────────────────────────
   'bay.noProviderSet': '未設定',
   'bay.quotaWindowUsed': '5 小時額度窗・已用',
-  'bay.rateLimitReported': '限流資訊已回報',
+  'bay.quotaNoUtilization': '上游沒回報用量',
+  'bay.quotaThrottled': '上游正在限流',
   'bay.quotaWindow': '5 小時額度窗',
-  'bay.noRateLimitYet': '上游還沒回報過限流',
+  'bay.noRateLimitYet': '上游還沒回報過額度窗',
   'bay.segSub': 'SUB 訂閱',
   'bay.qtyPct': '{count} 筆 · {pct}%',
   'bay.noTrafficBand': '近 5 分鐘沒有流量。Claude Code 那頭指過來之後，這條帶子會顯示分流比例。',
