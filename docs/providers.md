@@ -15,6 +15,7 @@ provider 線的改寫是固定的，沒有開關（`src/proxy.mjs` 的 `buildPro
 | header | 從零組起：`content-type`、provider 自己的 key、從 client 帶過去的 `anthropic-version` 與 `anthropic-beta`。client 的 `authorization`、`cookie`、`x-claude-code-*` 一律不帶 |
 | `model` | 換成規則的 `modelOverride`，其次 provider 的 `model`，都沒有就照原樣 |
 | `metadata` | 整個拿掉，理由見 [security.md](security.md#送去-provider-的請求一律拿掉-metadata) |
+| `tools[].input_schema` 裡的 `pattern` | 正規表達式的 `\0` 換成等價的 `\x00`，見下一節。schema 的其他部分一個字不動 |
 | 其餘 body | 一個字不動，包括 `thinking`、`output_config`、`context_management`、`cache_control` 與對話中間的 `role: "system"` 訊息。整包重新序列化，但鍵的順序不變 |
 
 `anthropic-beta` 照官方 gateway protocol 原樣轉發，body 裡的 `context_management`、
@@ -25,6 +26,43 @@ beta 清單（13 個，含 `oauth-2025-04-20`、`extended-cache-ttl-2025-04-11`�
 Claude Code 升級後新增的 body 欄位或 beta，provider 不收時會回 400，流量記錄裡看得
 到 provider 自己的錯誤訊息。router 不提供剝欄位的開關：剝掉 `output_config` 這類欄位
 是靜默降級，請求照樣 200、模型變笨，比一個看得見的 400 更難發現。
+
+## 工具 schema 裡的 `\0`
+
+Claude Code 的 `Artifact` 工具在 `file_paths.items` 上帶了 `pattern: "^[^\0]*$"`。
+DeepSeek 的 schema 驗證器編不動字元類裡的八進位跳脫，整筆請求在進推論前就被擋掉
+（2026-09-18 實測，`deepseek-flash`）：
+
+```text
+HTTP 400  invalid_request_error: Invalid schema for function 'Artifact':
+{"type":"string","minLength":1,"maxLength":1024,"pattern":"^[^\\0]*$"}
+is not valid under any of the schemas listed in the 'anyOf' keyword
+```
+
+Anthropic 收得下同一份 schema，所以主對話沒事；工具清單是 `*` 的子 agent
+（`general-purpose`、`claude`）一分到 DeepSeek 就開場即死，`Explore` / `Plan` 這種
+清單本來就排除 `Artifact` 的則不受影響。流量記錄涵蓋的前一個月都沒有這個錯，
+它隨 Claude Code 更新一起出現。
+
+打端點二分出來的邊界：
+
+| pattern | 結果 |
+| --- | --- |
+| `^[^\0]*$` | **400** |
+| `^[^\x00]*$`（同義，換個寫法） | 200 |
+| `^\012$`（兩位以上的八進位） | **400** |
+| `^\0$`（字元類外） | 200 |
+| `^[^\n]*$`、`^\d+$`、`^(a)\1$`、lookahead、named group | 200 |
+| 整個拿掉 `pattern` | 200 |
+
+所以 router 在 provider 線上把 `pattern` 裡真的在跳脫 `0` 的那個 `\0` 改寫成 `\x00`
+（`rewriteToolPatterns`），流量記錄會多一筆 `tools \0 → \x00`。只動 `pattern`：
+它對模型只是提示，換個寫法語義不變；動 `properties` 就會改到工具的介面。
+前面反斜線成對的（`\\0`，字面反斜線加零）與後面還有數字的（`\01`）都不碰 ——
+那兩種改下去會改掉語義。
+
+這是唯一一條為了特定 provider 而做的 schema 改寫。要再加就先照上表打一次端點，
+確認「換寫法能過、原樣過不了」，不要憑猜測剝東西。
 
 ## 思考檔位（effort）會不會跟著過去
 

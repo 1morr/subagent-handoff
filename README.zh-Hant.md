@@ -101,7 +101,7 @@ npm start
 | 哪些請求 | 主對話、沒命中任何規則的、規則指向 `passthrough` 的，以及所有不是 JSON `/v1/messages*` 的請求 | 命中「指向 provider」規則的請求 |
 | 送去哪裡 | `https://api.anthropic.com` ＋原本的路徑與 query | `{baseUrl}` ＋原本的路徑與 query |
 | Header | 原樣轉發，只拿掉 `host`、hop-by-hop header 與 `accept-encoding` | 從零組起：`content-type`、provider 自己的 key，以及從 Claude Code 帶過去的 `anthropic-version`、`anthropic-beta`、`accept`。你的 OAuth token、cookie 與 `x-claude-code-*` header 一律不送 |
-| Body | 原始 bytes。只有規則的 `modelOverride` 會改寫 `model` | 改寫 `model`（規則的 `modelOverride` 優先，其次 provider 的 `model`），拿掉 `metadata`。其餘一個字不動：`thinking`、`output_config`、`context_management`、`cache_control`、對話中間的 `system` 訊息 |
+| Body | 原始 bytes。只有規則的 `modelOverride` 會改寫 `model` | 改寫 `model`（規則的 `modelOverride` 優先，其次 provider 的 `model`），拿掉 `metadata`，工具 schema 裡的 `pattern` 把 `\0` 換成等價的 `\x00`（DeepSeek 編不動前者）。其餘一個字不動：`thinking`、`output_config`、`context_management`、`cache_control`、對話中間的 `system` 訊息 |
 | 回應 | 邊收邊轉，原樣交回 | 邊收邊轉，原樣交回；唯一例外是 OpenAI 措辭的 context 超限錯誤，會改寫成 `prompt is too long: <requested> tokens > <limit> maximum`（數字照搬），讓 Claude Code 先壓縮而不是直接失敗 |
 
 兩條線上 router 都不自己重送 —— Claude Code 本來就會。連不上上游時回 `502`；串流中途斷掉就把連線切斷，讓 Claude Code 重送；body 超過 64 MiB 回 `413`。這些改寫都不動到快取的 prompt 前綴，拿掉 `metadata` 反而讓 DeepSeek 能跨 session 共用快取。每一筆改了什麼，流量記錄的「送出前改寫」都看得到。細節見 [docs/providers.md](docs/providers.md#router-對請求改了什麼) 與 [docs/reliability.md](docs/reliability.md)。

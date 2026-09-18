@@ -1,6 +1,6 @@
 import test, { before, after, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { rewriteBodyForProvider, rewriteModel, SessionCwd } from '../src/proxy.mjs'
+import { rewriteBodyForProvider, rewriteModel, rewriteToolPatterns, SessionCwd } from '../src/proxy.mjs'
 import {
   globMatch, describeRequest, resolveRoute, resolveModel, extractCwd, PASSTHROUGH_ID,
 } from '../src/routing.mjs'
@@ -384,4 +384,111 @@ test('rewriteBodyForProvider 只換 model、拿掉 metadata，而且不改動原
   assert.deepEqual(original, snapshot, '輸入必須維持不變')
   assert.deepEqual(body, { model: 'kimi-k3', max_tokens: 9999, thinking: {} })
   assert.deepEqual(changes, ['model claude-opus-5 → kimi-k3', '-metadata'])
+})
+
+// ── provider 線：上游編不動的 pattern ─────────────────────────────────
+// DeepSeek 擋掉字元類裡的八進位跳脫，Anthropic 收得下同一份 schema（見 docs/providers.md）。
+// 正規表達式一律用 String.raw 寫，才看得出送出去的到底是哪幾個字元。
+
+/** Claude Code v2.1.274 的 Artifact 工具，`file_paths.items` 就是被擋下來的那一段。 */
+const ARTIFACT_TOOL = () => ({
+  name: 'Artifact',
+  input_schema: {
+    type: 'object',
+    properties: {
+      file_paths: {
+        type: 'array',
+        items: { type: 'string', minLength: 1, maxLength: 1024, pattern: String.raw`^[^\0]*$` },
+      },
+    },
+  },
+})
+
+test('rewriteToolPatterns 把 Claude Code 的 \\0 換成等價的 \\x00', () => {
+  const original = { tools: [ARTIFACT_TOOL()] }
+  const snapshot = structuredClone(original)
+  const { body, changes } = rewriteToolPatterns(original)
+
+  assert.deepEqual(original, snapshot, '輸入必須維持不變')
+  assert.equal(body.tools[0].input_schema.properties.file_paths.items.pattern, String.raw`^[^\x00]*$`)
+  assert.deepEqual(changes, ['tools \\0 → \\x00'])
+})
+
+test('schema 任何深度的 pattern 都改得到', () => {
+  const { body, changes } = rewriteToolPatterns({
+    tools: [{
+      name: 'T',
+      input_schema: {
+        type: 'object',
+        properties: {
+          a: { anyOf: [{ type: 'string', pattern: String.raw`^\0$` }, { type: 'null' }] },
+          b: { type: 'object', propertyNames: { type: 'string', pattern: String.raw`^[^\0]+$` } },
+          c: { type: 'array', items: { type: 'array', items: { type: 'string', pattern: String.raw`\0` } } },
+        },
+      },
+    }],
+  })
+
+  const props = body.tools[0].input_schema.properties
+  assert.equal(props.a.anyOf[0].pattern, String.raw`^\x00$`)
+  assert.equal(props.b.propertyNames.pattern, String.raw`^[^\x00]+$`)
+  assert.equal(props.c.items.items.pattern, String.raw`\x00`)
+  assert.deepEqual(changes, ['tools \\0 → \\x00'])
+})
+
+test('只動真的在跳脫 0 的那個反斜線，其餘 pattern 一個字不改', () => {
+  const original = {
+    tools: [{
+      name: 'T',
+      input_schema: {
+        type: 'object',
+        properties: {
+          // 反斜線成對＝字面反斜線，後面的 0 是字面零
+          pairedBackslash: { type: 'string', pattern: String.raw`^\\0$` },
+          // `\0` 後面還有數字時是兩位以上的八進位，換成 \x00 會改掉語義
+          octalTwoDigits: { type: 'string', pattern: String.raw`^\01$` },
+          plainZero: { type: 'string', pattern: '^[a-z]0*$' },
+          // 只有 pattern 這個鍵算數，別的欄位就算長得像正規表達式也不能動
+          decoy: { type: 'string', description: String.raw`^[^\0]*$` },
+        },
+      },
+    }],
+  }
+  const { body, changes } = rewriteToolPatterns(original)
+
+  assert.equal(body, original, '沒改到就要回傳原物件，proxy 才不會無故重建 body')
+  assert.deepEqual(changes, [])
+})
+
+test('沒有 tools 的請求不受影響', () => {
+  const body = { model: 'x', messages: [{ role: 'user', content: 'hi' }] }
+  assert.equal(rewriteToolPatterns(body).body, body)
+  assert.deepEqual(rewriteToolPatterns({ tools: 'not-an-array' }).changes, [])
+  assert.deepEqual(rewriteToolPatterns(null), { body: null, changes: [] })
+})
+
+test('rewriteBodyForProvider 三項改寫都記進 changes', () => {
+  const { body, changes } = rewriteBodyForProvider(
+    { model: 'claude-sonnet-5', metadata: { user_id: 'x' }, tools: [ARTIFACT_TOOL()] },
+    'deepseek-flash',
+  )
+  assert.equal(body.metadata, undefined)
+  assert.equal(body.tools[0].input_schema.properties.file_paths.items.pattern, String.raw`^[^\x00]*$`)
+  assert.deepEqual(changes, ['model claude-sonnet-5 → deepseek-flash', '-metadata', 'tools \\0 → \\x00'])
+})
+
+test('provider 收到改寫後的 pattern，訂閱線照舊原樣送', async () => {
+  const body = { ...BASE_BODY, tools: [ARTIFACT_TOOL()] }
+  const patternOf = (hit) => hit.body.tools[0].input_schema.properties.file_paths.items.pattern
+
+  await (await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'agent-1' }, body)).text()
+  assert.equal(patternOf(harness.upstream.state.received[0]), String.raw`^[^\x00]*$`)
+  assert.ok(
+    harness.logStore.list()[0].changes.includes('tools \\0 → \\x00'),
+    '流量記錄要看得出 router 動過工具定義',
+  )
+
+  // 訂閱線送的是 Anthropic 自己收得下的 schema，改寫只會變成在改 Claude Code 的請求
+  await (await post(SUBSCRIPTION_HEADERS, body)).text()
+  assert.equal(patternOf(harness.upstream.state.received[0]), String.raw`^[^\0]*$`)
 })

@@ -71,6 +71,7 @@ Workflow agent 的工具清單裡沒有 `Agent` 與 `Workflow`，與 [routing.md
 | 帶 `tool_use` 的歷史附上別家的 thinking（空內容加任意 `signature`） | 200 —— 規則從訂閱切到 DeepSeek 時，Anthropic 留下的 thinking 送得過去 |
 | 歷史裡有 `redacted_thinking` | **400** `unknown variant redacted_thinking` |
 | 完全不帶 `thinking` 欄位 | 預設會思考；`max_tokens` 給得小時全被思考吃光，回覆是空字串 |
+| `Artifact` 工具的 `pattern: "^[^\0]*$"` | **400** `Invalid schema for function 'Artifact': … is not valid under any of the schemas listed in the 'anyOf' keyword`。字元類裡的八進位跳脫編不動，router 改寫成 `\x00`，見 [providers.md](providers.md#工具-schema-裡的-0) |
 | `cache_control` | 被忽略，但回應裡有 `cache_read_input_tokens`：它有自己的自動前綴快取 |
 | 串流的 `usage` | `message_start` 就帶正確的 `input_tokens`，Claude Code 算 context 用量靠這個 |
 | `metadata.user_id` | [文檔](https://api-docs.deepseek.com/quick_start/rate_limit)說拿來做內容安全歸屬、KV cache 隔離與排程隔離。實測是真的隔離：約 4K tokens 的隨機前綴，同一個 `user_id` 重送命中 94–96%，換 `user_id` 或拿掉都是 0%；不帶 `user_id` 的那個分區照常快取（94–96%）。兩輪結果相同 |

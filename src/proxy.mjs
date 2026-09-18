@@ -114,18 +114,84 @@ export function rewriteModel(payload, model) {
 }
 
 /**
- * provider 線的 body：換 model、拿掉 metadata，其餘一個字不動。
+ * 正規表達式裡的八進位跳脫 `\0`。前面的反斜線是奇數個時，最後那一個才真的在跳脫 `0`；
+ * 偶數個代表那些反斜線自己成對、後面的 `0` 是字面零，不能動。
+ */
+const OCTAL_NUL = /(\\+)0(?!\d)/g
+
+function rewritePattern(pattern) {
+  return pattern.replace(OCTAL_NUL, (match, slashes) => (
+    slashes.length % 2 === 1 ? `${slashes.slice(0, -1)}\\x00` : match
+  ))
+}
+
+/** 沒改到就回傳原本那個參照，讓呼叫端據此判斷要不要重建外層物件。 */
+function sanitizeSchema(node) {
+  if (Array.isArray(node)) {
+    let changed = false
+    const out = node.map((item) => {
+      const next = sanitizeSchema(item)
+      if (next !== item) changed = true
+      return next
+    })
+    return changed ? out : node
+  }
+  if (!node || typeof node !== 'object') return node
+
+  let changed = false
+  const out = {}
+  for (const [key, value] of Object.entries(node)) {
+    const next = key === 'pattern' && typeof value === 'string' ? rewritePattern(value) : sanitizeSchema(value)
+    if (next !== value) changed = true
+    out[key] = next
+  }
+  return changed ? out : node
+}
+
+/**
+ * DeepSeek 的 schema 驗證器編不動字元類裡的八進位跳脫，`^[^\0]*$` 會讓整筆請求被擋在推論之前：
+ * `400 Invalid schema for function 'Artifact': … is not valid under any of the schemas listed in
+ * the 'anyOf' keyword`（實測 2026-09-18）。Anthropic 收得下同一份 schema，所以主對話沒事，
+ * 而工具清單含 Artifact 的子 agent（`*` 工具的那幾種）一分到 provider 就開場即死。
+ *
+ * 改寫成等價的 `\x00` 是實測會過的最小動作 —— 見 docs/providers.md。只碰 `pattern`：
+ * 它對模型只是提示，換個寫法語義不變，不像動 properties 會改到工具的介面。
+ */
+export function rewriteToolPatterns(payload) {
+  if (!Array.isArray(payload?.tools)) return { body: payload, changes: [] }
+
+  let changed = false
+  const tools = payload.tools.map((tool) => {
+    const schema = sanitizeSchema(tool?.input_schema)
+    if (schema === tool?.input_schema) return tool
+    changed = true
+    return { ...tool, input_schema: schema }
+  })
+  return changed
+    ? { body: { ...payload, tools }, changes: ['tools \\0 → \\x00'] }
+    : { body: payload, changes: [] }
+}
+
+/**
+ * provider 線的 body：換 model、拿掉 metadata、修掉上游編不動的 pattern，其餘一個字不動。
  * @param {string} [model] resolveModel 算出來的最終 model 名
  */
 export function rewriteBodyForProvider(payload, model) {
   const renamed = rewriteModel(payload, model)
-  if (renamed.body?.metadata === undefined) return renamed
-  // Claude Code 把 claude.ai 的 account_uuid 與 device_id 塞在 metadata.user_id（實測 v2.1.274）。
-  // 那是訂閱帳號的識別資訊，不該跟著子 agent 的請求出門。DeepSeek 會拿 user_id 做 KV cache 與排程隔離，
-  // 但那是給「一把 key 服務很多終端使用者」的情境；這裡只有一個人，拿掉只是所有請求落在同一個分區。
-  const body = { ...renamed.body }
-  delete body.metadata
-  return { body, changes: [...renamed.changes, '-metadata'] }
+  const changes = [...renamed.changes]
+  let body = renamed.body
+
+  if (body?.metadata !== undefined) {
+    // Claude Code 把 claude.ai 的 account_uuid 與 device_id 塞在 metadata.user_id（實測 v2.1.274）。
+    // 那是訂閱帳號的識別資訊，不該跟著子 agent 的請求出門。DeepSeek 會拿 user_id 做 KV cache 與排程隔離，
+    // 但那是給「一把 key 服務很多終端使用者」的情境；這裡只有一個人，拿掉只是所有請求落在同一個分區。
+    body = { ...body }
+    delete body.metadata
+    changes.push('-metadata')
+  }
+
+  const patched = rewriteToolPatterns(body)
+  return { body: patched.body, changes: [...changes, ...patched.changes] }
 }
 
 /** 錯誤摘要留這麼長就夠認出是哪一種錯，再長只是把流量記錄撐爛。 */
