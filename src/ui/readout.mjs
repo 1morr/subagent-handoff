@@ -1,5 +1,5 @@
 /*
- * 進條與額度窗的判讀 —— 純函數，不碰 DOM、不查語系表。
+ * 進條、額度窗與機架席位的判讀 —— 純函數，不碰 DOM、不查語系表。
  *
  * 從 app.js 拆出來的唯一理由是「能被測試 import」：app.js 有頂層 await 又直接動
  * document，在 Node 裡 import 就炸。判讀答錯的代價是畫面說謊（把正常流量標成異常、
@@ -59,4 +59,75 @@ export function quotaWindow(rl) {
     nearLimit: allowed && status !== 'allowed',
     reset: rl['unified-reset'] ?? null,
   }
+}
+
+/** 種類標籤的固定順序：先主對話再子 agent，跟畫面上其他並列的地方一致。 */
+const KIND_ORDER = ['main', 'subagent']
+
+const kindsOf = (set) => {
+  if (!set) return []
+  const rank = (k) => {
+    const i = KIND_ORDER.indexOf(k)
+    return i < 0 ? KIND_ORDER.length : i
+  }
+  return [...set].sort((a, b) => rank(a) - rank(b))
+}
+
+/**
+ * 機架上的第三方席位：被任一條啟用規則指向的 provider，加上 entries 裡實際出現過的。
+ *
+ * 兩個來源缺一不可 —— 只看規則，規則剛改還沒儲存時新席位不出現；只看記錄，provider
+ * 被刪掉之後那些進條就忽然沒有席位卡了（歷史流量還在，只是規則不再指向它）。
+ *
+ * 回傳按 config.providers 順序排列，每項是
+ * `{ providerId, label, provider, entries, kinds }`：
+ * - `provider`：config 裡的那一筆；已被刪除 → null
+ * - `kinds`：啟用規則指向它的 match 種類去重（main 在前，順序固定）
+ * - `label`：config 裡的 label；provider 已刪就用 `entries` 裡該 providerId 第一筆的
+ *   target —— 那是送出當下使用者填的名字，也是流量記錄裡僅存的名字
+ * - `entries`：該 providerId 的全部記錄，時間窗由呼叫端自己決定（分流帶看 5 分鐘、
+ *   快取看全部，這兩個窗刻意不一樣）
+ *
+ * 兩種東西不算第三方席位：規則指向 passthrough（providerId 是 'passthrough' 或空字串），
+ * 以及 entries 裡 providerId 為 null 的（那是走訂閱的）。
+ */
+export function providerSeats(config, entries) {
+  const providers = config?.providers ?? []
+  const rules = config?.rules ?? []
+  const logs = entries ?? []
+
+  // 規則指向誰、用哪種 match 指向 —— 同一家被主對話與子 agent 兩條規則同時指向是常態。
+  // 只認 config 裡還存在的 id：GUI 刪 provider 不會清指向它的規則，不擋的話「規則指空」
+  // 會冒出一張從未有過流量、拿內部 id 當名字的幽靈卡。已刪 provider 的歷史流量由下面
+  // 的 seen 接住，不缺這一條。
+  const configIds = new Set(providers.map((p) => p.id))
+  const aimed = new Map()
+  for (const r of rules) {
+    if (!r.enabled || !r.providerId || r.providerId === 'passthrough') continue
+    if (!configIds.has(r.providerId)) continue
+    if (!aimed.has(r.providerId)) aimed.set(r.providerId, new Set())
+    if (r.match) aimed.get(r.providerId).add(r.match)
+  }
+
+  // 記錄裡出現過的 providerId（第一筆留著當 label 的退路）
+  const seen = new Map()
+  for (const e of logs) {
+    if (e.providerId && !seen.has(e.providerId)) seen.set(e.providerId, e)
+  }
+
+  const ids = new Set([...aimed.keys(), ...seen.keys()])
+  const seat = (id, provider) => ({
+    providerId: id,
+    provider,
+    // 不用 ??：label 被清空成空字串時也要繼續往後退，不然卡片標題只剩前綴
+    label: provider?.label || seen.get(id)?.target || id,
+    entries: logs.filter((e) => e.providerId === id),
+    kinds: kindsOf(aimed.get(id)),
+  })
+
+  // 已從 config 刪掉、只在記錄裡的排在最後 —— 它們沒有 config 的順序可依
+  return [
+    ...providers.filter((p) => ids.has(p.id)).map((p) => seat(p.id, p)),
+    ...[...ids].filter((id) => !providers.some((p) => p.id === id)).map((id) => seat(id, null)),
+  ]
 }

@@ -14,7 +14,7 @@
  */
 import en from './i18n/en.js'
 import zhHant from './i18n/zh-Hant.js'
-import { isAborted, isStreamCut, stateOf, quotaWindow } from './readout.mjs'
+import { isAborted, isStreamCut, stateOf, quotaWindow, providerSeats } from './readout.mjs'
 
 const CATALOGS = { en, 'zh-Hant': zhHant }
 const LANG_KEY = 'subagent-handoff:lang'
@@ -33,7 +33,8 @@ let lang = detectLang()
 /** 查表＋插值。目前語系沒有這個 key 就退回英文，兩邊都沒有就把 key 原樣印出來（方便抓漏）。 */
 function t(key, vars) {
   let s = CATALOGS[lang]?.[key] ?? CATALOGS.en[key] ?? key
-  if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, String(v))
+  // 第二參數給函式：字串值裡的 $&、$` 之類不會被當成 replacement pattern（provider 名是使用者填的）
+  if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, () => String(v))
   return s
 }
 
@@ -265,30 +266,49 @@ function rack(entries, withRequested) {
 }
 
 // ── 機架總覽 ──────────────────────────────────────────────────────
-/** 分流數字全部從流量記錄現算，不需要另一支 API。 */
+/**
+ * 分流數字全部從流量記錄現算，不需要另一支 API。
+ *
+ * 第三方席位是一家一張：誰算一家由 providerSeats() 決定（被啟用規則指向的 ∪ 記錄裡
+ * 出現過的）。席位卡與分流帶的每一段都只認 providerId，不認名字 —— label 是使用者
+ * 自己填的，改名不該讓流量換一張卡。
+ */
 function overview() {
   const cutoff = Date.now() - 5 * 60 * 1000
   const win = S.logs.filter((e) => Date.parse(e.ts) >= cutoff)
   const sub = win.filter((e) => sectorOf(e) === 'sub')
-  const prv = win.filter((e) => sectorOf(e) === 'prv')
-  const routed = sub.length + prv.length
   const live = (list) => list.filter((e) => e.status == null && !e.error).length
-  const subPct = routed ? Math.round(sub.length / routed * 100) : 0
+
+  const seats = providerSeats(S.config, S.logs).map((s) => {
+    const w = s.entries.filter((e) => Date.parse(e.ts) >= cutoff)
+    const b = buckets(w)
+    return {
+      ...s, win: w, live: live(w),
+      buckets: b,
+      // 卡片上「近 5 分鐘 N 筆」跟旁邊的負載柱、分流帶說同一件事：三者都是
+      // 5 分鐘窗，數字就取柱子的總和
+      recent: b.reduce((n, v) => n + v, 0),
+      // 快取看整份記錄、不看 5 分鐘窗：那是趨勢數字，窗太短只剩雜訊（見 cacheStats）
+      cache: cacheStats(s.entries),
+    }
+  })
+
+  const routed = sub.length + seats.reduce((n, s) => n + s.win.length, 0)
   // 額度窗只有訂閱那條線會回 anthropic-ratelimit-*，取最近一筆有的
   const rl = S.logs.find((e) => sectorOf(e) === 'sub' && e.rateLimit)?.rateLimit ?? null
-  const prvName = prv.find((e) => e.target)?.target
-    ?? S.config.providers.find((p) => S.config.rules.some((r) => r.enabled && r.providerId === p.id))?.label
-    ?? S.config.providers[0]?.label ?? t('bay.noProviderSet')
-  // 兩張席位卡共用同一個上限，否則兩邊的柱高不能互相比較
+  // 所有席位共用同一個上限，否則各張卡的柱高不能互相比較
   const subBuckets = buckets(sub)
-  const prvBuckets = buckets(prv)
-  const peak = Math.max(1, ...subBuckets, ...prvBuckets)
+  const peak = Math.max(1, ...subBuckets, ...seats.flatMap((s) => s.buckets))
+
+  // 段寬用沒四捨五入的比例、印出來的百分比才四捨五入。兩家以上時各段取整後相加
+  // 不一定是 100，帶子會多出或少掉一條細縫 —— 寬度是佈局，不該吃取整誤差。
+  const share = (n) => (routed ? n / routed * 100 : 0)
+  for (const s of seats) { s.share = share(s.win.length); s.pct = Math.round(s.share) }
   return {
-    win, routed, sub, prv, subPct, prvPct: routed ? 100 - subPct : 0,
-    subLive: live(sub), prvLive: live(prv), rl, prvName,
-    subBuckets, prvBuckets, peak,
+    win, routed, sub, seats, rl, peak, subBuckets, subLive: live(sub),
+    subRecent: subBuckets.reduce((n, v) => n + v, 0),
+    subShare: share(sub.length), subPct: Math.round(share(sub.length)),
     subCache: cacheStats(S.logs.filter((e) => sectorOf(e) === 'sub')),
-    prvCache: cacheStats(S.logs.filter((e) => sectorOf(e) === 'prv')),
     blocked: win.filter((e) => stateOf(e) === 'hold').length,
   }
 }
@@ -319,9 +339,9 @@ function cacheCell(c) {
           </div>`
 }
 
-/** 近 4 分鐘切成 8 個 30 秒桶。柱高就是那 30 秒的請求數 —— 高度承載資料，不是裝飾。 */
+/** 近 5 分鐘切成 10 個 30 秒桶 —— 跟分流帶同一個窗。柱高就是那 30 秒的請求數：高度承載資料，不是裝飾。 */
 function buckets(list) {
-  const now = Date.now(), span = 30000, n = 8
+  const now = Date.now(), span = 30000, n = 10
   const out = new Array(n).fill(0)
   for (const e of list) {
     const age = now - Date.parse(e.ts)
@@ -331,6 +351,61 @@ function buckets(list) {
 }
 const loadCells = (b, max, cls) => b.map((v) =>
   `<i class="${v ? 'on ' + cls : ''}" style="height:${max ? Math.round(2 + v / max * 42) : 2}px"></i>`).join('')
+
+/**
+ * 席位的種類標籤：哪幾種 match 的啟用規則指向它。空的時候只剩歷史流量 —— 規則已經
+ * 不再指向這家了，但那幾筆進條還在記錄裡，所以卡片還在。
+ */
+function seatKinds(kinds) {
+  const names = { main: t('common.mainConversation'), subagent: t('common.allSubagents') }
+  return kinds.length ? kinds.map((k) => names[k] ?? k).join(t('rules.conditionSep')) : t('bay.noRulePoints')
+}
+
+/**
+ * 「交還給訂閱」是全域緊急動作（所有規則一起改指向，配額見底時按的那一顆），
+ * 不屬於任何一家第三方 —— 所以它掛在分流帶那列，不掛在某一張 PRV 卡上。
+ */
+const flipButton = (enabled) => S.flipBackup
+  ? `<button class="btn go" data-act="unflip">${t('bay.unflip')}</button>`
+  : `<button class="btn warn" data-act="flip" ${enabled ? '' : 'disabled'}>${t('bay.flip')}</button>`
+
+/**
+ * 一張第三方席位卡。model 與 baseUrl 從 seat.provider 這筆 config 查（名字由
+ * providerSeats 決定：config 有就用 label，被刪了才退回流量記錄裡的 target）。
+ * provider 是 null 時這兩個欄位各自說自己怎麼了 —— 只剩流量記錄的席位，
+ * 「送出的 model」不該隨便填一個值。
+ */
+function prvCard(s, peak) {
+  const p = s.provider
+  return `
+      <div class="sector s-prv"><div class="edge"></div><div class="in">
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+          <span class="sign" style="font-size:15px;color:var(--prv)">PRV</span>
+          <span style="font-weight:500">${t('bay.thirdPartySeat', { name: esc(s.label) })}</span>
+          <span class="spacer"></span>
+          <span class="lbl">${seatKinds(s.kinds)}</span>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap">
+          <div class="load" title="${t('bay.loadTitle')}">${loadCells(s.buckets, peak, 'prv')}</div>
+          <div class="fld" style="gap:2px">
+            <span class="num" style="font-size:22px;line-height:1">${s.live}</span>
+            <span class="lbl">${t('bay.inFlight')}</span>
+            <span class="lbl" style="letter-spacing:.04em">${t('bay.last5min', { count: s.recent })}</span>
+          </div>
+          ${cacheCell(s.cache)}
+          <span class="spacer"></span>
+          <div class="fld" style="align-items:flex-end">
+            <span class="lbl">${t('bay.sentModelLabel')}</span>
+            <span class="num" style="font-size:12px">${
+              p ? esc(p.model || t('bay.noRewrite')) : t('bay.providerDeleted')}</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid var(--rail);padding-top:12px">
+          <span class="hint" style="flex:1;min-width:200px">${
+            p?.baseUrl ? `<code>${esc(p.baseUrl)}</code>` : t('bay.noBaseUrl')}</span>
+        </div>
+      </div></div>`
+}
 
 function renderBay() {
   const o = overview()
@@ -360,16 +435,18 @@ function renderBay() {
         <span class="hint">${t('bay.noRateLimitYet')}</span>
       </div>`
 
-  // 0% 的段完全不畫 —— 留一條有 padding 的殘段會讀成「還有流量走那邊」
-  const seg = (cls, pct, name, qty) => pct <= 0 ? '' : `
-      <div class="${cls}" style="width:${pct}%">
+  // 沒有流量的段完全不畫 —— 留一條有 padding 的殘段會讀成「還有流量走那邊」。
+  // 判斷用沒取整的 share：一家只分到 0.4% 時 pct 會是 0，但它真的有流量，段不能消失。
+  const seg = (cls, share, pct, name, qty) => share <= 0 ? '' : `
+      <div class="${cls}" style="width:${share}%">
         <span class="name">${name}</span>
         <span class="qty">${qty}</span>
       </div>`
   const band = o.routed ? `
     <div class="band">
-      ${seg('seg-sub', o.subPct, t('bay.segSub'), t('bay.qtyPct', { count: o.sub.length, pct: o.subPct }))}
-      ${seg('seg-prv', o.prvPct, `PRV ${esc(o.prvName)}`, t('bay.qtyPct', { count: o.prv.length, pct: o.prvPct }))}
+      ${seg('seg-sub', o.subShare, o.subPct, t('bay.segSub'), t('bay.qtyPct', { count: o.sub.length, pct: o.subPct }))}
+      ${o.seats.map((s) => seg('seg-prv', s.share, s.pct, `PRV ${esc(s.label)}`,
+        t('bay.qtyPct', { count: s.win.length, pct: s.pct }))).join('')}
     </div>`
     : `<div class="panel"><div class="empty">${t('bay.noTrafficBand')}</div></div>`
 
@@ -380,6 +457,7 @@ function renderBay() {
         <span>${t('bay.routedCount', { count: `<b class="num">${o.routed}</b>` })}</span>
         ${o.blocked ? `<span style="color:var(--alarm-ink)">${t('bay.blockedCount', { count: `<b class="num">${o.blocked}</b>` })}</span>` : ''}
         <span class="spacer"></span>
+        ${flipButton(toProvider)}
         <span class="hint">${t('bay.liveHint')}</span>
       </div>
       ${band}
@@ -391,14 +469,14 @@ function renderBay() {
           <span class="sign" style="font-size:15px;color:var(--sub)">SUB</span>
           <span style="font-weight:500">${t('bay.subSeat')}</span>
           <span class="spacer"></span>
-          <span class="lbl">${toProvider ? t('common.mainConversation') : t('bay.mainPlusAllSubagents')}</span>
+          <span class="lbl">${toProvider ? t('bay.seatFallthrough') : t('bay.mainPlusAllSubagents')}</span>
         </div>
         <div style="display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap">
           <div class="load" title="${t('bay.loadTitle')}">${loadCells(o.subBuckets, o.peak, 'sub')}</div>
           <div class="fld" style="gap:2px">
             <span class="num" style="font-size:22px;line-height:1">${o.subLive}</span>
             <span class="lbl">${t('bay.inFlight')}</span>
-            <span class="lbl" style="letter-spacing:.04em">${t('bay.last4min', { count: o.sub.length })}</span>
+            <span class="lbl" style="letter-spacing:.04em">${t('bay.last5min', { count: o.subRecent })}</span>
           </div>
           ${cacheCell(o.subCache)}
           <span class="spacer"></span>
@@ -409,38 +487,7 @@ function renderBay() {
         </div>
       </div></div>
 
-      <div class="sector s-prv"><div class="edge"></div><div class="in">
-        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
-          <span class="sign" style="font-size:15px;color:var(--prv)">PRV</span>
-          <span style="font-weight:500">${t('bay.thirdPartySeat', { name: esc(o.prvName) })}</span>
-          <span class="spacer"></span>
-          <span class="lbl">${toProvider ? t('common.allSubagents') : t('bay.noTrafficNow')}</span>
-        </div>
-        <div style="display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap">
-          <div class="load" title="${t('bay.loadTitle')}">${loadCells(o.prvBuckets, o.peak, 'prv')}</div>
-          <div class="fld" style="gap:2px">
-            <span class="num" style="font-size:22px;line-height:1">${o.prvLive}</span>
-            <span class="lbl">${t('bay.inFlight')}</span>
-            <span class="lbl" style="letter-spacing:.04em">${t('bay.last4min', { count: o.prv.length })}</span>
-          </div>
-          ${cacheCell(o.prvCache)}
-          <span class="spacer"></span>
-          <div class="fld" style="align-items:flex-end">
-            <span class="lbl">${t('bay.sentModelLabel')}</span>
-            <span class="num" style="font-size:12px">${esc(
-              S.config.providers.find((p) => p.label === o.prvName)?.model || t('bay.noRewrite'))}</span>
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid var(--rail);padding-top:12px">
-          <span class="hint" style="flex:1;min-width:200px">${
-            S.config.providers.find((p) => p.label === o.prvName)?.baseUrl
-              ? `<code>${esc(S.config.providers.find((p) => p.label === o.prvName).baseUrl)}</code>`
-              : t('bay.noBaseUrl')}</span>
-          ${S.flipBackup
-            ? `<button class="btn go" data-act="unflip">${t('bay.unflip')}</button>`
-            : `<button class="btn warn" data-act="flip" ${toProvider ? '' : 'disabled'}>${t('bay.flip')}</button>`}
-        </div>
-      </div></div>
+      ${o.seats.map((s) => prvCard(s, o.peak)).join('')}
     </section>
 
     <section class="fld" style="gap:9px">

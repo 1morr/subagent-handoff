@@ -23,7 +23,7 @@
 全部動畫包在 `@media (prefers-reduced-motion: reduce)` 的關閉分支裡（見 `app.css`
 的 `.slot, .strip, .band > div, .load > i, .clearance { transition: none }` 與
 `.slot.fresh > .strip { animation: none }`）。閒置時整面板本來就是死的，會動的只有
-三件事：新進條印進機架的下滑淡入、進條推出／收回的位移、分流帶兩段的寬度變化 ——
+三件事：新進條印進機架的下滑淡入、進條推出／收回的位移、分流帶每一段的寬度變化 ——
 這三個在 reduced-motion 下全部關掉，不做退化成「變慢」的處理，直接消失。
 
 ## `.num`（等寬數字體）不套在中文上
