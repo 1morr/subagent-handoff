@@ -19,3 +19,6 @@ node_modules/
 
 .env
 .DS_Store
+
+# Playwright MCP 驗證時落在 repo 的截圖與 snapshot
+.playwright-mcp/

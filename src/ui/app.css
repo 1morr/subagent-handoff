@@ -189,7 +189,10 @@
   .annot dd.bad { color: #8f2c18; }
 
   /* ── 分流帶：一條就回答「到底有沒有在分流」 ───────────────────── */
-  .band { display: flex; height: 54px; background: var(--recess); border: 1px solid var(--rail); }
+  .band { display: flex; height: 54px; background: var(--recess); border: 1px solid var(--rail);
+          /* 段與段留 2px 縫讓 recess 底透出來：多家第三方同色，分界只能靠縫。
+             不給每家一色 —— 顏色的語義是席位種類（見圖例），不是哪一家。 */
+          gap: 2px; }
   .band > div {
     display: flex; align-items: center; gap: 10px; overflow: hidden; min-width: 0;
     transition: width .45s cubic-bezier(.16,1,.3,1);
