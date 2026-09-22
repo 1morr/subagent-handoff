@@ -52,7 +52,7 @@
 
 不靠 `output_config.format`。Claude Code 在工具清單裡多掛一個 `StructuredOutput` 工具，`input_schema` 就是 script 給的 schema，沒有 `tool_choice` 強制；輸出由 Claude Code 自己驗證，不合格重試（`MAX_STRUCTURED_OUTPUT_RETRIES`，預設 5）。所以在第三方上它就是一般的工具呼叫能力，不需要上游支援 structured outputs。
 
-Workflow agent 的工具清單裡沒有 `Agent` 與 `Workflow`，與 [routing.md](routing.md#三種來源分別是什麼)「三種來源分別是什麼」一節的舊實測一致。
+Workflow agent 的工具清單裡沒有 `Agent` 與 `Workflow`，與 [routing.md](routing.md#兩種來源分別是什麼)「兩種來源分別是什麼」一節的實測一致 —— 那一節記的就是 `nested` 這個第三種來源為什麼被拿掉。
 
 `output_config.format`（`json_schema`）只出現在主對話的背景請求上，例如產生 session 標題那一筆（`thinking: disabled`、沒有 agent-id），一律走訂閱。
 

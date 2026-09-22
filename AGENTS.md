@@ -29,3 +29,10 @@ Anthropic-compatible provider you pay for; everything else passes through to
 
 - Docs and comments: see README's language policy (English and zh-Hant mirrors).
 - Commits: Conventional Commits, English.
+- **`CHANGELOG.md` is a work log, not a release changelog** (this project has no
+  versions). Record behaviour changes, removals, and decisions backed by a
+  measurement — in zh-Hant, like `docs/`. Skip pure formatting and renames.
+  Write the entry in the same change that makes it, not afterwards.
+- **One commit, one change, and the subject must cover everything the diff
+  touches.** A commit that also edits something its message does not mention is
+  how work becomes invisible; `git log --stat` is the check.
