@@ -11,6 +11,18 @@
 
 ---
 
+## 2026-09-24
+
+### 修正
+
+- **接入說明不再建議設 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`，改成警告不要設。** 它會拿掉
+  system 開頭的 attribution block，而訂閱線上開頭既沒有這一塊、也沒有 Claude Code 身分
+  行的請求，會被 Anthropic 回 `429 rate_limit_error: "Error"`（不帶 rate limit header）。
+  主對話不受影響，auto mode 的權限分類器、Claude in Chrome、額度探針卻全部失效 —— 流量
+  記錄裡非串流的推論請求 94 筆全是這個 429。跟 router 無關，直接打 Anthropic 也一樣。
+  實測表格見 [docs/claude-code-request-shapes.md](docs/claude-code-request-shapes.md#訂閱線會檢查-system-的開頭)。
+  代價是 DeepSeek 跨 session 的快取命中可能下降，還沒量。
+
 ## 2026-09-21
 
 ### 修正

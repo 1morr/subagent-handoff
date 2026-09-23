@@ -835,8 +835,7 @@ function renderSetup() {
         <p style="margin:0">${t('setup.step1Body')}</p>
         <pre id="snippet">{
   "env": {
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:${port}",
-    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:${port}"
   }
 }</pre>
         <div><button class="btn" data-act="copy">${t('common.copy')}</button></div>
@@ -844,7 +843,7 @@ function renderSetup() {
           ${t('setup.warnCreds')}
         </div></div>
         <span class="hint">
-          ${t('setup.attributionHint')}
+          ${t('setup.attributionWarn')}
         </span>
       </div>
     </section>

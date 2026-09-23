@@ -221,7 +221,7 @@ export default {
   'setup.step1Title': '1・設定 Claude Code',
   'setup.step1Body': '在 <code>~/.claude/settings.json</code>（Windows：<code>%USERPROFILE%\\.claude\\settings.json</code>）的 <code>env</code> 區塊加入：',
   'setup.warnCreds': '<strong>絕對不要</strong>同時設 <code>ANTHROPIC_AUTH_TOKEN</code>、<code>ANTHROPIC_API_KEY</code> 或 <code>apiKeyHelper</code>。官方文檔明載：只設 base URL 而不設憑證，claude.ai 訂閱登入會保留下來；一旦設了憑證，訂閱就整個被頂掉，全部流量改成按 token 計費。',
-  'setup.attributionHint': '<code>CLAUDE_CODE_ATTRIBUTION_HEADER=0</code> 是選配。Claude Code 會在 system prompt 前面加一段 attribution block，只有 <code>api.anthropic.com</code> 會自動剝掉，第三方 provider 會把它當成 prompt 的一部分收下去。關掉比較乾淨。',
+  'setup.attributionWarn': '<strong>不要</strong>設 <code>CLAUDE_CODE_ATTRIBUTION_HEADER=0</code>（這一頁舊版的片段裡有它，照抄過的請拿掉）。它會拿掉 system prompt 開頭的 attribution block，而訂閱線上開頭沒有這一塊、也不是 Claude Code 身分行的請求，會被 Anthropic 以 <code>429 rate_limit_error</code> 拒絕 —— auto mode 的權限分類器、Claude in Chrome、額度探針這些輔助請求全部失效，主對話卻照常，很難聯想到是它。拿掉之後要重開所有 Claude Code session：<code>env</code> 只在啟動時讀一次。',
   'setup.step2Title': '2・驗證訂閱還在',
   'setup.step2Body': '重開 Claude Code，執行 <code>/status</code>，確認 <strong>Status</strong> 分頁上：',
   'setup.step2Item1': '<code>Anthropic base URL</code> 那行出現，指向 <code>http://127.0.0.1:{port}</code>',

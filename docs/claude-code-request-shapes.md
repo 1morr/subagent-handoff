@@ -22,6 +22,24 @@
 
 `role: "system"` 不是標準 Messages API 的角色。上游收下卻丟掉時，子 agent 會少掉 Claude Code 放在那裡的指示而且不報錯，所以「中途 system 訊息」是一個獨立的測試項。
 
+## 訂閱線會檢查 system 的開頭
+
+`system` 的三個 block 裡，第一個是 `x-anthropic-billing-header: cc_version=<版本>.<後綴>; cc_entrypoint=<入口>;`（attribution block，約 74 字元，不帶 `cache_control`），第二個是身分行（`claude -p` 下是 `You are a Claude agent, built on Anthropic's Claude Agent SDK.`）。`CLAUDE_CODE_ATTRIBUTION_HEADER=0` 會拿掉第一個。
+
+訂閱（OAuth）打非 haiku 的模型時，system 開頭不是這兩者之一的請求，Anthropic 回 `429 {"type":"rate_limit_error","message":"Error"}`，而且**沒有任何 `anthropic-ratelimit-*` header**——跟真的額度用盡長得不一樣，真的用盡會帶 `unified-*-status`。實測（2026-09-24，v2.1.280，`claude-sonnet-5`）：借 Claude Code 當下那筆請求的 header 另打 `max_tokens: 1`，只換 `system`：
+
+| `system` | 結果 |
+| --- | --- |
+| 不帶 | 429（串流、非串流都一樣；換 `claude-opus-5-5` 也一樣） |
+| 只放 attribution block | 200 |
+| 只放身分行 | 200 |
+| 只放第三個 block（主要指示，不含身分行） | 429 |
+| 不帶，但模型換成 `claude-haiku-4-5-20251001` | 200 |
+
+主迴圈的請求有身分行，所以設了 `=0` 照樣能用（走訂閱的子 agent 沒量過：當時的流量記錄裡子 agent 全分到 provider）。**自帶 system prompt 的輔助請求沒有身分行**，只靠 attribution block 過關，`=0` 之後全部 429：auto mode 的權限分類器（`max_tokens: 2112`，非串流）、Claude in Chrome、啟動時的額度探針（`max_tokens: 1`、不帶 system）等。當時兩份流量記錄（09-22～09-23）裡的非串流推論請求 94 筆全是這個 429，串流全部 200。
+
+跟 router 無關：直接打 `api.anthropic.com` 是同一個結果，只是 router 的接入說明曾經建議設 `=0`（為了 DeepSeek 跨 session 共用快取，見 [security.md](security.md#送去-provider-的請求一律拿掉-metadata)），現在已經改成不要設。
+
 ## Read
 
 **圖片**：`tool_result.content = [{type: "image", source: {type: "base64", media_type: "image/png", data}}]`。主對話與子 agent 相同。子 agent 看圖只會走這條 —— 使用者貼進對話框的圖片在主對話，走訂閱。
@@ -79,7 +97,7 @@ Workflow agent 的工具清單裡沒有 `Agent` 與 `Workflow`，與 [routing.md
 
 ### 端到端：真的 Claude Code 經過 router
 
-`claude -p --model sonnet`，主對話走訂閱，叫一個 sonnet 子 agent（分到 DeepSeek）讀一張隨機配色的 PNG 和一份含隨機碼的 PDF；設了 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`，同一個流程跑兩個獨立 session。
+`claude -p --model sonnet`，主對話走訂閱，叫一個 sonnet 子 agent（分到 DeepSeek）讀一張隨機配色的 PNG 和一份含隨機碼的 PDF；設了 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`（這個設定會打壞訂閱線的輔助請求，見[訂閱線會檢查 system 的開頭](#訂閱線會檢查-system-的開頭)，不要照抄），同一個流程跑兩個獨立 session。
 
 - 看圖：兩個 session 都答對。
 - PDF：第一個 session 試了 `pages` 參數（沒裝 `pdftoppm`，失敗）後誠實回 `NONE`；第二個 session 改用 Bash 看 PDF 的原始位元組，讀出了碼 —— 測試 PDF 沒壓縮才行得通。
@@ -117,6 +135,8 @@ Claude Code 這一側用假上游量（一次性腳本，沒有進 repo）：子
 所以在 DeepSeek 上，1M 的子 agent 累積到約 92 萬 tokens（1,048,576 − 128,000）一定撞上 400，活不活得下來全看 Claude Code 認不認得那個錯誤。router 在 provider 線上把 OpenAI 措辭的超限錯誤改寫成 `prompt is too long: <requested> tokens > <limit> maximum`，數字照搬。反過來調 Claude Code 的壓縮門檻行不通：`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` 是全域的，主對話會一起被拖累。
 
 ## 還沒驗的
+
+- **不設 `CLAUDE_CODE_ATTRIBUTION_HEADER=0` 時，DeepSeek 跨 session 的快取命中**：「端到端」那一節的 92% 是在設了 `=0` 的情況下量的。attribution block 排在 system 最前面，它的 `cc_version` 後綴只要隨 session 變，跨 session 的前綴快取就會斷在開頭；同一 session 內不受影響。後綴會不會變沒有確認。
 
 - **別家 provider 的超限措辭**：router 只認 DeepSeek 實測到的那一句 OpenAI 措辭。措辭不同的 provider，子 agent 超限時照樣會失敗；要接的時候先打一筆超限請求看它回什麼。
 - **`redacted_thinking`**：DeepSeek 收到會 400，只在規則於 agent 跑到一半從訂閱切到 DeepSeek 時碰得到。本機 1639 份 Claude Code 對話記錄（2026-08～09，含子 agent）裡帶 thinking 的超過 5 萬行，`redacted_thinking` block 一個都沒有，所以沒處理。前提是 Claude Code 會把它原樣存進記錄 —— 沒有實例可以確認。

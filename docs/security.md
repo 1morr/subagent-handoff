@@ -20,7 +20,10 @@
 的 `user_id` 裡帶著 `session_id`，等於每個 session 各自一個分區、新 session 一律
 從冷快取開始。實測（2026-09，`deepseek-flash`）同一分區重送命中 94–96%、換分區
 0%，空 id 的分區快取照常；拿掉之後（並設了 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`），
-新 session 的第一筆子 agent 請求就命中了上一個 session 留下的快取（92%）。一般帳
+新 session 的第一筆子 agent 請求就命中了上一個 session 留下的快取（92%）。那個環
+境變數後來證實會打壞訂閱線的輔助請求，現在的接入說明改成不要設
+（[原因](claude-code-request-shapes.md#訂閱線會檢查-system-的開頭)）；沒設時跨
+session 還命不命中沒量過。一般帳
 號的並發上限本來也是所有 `user_id` 合計，拿掉不影響。分區實驗的細節見
 [claude-code-request-shapes.md](claude-code-request-shapes.md)。
 

@@ -181,8 +181,10 @@ state`）。Claude Code 一律走串流所以碰不到，但自己寫長生成�
   的 Claude Code 子 agent 經過 router 讀隨機配色的圖，兩次都答對。
 - **快取命中很高。** 同一個子 agent 的後續請求 97–99%；設了
   `CLAUDE_CODE_ATTRIBUTION_HEADER=0` 時，不同 session 之間也共用（原因見
-  [security.md](security.md#送去-provider-的請求一律拿掉-metadata)）。命中率怎麼
-  看見 [observability.md](observability.md#快取命中率)。
+  [security.md](security.md#送去-provider-的請求一律拿掉-metadata)）。**但不要
+  設**：它會讓訂閱線上 auto mode 分類器、Claude in Chrome 等輔助請求全部 429，
+  見 [claude-code-request-shapes.md](claude-code-request-shapes.md#訂閱線會檢查-system-的開頭)。
+  命中率怎麼看見 [observability.md](observability.md#快取命中率)。
 - **WebSearch 可以，但貴。** 子 agent 的 WebSearch 會分到 DeepSeek、由它代為搜
   尋，Claude Code 解析得動它的回應；一次約 3 萬 input tokens。
 - **對話中間的 `role: "system"` 訊息看得到。** Claude Code 每一筆請求都有這種訊
