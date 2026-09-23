@@ -11,6 +11,12 @@ routing subagent traffic to a third-party provider you pay for separately.
 
 **English** · [繁體中文](README.zh-Hant.md)
 
+ultracode and Workflow fan out dozens of subagents at once, and a claude.ai
+subscription's 5-hour limit does not survive that. The subagents are the bulk
+of the tokens but not the part where reasoning quality matters most, so this
+router sends them to a cheaper provider and leaves the main conversation on
+the subscription, untouched.
+
 > [!WARNING]
 > **Read this before using it.**
 > - **Unofficial.** Not affiliated with, endorsed by, or sponsored by Anthropic PBC.
@@ -25,10 +31,6 @@ routing subagent traffic to a third-party provider you pay for separately.
 > - Third-party usage is billed to your own API key. This tool does not modify or
 >   spoof any billing identity, and does not bypass anyone's usage limits. Check
 >   it against your terms with each provider. Use at your own risk.
-
-The use case: ultracode and Workflow fan out dozens of subagents at once, which
-burns through a 5-hour limit fast. Send those to a cheap provider and your main
-conversation's reasoning quality is untouched.
 
 ![Rack](docs/images/rack.png)
 
