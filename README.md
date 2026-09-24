@@ -83,6 +83,27 @@ Open <http://127.0.0.1:8788>:
 4. Run `/status` and confirm `Login method` still points at your claude.ai account.
 5. Give a subagent some work, then watch the split on the **Rack** tab.
 
+## HTTPS proxy mode (this branch)
+
+> This section exists only on the `feat/https-proxy` branch. `master` keeps the
+> single `ANTHROPIC_BASE_URL` setup.
+
+Claude Desktop's Code tab ignores `ANTHROPIC_BASE_URL` but honours `HTTPS_PROXY`
+and `NODE_EXTRA_CA_CERTS`. So on this branch the proxy port also accepts `CONNECT`:
+
+- `api.anthropic.com:443` is decrypted with a certificate from a local CA the
+  router generates next to `config.json`. `/v1/messages*` goes through the usual
+  routing; every other path, and WebSocket upgrades, are forwarded to Anthropic
+  untouched and not logged.
+- Every other host is a plain TCP tunnel, never decrypted.
+
+The **Connect** tab gives the snippet (`HTTPS_PROXY` plus `NODE_EXTRA_CA_CERTS`).
+It works in the CLI and in Desktop. Two costs: every program Claude Code starts
+(git, npm, curl) inherits `HTTPS_PROXY`, so **while the router is down they all
+lose network access**; and you now trust a local CA, which is name-constrained to
+`api.anthropic.com` and must not go into your system trust store. Details,
+measurements and what has not been tested yet: [docs/https-proxy.md](docs/https-proxy.md).
+
 ## The two request kinds
 
 | Condition | How it is detected | Who it is |
@@ -154,6 +175,9 @@ under **Rewritten before sending** in the traffic log. Details:
 - Provider requests have `metadata` removed: Claude Code puts your claude.ai
   `account_uuid` and `device_id` in it. The subscription line is untouched. A
   test asserts this.
+- HTTPS proxy mode's CA can only sign `api.anthropic.com` (`nameConstraints`), its
+  key is written `0600`, and it is never installed system-wide. A test proves a
+  certificate it signs for another host is rejected.
 
 Details and the threat model: [docs/security.md](docs/security.md).
 
@@ -179,6 +203,7 @@ The in-depth docs are written in Traditional Chinese.
 | [docs/providers.md](docs/providers.md) | Provider compatibility notes, the built-in tests, and measurements |
 | [docs/claude-code-request-shapes.md](docs/claude-code-request-shapes.md) | The request shapes Claude Code v2.1.274 actually sends and how DeepSeek handles each |
 | [docs/security.md](docs/security.md) | Threat model and what is and is not protected |
+| [docs/https-proxy.md](docs/https-proxy.md) | HTTPS proxy mode for Claude Desktop: how it works, the local CA, measurements, pitfalls |
 
 ## License
 

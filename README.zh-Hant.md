@@ -67,6 +67,17 @@ npm start
 4. 執行 `/status`，確認 `Login method` 仍然指向你的 claude.ai 帳號。
 5. 派一個子代理去做點事，然後在 **Rack** 分頁看分流結果。
 
+## HTTPS proxy 模式（本分支）
+
+> 這一節只在 `feat/https-proxy` 分支上。`master` 維持 `ANTHROPIC_BASE_URL` 一種接法。
+
+Claude Desktop 的 Code 分頁不理 `ANTHROPIC_BASE_URL`，但照讀 `HTTPS_PROXY` 與 `NODE_EXTRA_CA_CERTS`。所以這個分支讓 proxy 埠也接受 `CONNECT`：
+
+- `api.anthropic.com:443` 用 router 在 `config.json` 旁邊產生的本機 CA 簽證書解開。`/v1/messages*` 走原本的分流；其他路徑與 WebSocket upgrade 原樣轉給 Anthropic，不記錄。
+- 其他主機一律是純 TCP 隧道，不解密。
+
+**接入**分頁會給出設定片段（`HTTPS_PROXY` 加 `NODE_EXTRA_CA_CERTS`），CLI 與 Desktop 都能用。代價有兩個：Claude Code 啟動的每一支程式（git、npm、curl）都會繼承 `HTTPS_PROXY`，**router 沒在跑的時候它們全部斷網**；以及你多信任了一把本機 CA，它被 name constraint 限定只能簽 `api.anthropic.com`，而且不能裝進系統信任庫。細節、實測與還沒測過的部分見 [docs/https-proxy.md](docs/https-proxy.md)。
+
 ## 兩種請求類型
 
 | Condition | How it is detected | Who it is |
@@ -115,6 +126,7 @@ npm start
 - 流量記錄只存 metadata：不含請求內容、不含 header，也不含憑證。
 - 供應商請求一律從一組空的 header 開始組建，只從 client 帶過去 `anthropic-version`、`anthropic-beta` 與 `accept`，所以不會不小心把 client 端的憑證帶出去。有一個測試會斷言這件事。
 - 送去供應商的請求一律拿掉 `metadata`：Claude Code 在裡面放了你 claude.ai 帳號的 `account_uuid` 與 `device_id`。訂閱那條線不受影響。有一個測試會斷言這件事。
+- HTTPS proxy 模式的 CA 只能簽 `api.anthropic.com`（`nameConstraints`），私鑰以 `0600` 寫入，而且不裝進系統信任庫。有一個測試證明它替別的主機簽的證書會被拒絕。
 
 詳細內容與威脅模型：[docs/security.md](docs/security.md)。
 
@@ -139,6 +151,7 @@ npm test     # node --test, no dependencies, no network
 | [docs/providers.md](docs/providers.md) | 供應商相容性筆記、內建測試與實測數據 |
 | [docs/claude-code-request-shapes.md](docs/claude-code-request-shapes.md) | Claude Code v2.1.274 實際送出的請求形狀，以及 DeepSeek 對每一種的實測反應 |
 | [docs/security.md](docs/security.md) | 威脅模型，以及哪些有保護、哪些沒有 |
+| [docs/https-proxy.md](docs/https-proxy.md) | 給 Claude Desktop 用的 HTTPS proxy 模式：運作方式、本機 CA、實測、地雷 |
 
 ## 授權
 

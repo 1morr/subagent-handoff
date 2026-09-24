@@ -5,6 +5,14 @@ Local router (`127.0.0.1:8787` + admin GUI on 8788): requests carrying Claude Co
 Anthropic-compatible provider you pay for; everything else passes through to
 `api.anthropic.com` on the subscription.
 
+## This branch: `feat/https-proxy`
+
+Adds an HTTPS proxy (`CONNECT`) mode so Claude Desktop can use the router
+(`src/connect.mjs`, `src/ca.mjs`, `docs/https-proxy.md`). It is kept **off
+`master` on purpose** — master stays with the single `ANTHROPIC_BASE_URL` setup.
+Do not merge it; rebase it onto `master` instead. Keep changes to shared files
+small so the rebase stays cheap.
+
 ## Hard constraints
 
 - **Zero runtime and zero dev dependencies — deliberate, please keep it.** The whole
