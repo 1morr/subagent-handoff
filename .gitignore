@@ -1,6 +1,10 @@
 # 內含 API key，永遠不要提交
 config.json
 
+# HTTPS proxy 模式的本機 CA，私鑰外洩就能解開你的 api.anthropic.com 流量
+https-proxy-ca.pem
+https-proxy-ca-key.pem
+
 # 儲存設定時的暫存檔，正常會被 rename 掉；程式中途被砍才會留下
 config.json.*.tmp
 
