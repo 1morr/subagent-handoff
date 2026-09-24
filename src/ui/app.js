@@ -828,6 +828,8 @@ function renderLogs() {
 // ── 接入說明 ───────────────────────────────────────────────────────
 function renderSetup() {
   const port = S.runtime.boundProxyPort
+  // JSON.stringify 才會把 Windows 路徑的反斜線跳脫好，貼進 settings.json 才是合法的 JSON
+  const caPath = JSON.stringify(S.runtime.caCertPath)
   return `
     <section class="panel">
       <div class="panel-head"><span class="lbl">${t('setup.step1Title')}</span></div>
@@ -835,10 +837,12 @@ function renderSetup() {
         <p style="margin:0">${t('setup.step1Body')}</p>
         <pre id="snippet">{
   "env": {
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:${port}"
+    "HTTPS_PROXY": "http://127.0.0.1:${port}",
+    "NODE_EXTRA_CA_CERTS": ${esc(caPath)}
   }
 }</pre>
         <div><button class="btn" data-act="copy">${t('common.copy')}</button></div>
+        <span class="hint">${t('setup.proxyInherit')}</span>
         <div class="marginal alarm"><i></i><div>
           ${t('setup.warnCreds')}
         </div></div>
