@@ -11,6 +11,24 @@
 
 ---
 
+## 2026-09-25（`feat/https-proxy` 分支）
+
+### 新增
+
+- **HTTPS proxy 模式，讓 Claude Desktop 也能接。** Desktop 的 Code 分頁不理
+  `ANTHROPIC_BASE_URL`，但照讀 `HTTPS_PROXY` 與 `NODE_EXTRA_CA_CERTS`（issue #2）。
+  proxy 埠多收 `CONNECT`：`api.anthropic.com:443` 用本機 CA 解開，其餘主機純隧道。
+  只放在分支上，master 維持一種接法 —— 多一把 CA 與一條 MITM 路徑，換來的只是 Desktop。
+- 解開之後只有 `/v1/messages*` 交給分流與流量記錄，其餘路徑原樣轉發。實測一個
+  `claude -p` 就多出 14 筆 OAuth、feature flag、遙測，全記下來會淹掉流量記錄；
+  `ANTHROPIC_BASE_URL` 模式下 router 本來就只看得到 `/v1/messages*`（master 的 traffic.log
+  4666 筆裡沒有別的）。
+- WebSocket upgrade 也原樣轉發：Claude Code 2.1.281 的 voice mode 對
+  `/api/ws/speech_to_text/voice_stream` 開 WebSocket，沒接住的話開了這個模式它就壞。
+- 實測 Claude Code 2.1.281（CLI，Windows）接受這把帶 nameConstraints 的 CA，主對話與
+  subagent 分類正確。Desktop、Remote Control、真的 voice mode 還沒測。
+  細節見 [docs/https-proxy.md](docs/https-proxy.md)。
+
 ## 2026-09-24
 
 ### 修正

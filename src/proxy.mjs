@@ -425,7 +425,11 @@ export function createProxyServer(getConfig, log, options = {}) {
       // 命中分流規則，拿你的額度去跑推論，所以來源檢查要在做任何事之前。
       // 用的是實際綁定的埠，不是 config.proxyPort —— 使用者在 GUI 改埠但還沒重啟時，
       // 兩者會不一樣，這裡要信的是真正在監聽的那個。
-      if (!isLocalRequest(req, getRuntime().boundProxyPort)) {
+      //
+      // 例外是 CONNECT 解開的請求（src/connect.mjs）：它們的 Host 是 api.anthropic.com，必然過不了
+      // 主機名檢查。這條路不必防：網頁的 fetch 送不出 CONNECT，瀏覽器也不信任 router 的 CA。
+      // 這台 server 本身只收明文，socket 是加密的就只可能是那條路進來的。
+      if (!req.socket.encrypted && !isLocalRequest(req, getRuntime().boundProxyPort)) {
         rejectForeignOrigin(res)
         return
       }
