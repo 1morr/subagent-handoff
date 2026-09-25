@@ -8,7 +8,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createCa, issueLeaf } from '../src/ca.mjs'
-import { attachConnect, setupHttpsProxy, INTERCEPT_HOST } from '../src/connect.mjs'
+import { attachConnect, createHttpsProxy, INTERCEPT_HOST } from '../src/connect.mjs'
 import { createHarness, listen, rawRequest, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
 
 const ca = createCa({ permittedHost: INTERCEPT_HOST })
@@ -199,14 +199,16 @@ test('WebSocket upgrade 原樣接到上游（voice mode 用的就是這條）', 
 
 // ── 模式關閉時跟沒有這個功能一樣 ───────────────────────────────────
 
-test('setupHttpsProxy：關閉時不掛 CONNECT、不產生 CA，CONNECT 直接被斷線', async () => {
+test('createHttpsProxy：關閉時不掛 CONNECT、不產生 CA，CONNECT 直接被斷線', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'https-proxy-off-'))
   const off = await createHarness()
   try {
-    assert.equal(await setupHttpsProxy(off.proxy, { enabled: false, dir }), null)
+    const sw = createHttpsProxy(off.proxy, { dir })
+    assert.deepEqual(await sw.apply(false), { changed: false })
+    assert.equal(sw.enabled, false)
     assert.equal(off.proxy.listenerCount('connect'), 0)
-    assert.deepEqual(await readdir(dir), [], '沒開就不該有任何 CA 檔案')
-    // 沒有 connect 監聽者時 Node 直接關掉連線 —— 跟 master 一樣，不回任何狀態碼
+    assert.deepEqual(await readdir(dir), [], '沒開過就不該有任何 CA 檔案')
+    // 沒有 connect 監聽者時 Node 直接關掉連線 —— 跟沒有這個功能時一樣，不回任何狀態碼
     await assert.rejects(connect(`${INTERCEPT_HOST}:443`, off.proxyUrl))
   } finally {
     await off.close()
@@ -214,14 +216,17 @@ test('setupHttpsProxy：關閉時不掛 CONNECT、不產生 CA，CONNECT 直接�
   }
 })
 
-test('setupHttpsProxy：開啟時產生 CA 並掛上 CONNECT —— 上一個測試的對照組', async () => {
+test('createHttpsProxy：開啟時產生 CA 並掛上 CONNECT —— 上一個測試的對照組', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'https-proxy-on-'))
   const on = await createHarness({}, { runtime: { httpsProxy: true } })
   try {
-    const result = await setupHttpsProxy(on.proxy, { enabled: true, dir, warn: () => {} })
+    const sw = createHttpsProxy(on.proxy, { dir, warn: () => {} })
+    assert.deepEqual(await sw.apply(true), { changed: true, created: true })
     assert.equal(on.proxy.listenerCount('connect'), 1)
-    assert.equal(result.certPath, path.join(dir, 'https-proxy-ca.pem'))
+    assert.equal(sw.certPath, path.join(dir, 'https-proxy-ca.pem'))
     assert.equal((await readdir(dir)).length, 2)
+    assert.deepEqual(await sw.apply(true), { changed: false }, '已經開著，不重複掛')
+    assert.equal(on.proxy.listenerCount('connect'), 1)
     const { status, socket } = await connect('127.0.0.1:1', on.proxyUrl)
     socket.destroy()
     assert.equal(status, 502, 'CONNECT 有人處理了，只是這個目的地連不上')
@@ -231,7 +236,42 @@ test('setupHttpsProxy：開啟時產生 CA 並掛上 CONNECT —— 上一個測
   }
 })
 
-test('guard 的例外只在啟動時開了 HTTPS proxy 模式才存在', async () => {
+test('createHttpsProxy：執行中關掉，CONNECT 監聽拿掉、還開著的隧道一起斷；再打開不用重啟', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'https-proxy-toggle-'))
+  const h = await createHarness({}, { runtime: { httpsProxy: true } })
+  const echo = net.createServer((s) => s.pipe(s))
+  const echoPort = new URL(await listen(echo)).port
+  try {
+    const sw = createHttpsProxy(h.proxy, { dir, warn: () => {} })
+    await sw.apply(true)
+    const { status, socket } = await connect(`127.0.0.1:${echoPort}`, h.proxyUrl)
+    assert.equal(status, 200)
+    // 關掉之後這條隧道要被斷；不斷的話這裡兩秒後就失敗，而不是讓整個測試卡住
+    const closed = Promise.race([
+      once(socket, 'close'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('tunnel still open after turning the mode off')), 2000)),
+    ])
+
+    assert.deepEqual(await sw.apply(false), { changed: true })
+    assert.equal(sw.enabled, false)
+    assert.equal(sw.certPath, null)
+    assert.equal(h.proxy.listenerCount('connect'), 0)
+    await closed
+    await assert.rejects(connect(`127.0.0.1:${echoPort}`, h.proxyUrl), undefined, '關掉之後的 CONNECT 被斷線')
+
+    await sw.apply(true)
+    const again = await connect(`127.0.0.1:${echoPort}`, h.proxyUrl)
+    again.socket.destroy()
+    assert.equal(again.status, 200, '再打開立即可用，沿用同一把 CA')
+    assert.equal((await readdir(dir)).length, 2)
+  } finally {
+    echo.close()
+    await h.close()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('guard 的例外只在 HTTPS proxy 模式開著時才存在', async () => {
   // 刻意在 runtime 回報「沒開」的 router 上掛 CONNECT：解開的請求 Host 是 api.anthropic.com，
   // 例外不存在就該被 guard 擋下。開著時同樣的請求會過（本檔第一個測試）
   const off = await createHarness()

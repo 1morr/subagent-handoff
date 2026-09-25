@@ -95,7 +95,7 @@ flowchart LR
 | router 沒在跑時 | API 請求失敗 | Claude Code、git、npm… 全部斷網 |
 | 本機 CA | 沒有 | 有，只能簽 `api.anthropic.com` |
 
-**怎麼打開：** 在**接入**分頁最上面勾選開關（或設 `"httpsProxy": true`），存檔、重啟 router，再貼上分頁給出的片段。關掉時要把設定改回 `ANTHROPIC_BASE_URL`。
+**怎麼打開：** 在**接入**分頁最上面勾選開關（或設 `"httpsProxy": true`），按儲存 —— router 當場切換，不用重啟 —— 再把分頁給出的片段放進 Claude Code 的設定、重開 Claude Code。關掉時要把設定改回 `ANTHROPIC_BASE_URL`。
 
 **會不會封號：** 沒有人能保證。兩種模式下，主對話請求的 token 與 body 都原樣，但都是由 router 發出的：TLS 指紋是 Node 的，還多了兩個 Node `fetch` 自己加的 header。開啟之後，登入、遙測、Remote Control、voice 也改由 Node 發出。實測細節、完整的圖、全域與單一 repo 的設定方式與風險分析見 [docs/https-proxy.md](docs/https-proxy.md)。
 
@@ -115,7 +115,7 @@ flowchart LR
 | Field | |
 |---|---|
 | `proxyPort` / `adminPort` | 8787 與 8788。改這兩個需要重新啟動；其他所有設定都是逐請求即時生效 |
-| `httpsProxy` | 給 Claude Desktop 用的 HTTPS proxy 模式，預設 `false`。跟埠一樣要重新啟動 |
+| `httpsProxy` | 給 Claude Desktop 用的 HTTPS proxy 模式，預設 `false`。在 GUI 存檔就當場切換 |
 | `providers[].baseUrl` | 必須說 Anthropic Messages 格式 —— router 會對 `{baseUrl}/v1/messages` 發送請求 |
 | `providers[].model` | 送出前改寫 `model`。留空 = 不動它 |
 | `providers[].authStyle` | `bearer` 或 `x-api-key` |

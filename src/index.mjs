@@ -3,7 +3,7 @@ import { loadConfig, saveConfig, CONFIG_PATH } from './config.mjs'
 import { createProxyServer, TrafficLog } from './proxy.mjs'
 import { createAdminServer } from './admin.mjs'
 import { createFileSink } from './logfile.mjs'
-import { setupHttpsProxy } from './connect.mjs'
+import { createHttpsProxy } from './connect.mjs'
 
 const HOST = '127.0.0.1'
 
@@ -20,26 +20,38 @@ let config = await loadConfig()
 const trafficLogPath = path.join(path.dirname(CONFIG_PATH), 'traffic.log')
 const log = new TrafficLog(300, createFileSink({ file: trafficLogPath }))
 
-// 埠與 HTTPS proxy 模式是啟動當下決定的；其餘設定每筆請求現查，改完即時生效
-const bound = {
-  boundProxyPort: config.proxyPort,
-  boundAdminPort: config.adminPort,
-  httpsProxy: config.httpsProxy,
-  caCertPath: null,
-}
+// 埠是綁定當下決定的；其餘設定每筆請求現查，改完即時生效
+const bound = { boundProxyPort: config.proxyPort, boundAdminPort: config.adminPort }
 
 const getConfig = () => config
-const getRuntime = () => bound
+// HTTPS proxy 模式存檔即時切換，所以現查：GUI 與 guard 看到的都是 router 此刻實際的狀態
+const getRuntime = () => ({ ...bound, httpsProxy: httpsProxy.enabled, caCertPath: httpsProxy.certPath })
+
+const proxy = createProxyServer(getConfig, log, { getRuntime })
+const httpsProxy = createHttpsProxy(proxy, { dir: path.dirname(CONFIG_PATH) })
+
+function announceHttpsProxy({ changed, created }) {
+  if (!changed) return
+  console.log(httpsProxy.enabled
+    ? `  HTTPS proxy mode is on. CA  ${httpsProxy.certPath}${created ? '  (new)' : ''}`
+    : '  HTTPS proxy mode is off: CONNECT is no longer accepted.')
+}
 
 async function setConfig(next) {
-  config = await saveConfig(next)
+  // 先切換、再存檔：切換失敗（例如 CA 寫不進去）就不存，GUI 收到錯誤、設定檔也不會跟實際狀態不一致
+  const wasOn = httpsProxy.enabled
+  const outcome = await httpsProxy.apply(next.httpsProxy === true)
+  try {
+    config = await saveConfig(next)
+  } catch (err) {
+    await httpsProxy.apply(wasOn)
+    throw err
+  }
+  announceHttpsProxy(outcome)
   return config
 }
 
-const proxy = createProxyServer(getConfig, log, { getRuntime })
-// 沒開就是 null，下面每一處跟它有關的都跳過 —— 關著的 router 跟沒有這個功能時一樣
-const httpsProxy = await setupHttpsProxy(proxy, { enabled: config.httpsProxy, dir: path.dirname(CONFIG_PATH) })
-if (httpsProxy) bound.caCertPath = httpsProxy.certPath
+const startup = await httpsProxy.apply(config.httpsProxy)
 const admin = createAdminServer({ getConfig, setConfig, log, getRuntime })
 
 function listen(server, port, label) {
@@ -55,16 +67,13 @@ function listen(server, port, label) {
   })
 }
 
-// HTTPS proxy 模式下，CONNECT 解開的請求由另一台 server 解析 HTTP，逾時看的是它的設定
-for (const server of [proxy, httpsProxy?.decrypted].filter(Boolean)) {
-  // Claude Code 會等串流等很久，別讓 Node 提前砍掉連線
-  server.headersTimeout = 0
-  server.requestTimeout = 0
-  server.timeout = 0
-  // Node 預設閒置 5 秒就砍掉 keep-alive 連線，並把 `Keep-Alive: timeout=5` 告訴 client。
-  // 兩輪對話之間閒置遠不只 5 秒，砍掉只是逼 Claude Code 每次重連，多一次握手就多一次失敗機會。
-  server.keepAliveTimeout = 5 * 60_000
-}
+// Claude Code 會等串流等很久，別讓 Node 提前砍掉連線
+proxy.headersTimeout = 0
+proxy.requestTimeout = 0
+proxy.timeout = 0
+// Node 預設閒置 5 秒就砍掉 keep-alive 連線，並把 `Keep-Alive: timeout=5` 告訴 client。
+// 兩輪對話之間閒置遠不只 5 秒，砍掉只是逼 Claude Code 每次重連，多一次握手就多一次失敗機會。
+proxy.keepAliveTimeout = 5 * 60_000
 
 try {
   await listen(proxy, config.proxyPort, 'Proxy')
@@ -74,8 +83,8 @@ try {
   process.exit(1)
 }
 
-const connectHint = httpsProxy
-  ? `  HTTPS proxy mode is on. CA  ${httpsProxy.certPath}${httpsProxy.created ? '  (new)' : ''}
+const connectHint = httpsProxy.enabled
+  ? `  HTTPS proxy mode is on. CA  ${httpsProxy.certPath}${startup.created ? '  (new)' : ''}
 
   In Claude Code settings.json set HTTPS_PROXY to the proxy above and
   NODE_EXTRA_CA_CERTS to the CA, remove ANTHROPIC_BASE_URL, and leave

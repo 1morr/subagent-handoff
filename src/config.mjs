@@ -63,7 +63,7 @@ export function defaultConfig() {
     /**
      * HTTPS proxy 模式（src/connect.mjs）。關著的時候 router 跟沒有這個功能時一模一樣：不收 CONNECT、
      * 不產生 CA。預設關閉，因為它多出一把本機 CA，而且讓 Claude Code 的所有連線都依賴 router 活著。
-     * 跟埠一樣是啟動時決定的，改了要重啟。
+     * GUI 存檔即時切換，不用重啟（src/index.mjs 的 setConfig）。
      */
     httpsProxy: false,
     providers: [kimi],

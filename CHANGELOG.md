@@ -15,6 +15,13 @@
 
 ### 變更
 
+- **HTTPS proxy 模式存檔當場切換，不用重啟 router。** 之前要求重啟，是為了保證「關閉＝根本沒掛上
+  `CONNECT`」；改成執行中把監聽拿掉、同時斷開還開著的隧道，一樣做得到，測試也照樣守著（用變異驗證過：
+  不斷隧道、不拿監聽都會紅）。Fiddler、Charles 的解密開關也是勾了就生效。先切換再存檔，切換失敗就不存。
+  接入分頁改成明白標出 router 此刻實際的模式，拿掉原本那句「下面的片段對應的是它現在實際在跑的模式」
+  —— 它沒講現在是什麼狀態，存完還要重啟這件事也容易被當成已經切換。切換後另外提醒 Claude Code 那邊
+  的設定要跟著換；關掉時用警告樣式，因為還設著 `HTTPS_PROXY` 的 Claude Code 會整個連不上。
+
 - **實測 auto mode 的權限分類器走哪裡，結論跟直覺相反。** Claude Code 先請 Anthropic 在主對話
   的回應裡附上判定（`safeguard_results`）；provider 不會附，只要 session 裡有一筆請求到了
   provider，Claude Code 就改成每個動作另發一筆分類器請求，而那筆請求**沒帶 agent-id**，算 `main`。

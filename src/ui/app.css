@@ -270,6 +270,12 @@
   #toast.bad { border-color: #4a2a24; } #toast.bad > i { background: var(--alarm); }
   #toast[hidden] { display: none; }
 
+  /* 接入分頁：HTTPS proxy 模式目前的狀態 */
+  .mode-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .mode-pill { font: 600 11px/1 var(--sign); letter-spacing: .08em; padding: 4px 9px; border: 1px solid; }
+  .mode-pill.on { color: var(--sub); border-color: var(--sub); }
+  .mode-pill.off { color: var(--on-bay-dim); border-color: var(--rail-lit); }
+
   /* 接入分頁：HTTPS proxy 模式的原理說明（流向圖 + 比較表） */
   details.explain > summary { cursor: pointer; font: 12px/1.6 var(--han); color: #7fc7b8; }
   details.explain[open] > summary { margin-bottom: 12px; }

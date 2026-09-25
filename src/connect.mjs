@@ -124,7 +124,7 @@ function relayUpgrade(req, socket, head, upstream) {
 }
 
 /**
- * 在 proxy server 上掛 CONNECT 處理。
+ * 在 proxy server 上掛 CONNECT 處理，回傳卸下它的方法。
  *
  * 解開後的 `/v1/messages*` 以 `proxy.emit('request', …)` 交回 proxy 的 handler，而不是另外包一份：
  * 這樣分流邏輯只有一份，兩種接入方式不會各自長歪。
@@ -134,21 +134,31 @@ function relayUpgrade(req, socket, head, upstream) {
  * @param {object} [options]
  * @param {string} [options.upstreamBaseUrl] 測試用：把原樣轉發的那條線指到假上游
  * @param {(message: string) => void} [options.warn] 握手失敗之類使用者要知道的事
- * @returns {import('node:http').Server} 解析解開後 HTTP 的那一台，呼叫端要替它設跟 proxy 一樣的逾時
+ * @returns {() => void} 卸下：移除 CONNECT 監聽，並斷開所有還開著的 CONNECT 連線
  */
 export function attachConnect(proxy, leaf, { upstreamBaseUrl = PASSTHROUGH_BASE_URL, warn = (m) => console.error(m) } = {}) {
   const upstream = new URL(upstreamBaseUrl)
   const secureContext = tls.createSecureContext({ key: leaf.keyPem, cert: leaf.certPem })
+  const open = new Set()
+  let detached = false
 
   const decrypted = http.createServer((req, res) => {
     if (req.url.startsWith(ROUTED_PREFIX)) proxy.emit('request', req, res)
     else relay(req, res, upstream)
   })
   decrypted.on('upgrade', (req, socket, head) => relayUpgrade(req, socket, head, upstream))
+  // 解開的請求由這一台解析 HTTP，逾時看的是它的設定，理由跟 src/index.mjs 裡 proxy 那台一樣：
+  // Claude Code 會等串流等很久，兩輪對話之間的閒置也遠不只 Node 預設的 5 秒
+  decrypted.headersTimeout = 0
+  decrypted.requestTimeout = 0
+  decrypted.timeout = 0
+  decrypted.keepAliveTimeout = 5 * 60_000
 
-  proxy.on('connect', (req, socket, head) => {
+  const onConnect = (req, socket, head) => {
     // client 那頭隨時可能 reset；沒人接的 error 事件會直接砍掉整個 process
     socket.on('error', () => {})
+    open.add(socket)
+    socket.on('close', () => open.delete(socket))
 
     const target = parseAuthority(req.url)
     if (!target) {
@@ -176,29 +186,56 @@ export function attachConnect(proxy, leaf, { upstreamBaseUrl = PASSTHROUGH_BASE_
     secure.on('error', () => {})
     secure.on('close', () => {
       // TLS 1.3 下 client 驗不過證書時只是關掉連線，server 端看不到錯誤，只看得到「還沒握完手就關了」。
-      // 最常見的原因是 Claude Code 沒拿到 NODE_EXTRA_CA_CERTS，不講的話使用者只看到 Claude Code 連不上
-      if (!handshaken) {
+      // 最常見的原因是 Claude Code 沒拿到 NODE_EXTRA_CA_CERTS，不講的話使用者只看到 Claude Code 連不上。
+      // 卸下時是我們自己斷的線，不算
+      if (!handshaken && !detached) {
         warn(`✗ a client closed the ${INTERCEPT_HOST} connection before the TLS handshake finished — if Claude Code cannot connect, check that NODE_EXTRA_CA_CERTS points at the router's CA`)
       }
     })
     decrypted.emit('connection', secure)
-  })
+  }
+  proxy.on('connect', onConnect)
 
-  return decrypted
+  return () => {
+    detached = true
+    proxy.removeListener('connect', onConnect)
+    // 關掉就是真的關掉：還開著的隧道與解開的連線一起斷，不留到它們自己結束
+    for (const socket of open) socket.destroy()
+    open.clear()
+  }
 }
 
 /**
- * 啟動時的唯一入口：`config.httpsProxy` 沒開就什麼都不做 —— 不掛 CONNECT、不讀也不產生 CA，
- * router 跟沒有這個功能時一模一樣（test/connect.test.mjs 守著這一點）。
+ * HTTPS proxy 模式的開關，執行中隨時切換，不用重啟。
+ *
+ * 關著的時候 router 跟沒有這個功能時一樣：沒有 CONNECT 監聽、guard 沒有例外（它看 `enabled`）、
+ * 不讀 CA；從沒打開過的話連 CA 檔案都不存在。打開時才讀取或產生 CA。test/connect.test.mjs 守著這些。
  *
  * @param {import('node:http').Server} proxy
- * @param {{ enabled: boolean, dir: string, warn?: (message: string) => void }} options
+ * @param {{ dir: string, warn?: (message: string) => void, upstreamBaseUrl?: string }} options
  *   `dir` 是 CA 落檔的目錄，跟 config.json 放在一起
- * @returns {Promise<{ certPath: string, created: boolean, decrypted: import('node:http').Server } | null>}
  */
-export async function setupHttpsProxy(proxy, { enabled, dir, warn }) {
-  if (!enabled) return null
-  const ca = await loadOrCreateCa(dir, INTERCEPT_HOST)
-  const decrypted = attachConnect(proxy, issueLeaf(ca, INTERCEPT_HOST), { warn })
-  return { certPath: ca.certPath, created: ca.created, decrypted }
+export function createHttpsProxy(proxy, { dir, warn, upstreamBaseUrl }) {
+  let active = null
+  return {
+    get enabled() { return active !== null },
+    get certPath() { return active?.certPath ?? null },
+    /**
+     * @returns {Promise<{ changed: boolean, created?: boolean }>} `created`：這次打開時新產生了 CA
+     */
+    async apply(enabled) {
+      if (enabled && !active) {
+        const ca = await loadOrCreateCa(dir, INTERCEPT_HOST)
+        const detach = attachConnect(proxy, issueLeaf(ca, INTERCEPT_HOST), { warn, upstreamBaseUrl })
+        active = { certPath: ca.certPath, detach }
+        return { changed: true, created: ca.created }
+      }
+      if (!enabled && active) {
+        active.detach()
+        active = null
+        return { changed: true }
+      }
+      return { changed: false }
+    },
+  }
 }

@@ -154,19 +154,25 @@ sequenceDiagram
 
 ## 開關
 
-GUI 接入分頁最上面的「HTTPS proxy 模式」，或 `config.json` 的 `"httpsProxy": true`。
-跟埠一樣是啟動時決定的：**存檔之後要重啟 router**。重啟前，接入分頁的片段仍然對應舊的模式。
+GUI 接入分頁最上面的「HTTPS proxy 模式」，勾選後按**儲存**：**router 當場切換，不用重啟。**
+（直接手改 `config.json` 的 `"httpsProxy"` 則跟其他手改一樣，下次啟動才生效。）
 
-- **打開：** 第一次啟動時在 `config.json` 旁邊產生 CA，proxy 埠開始接受 `CONNECT`。
-- **關掉：** 不再接受 `CONNECT`（連線直接被斷），也不讀 CA。CA 檔案留著，下次打開不必重新設定信任。
-  **Claude Code 那邊的設定要一起改回來**：還留著 `HTTPS_PROXY` 的話，router 不收 `CONNECT`，
-  Claude Code 的所有連線都會失敗。
+- **打開：** 第一次打開時在 `config.json` 旁邊產生 CA，proxy 埠開始接受 `CONNECT`。
+- **關掉：** 拿掉 `CONNECT` 監聽，**還開著的隧道與解開的連線一起斷掉**，之後的 `CONNECT` 直接被斷線；
+  不再讀 CA。CA 檔案留著，下次打開不必重新設定信任。
+- 先切換再存檔：切換失敗（例如 CA 寫不進去）就不存，GUI 顯示錯誤，設定檔不會跟實際狀態不一致。
 
-「關掉＝原行為」由 `test/connect.test.mjs` 守著：不掛 `CONNECT`、不產生 CA、guard 的例外不存在。
+接入分頁會一直標出 router **此刻實際**在哪個模式；勾了還沒存時說明按下儲存會發生什麼；剛切換完時提醒
+Claude Code 那邊還沒變。**router 切換了，Claude Code 不會跟著變**：它的 `settings.json` 要換成新的片段、
+再重開（Desktop 開新 session）。關掉時這一步特別重要：還留著 `HTTPS_PROXY` 的話，router 不收 `CONNECT`，
+Claude Code 的所有連線都會失敗。
+
+「關掉＝原行為」由 `test/connect.test.mjs` 守著：不掛 `CONNECT`、沒打開過就不產生 CA、guard 的例外
+不存在；執行中關掉時監聽被拿掉、開著的隧道被斷，再打開不用重啟。
 
 ## 設定 Claude Code
 
-模式打開、重啟之後，接入分頁會給出填好 CA 路徑的片段。放在哪一層決定影響範圍：
+模式打開之後，接入分頁會給出填好 CA 路徑的片段。放在哪一層決定影響範圍：
 
 **全域 —— `~/.claude/settings.json`（CLI 與 Desktop 共用）**
 
@@ -314,7 +320,7 @@ Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之�
 - **解開的連線只講 HTTP/1.1。** router 的 TLS 沒有宣告 ALPN，Claude Code 會退回 HTTP/1.1；實測正常。
 - **原樣轉發的請求與隧道不進流量記錄**，GUI 上看不到它們。這是刻意的（見上面「原理」），但也代表
   出問題時只能靠 Claude Code 的 debug log 查。
-- **開關、換 CA 都要重啟**：開關要重啟 router；CA 換了之後 Claude Code 要重開才會讀到。
+- **換 CA 要重開 Claude Code** 才會讀到新的證書。開關本身存檔即生效，但 Claude Code 那邊的設定改了也要重開。
 - **Claude Desktop 的聽寫**不經過 router；**CLI 的 Remote Control** 只有全域設定才行。
 - **沒測過**：Desktop 的 SSH / WSL session、背景 agent（`claude agents`、`--bg`）、macOS / Linux 上的
   Desktop、Claude Code 送 CONNECT 時就附帶資料（router 會直接斷線；目前的 client 都等 200 才開始握手）。

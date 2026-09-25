@@ -904,14 +904,23 @@ function renderSetup() {
         <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
           <input type="checkbox" data-f="httpsProxy" ${S.config.httpsProxy ? 'checked' : ''}> ${t('setup.modeLabel')}
         </label>
+        <div class="mode-status">
+          <span class="lbl">${t('setup.modeNow')}</span>
+          <span class="mode-pill ${proxyMode ? 'on' : 'off'}">${t(proxyMode ? 'setup.modeOn' : 'setup.modeOff')}</span>
+          <span class="hint">${t(proxyMode ? 'setup.modeOnState' : 'setup.modeOffState')}</span>
+        </div>
+        ${(S.config.httpsProxy === true) === proxyMode ? '' : `<div class="marginal note"><i></i><div>${
+          t(S.config.httpsProxy ? 'setup.modePendingOn' : 'setup.modePendingOff')}</div></div>`}
+        ${S.modeSwitched && S.modeSwitched === (proxyMode ? 'on' : 'off') ? `<div class="marginal ${proxyMode ? 'note' : 'alarm'}"><i></i><div>${
+          t(proxyMode ? 'setup.modeSwitchedOn' : 'setup.modeSwitchedOff')}</div></div>` : ''}
         <span class="hint">${t('setup.modeHint')}</span>
         ${renderModeExplain()}
-        ${(S.config.httpsProxy === true) === proxyMode ? '' : `<div class="marginal alarm"><i></i><div>${t('setup.modeRestart')}</div></div>`}
       </div>
     </section>
 
     <section class="panel">
-      <div class="panel-head"><span class="lbl">${t('setup.step1Title')}</span></div>
+      <div class="panel-head"><span class="lbl">${t('setup.step1Title')}</span><span class="hint">${
+        t('setup.step1ForMode', { mode: t(proxyMode ? 'setup.modeOn' : 'setup.modeOff') })}</span></div>
       <div class="panel-body" style="display:flex;flex-direction:column;gap:12px">
         <p style="margin:0">${st('step1Body')}</p>
         <pre id="snippet">${snippet}</pre>
@@ -1006,6 +1015,7 @@ document.addEventListener('input', (ev) => {
   // 接入分頁的模式開關是頂層設定，不屬於任何 provider 卡片或規則列
   if (f === 'httpsProxy') {
     S.config.httpsProxy = el.checked
+    S.modeSwitched = null
     markDirty()
     render()
     return
@@ -1145,7 +1155,10 @@ $('#save').addEventListener('click', async () => {
   const btn = $('#save')
   btn.disabled = true
   try {
+    const wasProxyMode = S.runtime.httpsProxy === true
     applyState(await api('PUT', '/api/config', S.config))
+    // 存檔當下 router 就切換了；記下來，接入分頁才能提醒 Claude Code 那邊也要跟著換
+    if ((S.runtime.httpsProxy === true) !== wasProxyMode) S.modeSwitched = S.runtime.httpsProxy ? 'on' : 'off'
     render()
     toast(t('common.savedToast'))
   } catch (err) {

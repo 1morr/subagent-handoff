@@ -117,8 +117,8 @@ get in differs.
 | Local CA | none | one, name-constrained to `api.anthropic.com` |
 
 **To turn it on:** tick the switch at the top of the **Connect** tab (or set
-`"httpsProxy": true`), save, restart the router, then paste the snippet the tab
-shows. Turning it off again means putting `ANTHROPIC_BASE_URL` back.
+`"httpsProxy": true`) and save — the router switches on the spot, no restart —
+then paste the snippet the tab shows into Claude Code's settings and restart Claude Code. Turning it off again means putting `ANTHROPIC_BASE_URL` back.
 
 **Account risk:** nobody can promise it is safe. In both modes the subscription
 requests keep your token and body but leave from the router, with Node's TLS
@@ -148,7 +148,7 @@ Rules are evaluated top to bottom and the first match wins.
 | Field | |
 |---|---|
 | `proxyPort` / `adminPort` | 8787 and 8788. Changing them needs a restart; everything else takes effect per request |
-| `httpsProxy` | HTTPS proxy mode for Claude Desktop, default `false`. Needs a restart, like the ports |
+| `httpsProxy` | HTTPS proxy mode for Claude Desktop, default `false`. Saving it in the GUI switches the router immediately |
 | `providers[].baseUrl` | Must speak the Anthropic Messages format — the router posts to `{baseUrl}/v1/messages` |
 | `providers[].model` | Rewrites `model` before sending. Empty = leave alone |
 | `providers[].authStyle` | `bearer` or `x-api-key` |

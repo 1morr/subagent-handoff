@@ -9,10 +9,11 @@ Anthropic-compatible provider you pay for; everything else passes through to
 
 - **HTTPS proxy mode (`config.httpsProxy`, `src/connect.mjs`) is opt-in, and off
   must mean the router behaves as if the feature did not exist**: no `CONNECT`
-  listener, no CA files, no guard exemption, and the original setup steps on
-  the Connect tab (only the mode panel above them, with its explanation, is new).
-  `test/connect.test.mjs` pins the first three; keep new proxy-mode behaviour
-  behind the same switch.
+  listener, no CA files unless it was turned on before, no guard exemption, and
+  the original setup steps on the Connect tab (only the mode panel above them is
+  new). It switches at runtime on save (`createHttpsProxy().apply`), and turning
+  it off also drops open tunnels. `test/connect.test.mjs` pins the listener, CA,
+  guard and runtime-toggle parts; keep new proxy-mode behaviour behind the switch.
 - **Zero runtime and zero dev dependencies — deliberate, please keep it.** The whole
   point is that a proxy in front of your API traffic has the smallest possible supply
   chain. Tests use built-in `node --test`; syntax gating uses built-in `node --check`.
