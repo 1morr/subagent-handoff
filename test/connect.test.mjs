@@ -265,15 +265,20 @@ test('createHttpsProxy：執行中關掉，CONNECT 監聽拿掉、還開著的�
   const h = await createHarness({}, { runtime: { httpsProxy: true } })
   const echo = net.createServer((s) => s.pipe(s))
   const echoPort = new URL(await listen(echo)).port
+  let socket = null
+  let timer = null
   try {
     const sw = createHttpsProxy(h.proxy, { dir, warn: () => {} })
     await sw.apply(true)
-    const { status, socket } = await connect(`127.0.0.1:${echoPort}`, h.proxyUrl)
-    assert.equal(status, 200)
+    const tunnel = await connect(`127.0.0.1:${echoPort}`, h.proxyUrl)
+    socket = tunnel.socket
+    assert.equal(tunnel.status, 200)
     // 關掉之後這條隧道要被斷；不斷的話這裡兩秒後就失敗，而不是讓整個測試卡住
     const closed = Promise.race([
       once(socket, 'close'),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('tunnel still open after turning the mode off')), 2000)),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('tunnel still open after turning the mode off')), 2000)
+      }),
     ])
 
     assert.deepEqual(await sw.apply(false), { changed: true })
@@ -289,6 +294,9 @@ test('createHttpsProxy：執行中關掉，CONNECT 監聽拿掉、還開著的�
     assert.equal(again.status, 200, '再打開立即可用，沿用同一把 CA')
     assert.equal((await readdir(dir)).length, 2)
   } finally {
+    // 斷言失敗時隧道可能還開著：不在這裡拆掉，整個 npm test 會卡住不結束，而不是回報失敗
+    clearTimeout(timer)
+    socket?.destroy()
     echo.close()
     await h.close()
     await rm(dir, { recursive: true, force: true })

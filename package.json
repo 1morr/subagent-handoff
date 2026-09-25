@@ -27,6 +27,6 @@
   },
   "scripts": {
     "start": "node src/index.mjs",
-    "test": "node --test"
+    "test": "node --test --test-timeout=60000"
   }
 }
