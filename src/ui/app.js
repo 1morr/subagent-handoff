@@ -18,6 +18,7 @@ import { isAborted, isStreamCut, stateOf, quotaWindow, providerSeats } from './r
 
 const CATALOGS = { en, 'zh-Hant': zhHant }
 const LANG_KEY = 'subagent-handoff:lang'
+const FLIP_KEY = 'subagent-handoff:flip-backup'
 const KEEP = '__keep__'
 
 function detectLang() {
@@ -44,8 +45,24 @@ const S = {
   logFilter: 'all',
   // 預覽的輸入也放 state，否則每次預覽完重繪都會被模板的預設值蓋回去
   preview: null, pvKind: 'subagent', pvModel: 'claude-opus-5',
-  // 「交還給訂閱」的還原點：記下被改掉的規則原本指向哪裡
-  flipBackup: null,
+  // 伺服器上已存的那一份。立即生效的動作以它為底，不把畫面上的草稿一起送出去（見 saveOnly）
+  saved: null,
+  // 「交還給訂閱」的還原點：被改掉的規則原本指向哪裡，[{ id, providerId }]。存進 localStorage ——
+  // 配額見底時按下去，補回來往往是幾小時後的事，重新整理頁面不該讓「改回去」消失
+  flipBackup: readFlipBackup(),
+  flipping: false,
+}
+
+function readFlipBackup() {
+  try {
+    const list = JSON.parse(localStorage.getItem(FLIP_KEY))
+    return Array.isArray(list) && list.every((b) => typeof b?.id === 'string' && typeof b?.providerId === 'string') && list.length
+      ? list : null
+  } catch { return null }
+}
+function writeFlipBackup(list) {
+  S.flipBackup = list
+  try { list ? localStorage.setItem(FLIP_KEY, JSON.stringify(list)) : localStorage.removeItem(FLIP_KEY) } catch {}
 }
 let logTimer = null
 // 見過的進條 id。只有真的新到的那幾張會播「印進機架」，閒置時整面是死的。
@@ -98,6 +115,7 @@ function markDirty() {
 
 function applyState(payload) {
   S.config = payload.config
+  S.saved = structuredClone(payload.config)
   S.preview = null
   S.runtime = payload.runtime
   S.dirty = false
@@ -364,10 +382,30 @@ function seatKinds(kinds) {
 /**
  * 「交還給訂閱」是全域緊急動作（所有規則一起改指向，配額見底時按的那一顆），
  * 不屬於任何一家第三方 —— 所以它掛在分流帶那列，不掛在某一張 PRV 卡上。
+ * 看的是已存的規則：它只改已存的那一份（見 saveOnly）。
  */
-const flipButton = (enabled) => S.flipBackup
-  ? `<button class="btn go" data-act="unflip">${t('bay.unflip')}</button>`
-  : `<button class="btn warn" data-act="flip" ${enabled ? '' : 'disabled'}>${t('bay.flip')}</button>`
+function flipButton() {
+  if (S.flipBackup) return `<button class="btn go" data-act="unflip" ${S.flipping ? 'disabled' : ''}>${t('bay.unflip')}</button>`
+  const enabled = S.saved.rules.some(pointsAtProvider)
+  return `<button class="btn warn" data-act="flip" ${enabled && !S.flipping ? '' : 'disabled'}>${t('bay.flip')}</button>
+    ${enabled ? '' : `<span class="hint">${t('bay.flipIdle')}</span>`}`
+}
+const pointsAtProvider = (r) => r.enabled && !!r.providerId && r.providerId !== 'passthrough'
+
+/**
+ * 只存一件事、當場生效的動作（交還給訂閱、HTTPS proxy 模式）：以伺服器上已存的設定為底，只套這一個
+ * 改動 —— 畫面上其他還沒儲存的修改不會被一起送出去，也不會被丟掉。草稿也套同一個改動，
+ * 之後按「儲存」才不會把它蓋回去。
+ */
+async function saveOnly(change) {
+  const next = structuredClone(S.saved)
+  change(next)
+  const payload = await api('PUT', '/api/config', next)
+  if (!S.dirty) return applyState(payload)
+  change(S.config)
+  S.saved = structuredClone(payload.config)
+  S.runtime = payload.runtime
+}
 
 /**
  * 一張第三方席位卡。model 與 baseUrl 從 seat.provider 這筆 config 查（名字由
@@ -409,7 +447,7 @@ function prvCard(s, peak) {
 
 function renderBay() {
   const o = overview()
-  const toProvider = S.config.rules.some((r) => r.enabled && r.providerId && r.providerId !== 'passthrough')
+  const toProvider = S.saved.rules.some(pointsAtProvider)
 
   const q = quotaWindow(o.rl)
   const rlBar = q ? (() => {
@@ -457,7 +495,7 @@ function renderBay() {
         <span>${t('bay.routedCount', { count: `<b class="num">${o.routed}</b>` })}</span>
         ${o.blocked ? `<span style="color:var(--alarm-ink)">${t('bay.blockedCount', { count: `<b class="num">${o.blocked}</b>` })}</span>` : ''}
         <span class="spacer"></span>
-        ${flipButton(toProvider)}
+        ${flipButton()}
         <span class="hint">${t('bay.liveHint')}</span>
       </div>
       ${band}
@@ -1135,17 +1173,23 @@ document.addEventListener('click', async (ev) => {
     } else if (act === 'flip' || act === 'unflip') {
       // 配額見底時最常做的動作，而且往往在 agent 正在跑的時候做 —— 所以直接存檔生效，
       // 不讓它停在「未儲存」。還原點記在 S.flipBackup，按一下就換回去。
-      if (act === 'flip') {
-        S.flipBackup = S.config.rules.map((r) => ({ id: r.id, providerId: r.providerId }))
-        for (const r of S.config.rules) if (r.enabled && r.providerId !== 'passthrough') r.providerId = 'passthrough'
-      } else {
-        const back = new Map(S.flipBackup.map((b) => [b.id, b.providerId]))
-        for (const r of S.config.rules) if (back.has(r.id)) r.providerId = back.get(r.id)
-        S.flipBackup = null
-      }
-      applyState(await api('PUT', '/api/config', S.config))
+      // 送出期間停用按鈕：連點會用已經改成訂閱的規則覆蓋掉還原點
+      const backup = act === 'flip'
+        ? S.saved.rules.filter(pointsAtProvider).map((r) => ({ id: r.id, providerId: r.providerId }))
+        : S.flipBackup
+      const target = new Map(backup.map((b) => [b.id, act === 'flip' ? 'passthrough' : b.providerId]))
+      const hadDraft = S.dirty
+      S.flipping = true
       render()
-      toast(act === 'flip' ? t('bay.flipToast') : t('bay.unflipToast'))
+      try {
+        await saveOnly((cfg) => { for (const r of cfg.rules) if (target.has(r.id)) r.providerId = target.get(r.id) })
+        writeFlipBackup(act === 'flip' ? backup : null)
+      } finally {
+        S.flipping = false
+        render()
+      }
+      toast([t(act === 'flip' ? 'bay.flipToast' : 'bay.unflipToast'), hadDraft ? t('bay.draftKept') : '']
+        .filter(Boolean).join(lang === 'en' ? ' ' : ''))
     } else if (act === 'test') {
       const provider = S.config.providers.find((p) => p.id === pid)
       S.busy[pid] = true; render()
