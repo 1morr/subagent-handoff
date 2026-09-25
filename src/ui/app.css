@@ -232,12 +232,12 @@
   .meter.hot > i { background: var(--alarm); }
 
   /* ── 排程句：整條規則讀得出來，欄位本身就是句子裡的字段 ─────────── */
-  .clearance { display: grid; grid-template-columns: 44px 1fr; transition: transform .18s cubic-bezier(.16,1,.3,1); }
+  .clearance { display: grid; grid-template-columns: 44px minmax(0, 1fr); transition: transform .18s cubic-bezier(.16,1,.3,1); }
   .clearance.hit { transform: translateX(12px); box-shadow: 0 0 0 2px var(--sub); }
   .clearance.shadowed { opacity: .4; }
   /* 停用的規則不參與比對：句子壓暗、導向不再是實心色塊，免得讀成「這條正在把流量送去 provider」 */
   .clearance.off > .say { opacity: .55; }
-  .clearance.off select.target { font-weight: 400; background: transparent; border-color: rgba(26,30,36,.2); color: var(--ink); }
+  .clearance.off select.target.prv, .clearance.off select.target.sub { font-weight: 400; background: transparent; border-color: rgba(26,30,36,.2); color: var(--ink); }
   .clearance > .ord {
     display: grid; place-items: center; align-content: center; gap: 2px; padding: 8px 0;
     /* --on-bay-dim 在導軌灰上只有 4.16:1，這格的 ON／OFF 是 11px 功能字，要再亮一階 */
@@ -255,7 +255,7 @@
   }
   /* 句子裡的字段：控制項本身，不是唯讀文字 —— 功能一項不掉 */
   .clearance select, .clearance input[type=text] {
-    font: 12px var(--data); padding: 3px 7px; min-width: 0;
+    font: 12px var(--data); padding: 3px 7px; min-width: 0; max-width: 100%;
     background: rgba(26,30,36,.06); border: 1px solid rgba(26,30,36,.2); color: var(--ink);
   }
   .clearance select { font-family: var(--han); }
