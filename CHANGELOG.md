@@ -15,6 +15,16 @@
 
 ### 修正
 
+- **文檔與 GUI 說明裡講錯的行為。** 路由分頁「主對話規則指向 provider」的提示與 routing.md 說
+  「整個 session 沒有任何推論到 Anthropic」：子 agent 照自己的規則走，沒有子 agent 規則就留在訂閱；
+  跟著主對話規則過去的也只有 model 符合它的請求。README 說「其他設定逐請求即時生效」：只有 GUI 存檔
+  才是，`config.json` 只在啟動時讀一次，執行中手改不生效、下一次 GUI 存檔還會把它蓋掉；埠在 GUI
+  改不到。`ROUTER_CONFIG` 會把 `traffic.log` 與 CA 一起搬走。本機 CA 在打開模式時產生、重簽，不是
+  「啟動時」。`NODE_USE_ENV_PROXY` 要 Node 24.5（或 22.21）以上才同時管到 `fetch` 與原樣轉發，Node 20 設了沒用。HTTPS proxy 模式下
+  流量記錄沒有那一筆，不代表請求沒送到 router。測試宣稱收窄：`src/index.mjs` 把 guard 的 runtime
+  接到實際開關、先切換再存的那段沒有測試，AGENTS.md、`src/connect.mjs` 與 https-proxy.md 原本寫成
+  有測試守著。
+
 - **GUI 可讀性的幾處細節。** 等寬字堆疊在 `monospace` 之前補上漢字字型：「`.num` 不准套在中文上」這條規則
   守不住（額度窗、批註、送出的 model 的值有時是翻譯字串），中文一直掉到瀏覽器隨便挑的字。流量的「來源」
   欄印翻譯後的「主對話／子 agent」，不再是原始的 `main`／`subagent`。停用的規則整句壓暗、導向不再是實心
@@ -112,7 +122,8 @@
   讓 master 只有一種接法；改成開關之後，關著的 router 跟沒有這個功能時一模一樣（不收
   `CONNECT`、不產生 CA、guard 沒有例外、接入分頁是原本的文字），只用 CLI 的人感覺不到它，
   也就沒有理由再維護一條要不斷 rebase 的分支。開關是 `config.json` 的 `httpsProxy`，
-  跟埠一樣重啟才生效 —— 關閉必須是「根本沒掛上」，而不是「掛著但拒絕」，才能保證跟原本一樣。
+  跟埠一樣重啟才生效（後來改成存檔即切換，見上） —— 關閉必須是「根本沒掛上」，而不是「掛著但拒絕」，
+  才能保證跟原本一樣。
   前三項由 `test/connect.test.mjs` 守著，並用變異驗證過會紅。
 - 同時補上設定教學：全域與單一 repo 的放法，以及兩者對各功能的差別
   （[docs/https-proxy.md](docs/https-proxy.md#設定-claude-code)）。
