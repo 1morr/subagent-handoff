@@ -15,6 +15,17 @@
 
 ### 變更
 
+- **實測 auto mode 的權限分類器走哪裡，結論跟直覺相反。** Claude Code 先請 Anthropic 在主對話
+  的回應裡附上判定（`safeguard_results`）；provider 不會附，只要 session 裡有一筆請求到了
+  provider，Claude Code 就改成每個動作另發一筆分類器請求，而那筆請求**沒帶 agent-id**，算 `main`。
+  所以：主對話分到 provider 時，是 provider 的模型在判定（DeepSeek 擋下了 `git push --force`），
+  不是免費用到 Claude；只有子 agent 分到 provider 時，子 agent 的動作反而由 Claude 判定、花訂閱
+  額度，而且整個 session 都多出分類器請求（每筆第一次約 3 萬 input tokens）。對照組：完全不分流
+  時沒有任何分類器請求。新增 [docs/request-map.md](docs/request-map.md) 列出每一種請求的去向；
+  GUI 路由分頁在有主對話規則指向 provider 時提醒這件事。
+- 修正 claude-code-request-shapes.md 兩處過時的敘述：分類器的 `max_tokens` 已經從 2112 變成
+  兩階段 64 / 8192；背景請求「一律走訂閱」只在主對話沒分流時成立。
+
 - **HTTPS proxy 模式改成預設關閉的開關，並合併進 master。** 原本打算長期留在分支上，
   讓 master 只有一種接法；改成開關之後，關著的 router 跟沒有這個功能時一模一樣（不收
   `CONNECT`、不產生 CA、guard 沒有例外、接入分頁是原本的文字），只用 CLI 的人感覺不到它，

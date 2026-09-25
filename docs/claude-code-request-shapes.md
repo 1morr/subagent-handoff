@@ -36,7 +36,7 @@
 | 只放第三個 block（主要指示，不含身分行） | 429 |
 | 不帶，但模型換成 `claude-haiku-4-5-20251001` | 200 |
 
-主迴圈的請求有身分行，所以設了 `=0` 照樣能用（走訂閱的子 agent 沒量過：當時的流量記錄裡子 agent 全分到 provider）。**自帶 system prompt 的輔助請求沒有身分行**，只靠 attribution block 過關，`=0` 之後全部 429：auto mode 的權限分類器（`max_tokens: 2112`，非串流）、Claude in Chrome、啟動時的額度探針（`max_tokens: 1`、不帶 system）等。當時兩份流量記錄（09-22～09-23）裡的非串流推論請求 94 筆全是這個 429，串流全部 200。
+主迴圈的請求有身分行，所以設了 `=0` 照樣能用（走訂閱的子 agent 沒量過：當時的流量記錄裡子 agent 全分到 provider）。**自帶 system prompt 的輔助請求沒有身分行**，只靠 attribution block 過關，`=0` 之後全部 429：auto mode 的權限分類器（非串流；當時 `max_tokens: 2112`，v2.1.282 改成兩階段 64 / 8192，見 [request-map.md](request-map.md#auto-mode-的分類器走哪裡)）、Claude in Chrome、啟動時的額度探針（`max_tokens: 1`、不帶 system）等。當時兩份流量記錄（09-22～09-23）裡的非串流推論請求 94 筆全是這個 429，串流全部 200。
 
 跟 router 無關：直接打 `api.anthropic.com` 是同一個結果，只是 router 的接入說明曾經建議設 `=0`（為了 DeepSeek 跨 session 共用快取，見 [security.md](security.md#送去-provider-的請求一律拿掉-metadata)），現在已經改成不要設。
 
@@ -72,7 +72,7 @@
 
 Workflow agent 的工具清單裡沒有 `Agent` 與 `Workflow`，與 [routing.md](routing.md#兩種來源分別是什麼)「兩種來源分別是什麼」一節的實測一致 —— 那一節記的就是 `nested` 這個第三種來源為什麼被拿掉。
 
-`output_config.format`（`json_schema`）只出現在主對話的背景請求上，例如產生 session 標題那一筆（`thinking: disabled`、沒有 agent-id），一律走訂閱。
+`output_config.format`（`json_schema`）只出現在主對話的背景請求上，例如產生 session 標題那一筆（`thinking: disabled`、沒有 agent-id）。它們跟著 `main` 的規則走：主對話沒分流時走訂閱，主對話分到 provider 時一起過去（[request-map.md](request-map.md)）。
 
 ## DeepSeek 實測（2026-09-17，`deepseek-flash`）
 

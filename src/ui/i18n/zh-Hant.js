@@ -189,6 +189,7 @@ export default {
   'rules.empty': '沒有規則，所有流量都走訂閱。',
   'rules.floorHint': '全部沒命中就落在這裡 —— 原樣送到 <code>{baseUrl}</code>，由訂閱付帳',
   'rules.floorLabel': '機架底板・不可刪',
+  'rules.tip.mainToProvider': '<strong>有一條主對話規則指向 provider。</strong>沒帶 agent id 的請求會一起過去：session 標題、上下文壓縮，以及 <strong>auto mode 的權限分類器</strong>。auto mode 還能用，但「這個動作安不安全」改由那個 provider 的模型判定，不是 Claude，整個 session 也沒有任何推論到 Anthropic。<a href="https://github.com/1morr/subagent-handoff/blob/master/docs/request-map.md#auto-mode-%E7%9A%84%E5%88%86%E9%A1%9E%E5%99%A8%E8%B5%B0%E5%93%AA%E8%A3%A1" target="_blank" rel="noopener">分類器怎麼被分流</a>',
   'rules.tip.quota': '<strong>配額見底時</strong>，把規則的導向從 provider 換成 <code>SUB 訂閱</code> 就好 —— 不用刪規則、不用清 API key、不必重啟。設定是每筆請求現查的，正在跑的 agent 下一個請求就改道。',
   'rules.tip.disable': '<strong>為什麼不用「停用」</strong>：停用會讓流量掉到<strong>下一條</strong>規則，不是掉回訂閱。明確指向 passthrough 才是真的擋在那裡，而且排序還在。',
   'rules.tip.ultracode': "<strong>要涵蓋 ultracode 必須選「所有子 agent」</strong>。Workflow 的 <code>agent()</code> 也是子 agent，子 agent 再開的 agent 也算在內。",

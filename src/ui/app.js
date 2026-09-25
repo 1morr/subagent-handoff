@@ -668,6 +668,8 @@ function renderRules() {
 
   const matchLabels = MATCH_LABELS()
   const kindLabels = KIND_LABELS()
+  // 主對話分到 provider 時，auto mode 的分類器等背景請求會一起過去 —— 這件事從規則表看不出來
+  const mainToProvider = S.config.rules.some((r) => r.enabled && r.match === 'main' && r.providerId && r.providerId !== 'passthrough')
   const rows = S.config.rules.map((r, i) => {
     const isHit = i === hitAt
     const shadowed = hitAt >= 0 && i > hitAt
@@ -735,6 +737,7 @@ function renderRules() {
           </div>
         </div>
       </div>
+      ${mainToProvider ? `<div class="marginal note"><i></i><div>${t('rules.tip.mainToProvider')}</div></div>` : ''}
       <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(340px,1fr))">
         <div class="marginal"><i></i><div>${t('rules.tip.quota')}</div></div>
         <div class="marginal"><i></i><div>${t('rules.tip.disable')}</div></div>

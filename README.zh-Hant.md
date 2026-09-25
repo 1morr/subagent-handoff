@@ -106,6 +106,8 @@ flowchart LR
 | `main` | 沒有 `x-claude-code-agent-id` | 你在輸入框裡打字 |
 | `subagent` | 帶有 `x-claude-code-agent-id` | Claude Code 派生的任何 agent。**Workflow 與 ultracode 的 `agent()` 呼叫全部落在這裡**，子代理再派生的 agent 也是 |
 
+沒帶 agent id 的背景請求都算 `main`，跟著 `main` 的規則走：session 標題、上下文壓縮、額度探針，以及 **auto mode 的權限分類器** —— 就算它判的是子代理的動作也一樣。把 `main` 分到 provider，auto mode 就由那個 provider 的模型判定，不是 Claude。每一種請求怎麼分類、兩種模式下走哪裡的實測見 [docs/request-map.md](docs/request-map.md)。
+
 ## 設定
 
 這個 GUI 是 `config.json` 的完整前端介面，所有東西都能在裡面編輯。規則會由上到下依序判斷，第一個符合的就採用。
@@ -173,6 +175,7 @@ npm test     # node --test, no dependencies, no network
 | [docs/providers.md](docs/providers.md) | 供應商相容性筆記、內建測試與實測數據 |
 | [docs/claude-code-request-shapes.md](docs/claude-code-request-shapes.md) | Claude Code v2.1.274 實際送出的請求形狀，以及 DeepSeek 對每一種的實測反應 |
 | [docs/security.md](docs/security.md) | 威脅模型，以及哪些有保護、哪些沒有 |
+| [docs/request-map.md](docs/request-map.md) | Claude Code 送出的每一種請求、怎麼被分類、兩種模式下走哪裡，包括 auto mode 的分類器 |
 | [docs/https-proxy.md](docs/https-proxy.md) | 給 Claude Desktop 用的 HTTPS proxy 模式：運作方式、本機 CA、實測、地雷 |
 
 ## 授權

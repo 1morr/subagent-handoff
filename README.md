@@ -134,6 +134,12 @@ full diagrams, global vs per-repo setup and the risk write-up:
 | `main` | No `x-claude-code-agent-id` | You typing in the prompt box |
 | `subagent` | Has `x-claude-code-agent-id` | Any agent Claude Code spawned. **Workflow and ultracode `agent()` calls are all here**, and so are agents a subagent spawns in turn |
 
+Background requests without an agent id count as `main` and follow the `main`
+rules: session titles, compaction, the quota probe, and **the auto mode permission
+classifier** — even when it is judging a subagent's action. Route `main` to a
+provider and auto mode is judged by that provider's model, not by Claude. Every
+request type and where it goes, measured: [docs/request-map.md](docs/request-map.md).
+
 ## Configuration
 
 The GUI is a complete front end for `config.json`; everything is editable there.
@@ -227,6 +233,7 @@ The in-depth docs are written in Traditional Chinese.
 | [docs/providers.md](docs/providers.md) | Provider compatibility notes, the built-in tests, and measurements |
 | [docs/claude-code-request-shapes.md](docs/claude-code-request-shapes.md) | The request shapes Claude Code v2.1.274 actually sends and how DeepSeek handles each |
 | [docs/security.md](docs/security.md) | Threat model and what is and is not protected |
+| [docs/request-map.md](docs/request-map.md) | Every request Claude Code sends, how it is classified and where it goes in each mode, including the auto mode classifier |
 | [docs/https-proxy.md](docs/https-proxy.md) | HTTPS proxy mode for Claude Desktop: how it works, the local CA, measurements, pitfalls |
 
 ## License
