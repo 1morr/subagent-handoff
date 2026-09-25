@@ -826,6 +826,55 @@ function renderLogs() {
 }
 
 // ── 接入說明 ───────────────────────────────────────────────────────
+
+/** HTTPS proxy 模式的原理：兩種模式的流向、差別與風險。完整版在 docs/https-proxy.md */
+function renderModeExplain() {
+  const node = (text, cls = '') => `<span class="fl-node ${cls}">${text}</span>`
+  const edge = (text) => `<span class="fl-edge">${text} →</span>`
+  const row = (...parts) => `<div class="fl-row">${parts.join('')}</div>`
+  const sub = (...parts) => `<div class="fl-row fl-sub">${parts.join('')}</div>`
+  const anthropic = node(t('setup.explain.anthropic'), 'sub')
+  const provider = node(t('setup.explain.provider'), 'prv')
+  const cmpRows = ['clients', 'settings', 'through', 'routing', 'down', 'ca', 'rc']
+  return `
+    <details class="explain" id="mode-explain" ${S.modeExplainOpen ? 'open' : ''}>
+      <summary>${t('setup.explain.summary')}</summary>
+      <div class="explain-body">
+        <div class="fl-grid">
+          <div class="fl">
+            <div class="lbl">${t('setup.explain.off')}</div>
+            ${row(node('Claude Code CLI'), edge('ANTHROPIC_BASE_URL'), node('router', 'rt'))}
+            ${sub(edge(t('setup.explain.edgeMainOff')), anthropic)}
+            ${sub(edge(t('setup.explain.edgeSubOff')), provider)}
+            ${row(node('Claude Desktop'), edge(t('setup.explain.direct')), anthropic)}
+            ${row(node(t('setup.explain.otherTraffic')), edge(t('setup.explain.direct')), node(t('setup.explain.internet')))}
+          </div>
+          <div class="fl">
+            <div class="lbl">${t('setup.explain.on')}</div>
+            ${row(node('CLI + Desktop'), edge('HTTPS_PROXY'), node('router', 'rt'))}
+            ${sub(edge(t('setup.explain.edgeMainOn')), anthropic)}
+            ${sub(edge(t('setup.explain.edgeSubOn')), provider)}
+            ${sub(edge(t('setup.explain.relay')), anthropic)}
+            ${sub(edge(t('setup.explain.tunnel')), node(t('setup.explain.origin')))}
+          </div>
+        </div>
+        <span class="hint">${t('setup.explain.sameCode')}</span>
+        <div class="cmp-wrap">
+          <table class="cmp">
+            <thead><tr><th></th><th>${t('setup.explain.off')}</th><th>${t('setup.explain.on')}</th></tr></thead>
+            <tbody>${cmpRows.map((r) => `
+              <tr><th>${t(`setup.explain.${r}`)}</th><td>${t(`setup.explain.${r}Off`)}</td><td>${t(`setup.explain.${r}On`)}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div class="marginal note"><i></i><div>
+          <strong>${t('setup.explain.riskTitle')}</strong> ${t('setup.explain.riskBody')}
+        </div></div>
+        <span class="hint">${t('setup.explain.docs')}</span>
+      </div>
+    </details>`
+}
+
 function renderSetup() {
   const port = S.runtime.boundProxyPort
   // 片段與說明跟著 router 實際在跑的模式走（啟動時決定），不是設定裡還沒重啟生效的那個值。
@@ -853,6 +902,7 @@ function renderSetup() {
           <input type="checkbox" data-f="httpsProxy" ${S.config.httpsProxy ? 'checked' : ''}> ${t('setup.modeLabel')}
         </label>
         <span class="hint">${t('setup.modeHint')}</span>
+        ${renderModeExplain()}
         ${(S.config.httpsProxy === true) === proxyMode ? '' : `<div class="marginal alarm"><i></i><div>${t('setup.modeRestart')}</div></div>`}
       </div>
     </section>
@@ -937,6 +987,11 @@ function setLang(next) {
 }
 
 $('#lang')?.addEventListener('change', (ev) => setLang(ev.target.value))
+
+// 重繪會換掉整頁，說明區塊的展開狀態要自己記住。toggle 事件不冒泡，只能在捕獲階段接
+document.addEventListener('toggle', (ev) => {
+  if (ev.target.id === 'mode-explain') S.modeExplainOpen = ev.target.open
+}, true)
 
 // 輸入時只更新 state，不重繪，避免游標跳走
 document.addEventListener('input', (ev) => {

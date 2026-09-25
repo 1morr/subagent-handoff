@@ -23,6 +23,12 @@
   前三項由 `test/connect.test.mjs` 守著，並用變異驗證過會紅。
 - 同時補上設定教學：全域與單一 repo 的放法，以及兩者對各功能的差別
   （[docs/https-proxy.md](docs/https-proxy.md#設定-claude-code)）。
+- **把這個模式講清楚：原理、流程圖、開關前後的差別、實際送出了什麼、封號風險。**
+  docs/https-proxy.md 與 README 加上 mermaid 流程圖；GUI 接入分頁的開關下面多一段可展開的
+  說明（兩種模式的流向、比較表、風險）。「送出了什麼」是實測：用假上游接住 router 送出的請求
+  逐項比對，主對話線上 Node `fetch` 會多加 `accept-language: *`、`sec-fetch-mode: cors`，
+  `accept-encoding` 被換成 `gzip, deflate`；原樣轉發那條線 header 不變。這些兩種模式都一樣，
+  開啟後多的是：登入、遙測、Remote Control、voice 也改由 Node 發出。
 
 ### 新增
 

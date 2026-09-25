@@ -88,24 +88,44 @@ Open <http://127.0.0.1:8788>:
 **Off by default**, and while it is off the router behaves exactly as described
 above. Turn it on only if you want Claude Desktop routed too.
 
-Claude Desktop's Code tab ignores `ANTHROPIC_BASE_URL` but honours `HTTPS_PROXY`
-and `NODE_EXTRA_CA_CERTS`. With the mode on (the switch at the top of the
-**Connect** tab, or `"httpsProxy": true`, then restart the router) the proxy
-port also accepts `CONNECT`:
+**Why:** Claude Desktop's Code tab ignores `ANTHROPIC_BASE_URL`, so it never
+reaches the router. It does honour `HTTPS_PROXY` and `NODE_EXTRA_CA_CERTS`.
 
-- `api.anthropic.com:443` is decrypted with a certificate from a local CA the
-  router generates next to `config.json`. `/v1/messages*` goes through the usual
-  routing; every other path, and WebSocket upgrades, are forwarded to Anthropic
-  untouched and not logged.
-- Every other host is a plain TCP tunnel, never decrypted.
+**How:** off, Claude Code *sends* its API requests to the router. On, Claude Code
+thinks it talks to Anthropic directly, and the router picks the connection up as
+an HTTPS proxy:
 
-The **Connect** tab then gives the snippet (`HTTPS_PROXY` plus `NODE_EXTRA_CA_CERTS`),
-which works in the CLI and in Desktop. Turning the mode off again also means putting
-`ANTHROPIC_BASE_URL` back in your settings. Two costs: every program Claude Code starts
-(git, npm, curl) inherits `HTTPS_PROXY`, so **while the router is down they all
-lose network access**; and you now trust a local CA, which is name-constrained to
-`api.anthropic.com` and must not go into your system trust store. Details,
-global vs per-repo setup, and measurements: [docs/https-proxy.md](docs/https-proxy.md).
+```mermaid
+flowchart LR
+  CC["Claude Code<br/>CLI or Desktop"] -- HTTPS_PROXY --> R{router}
+  R -- "api.anthropic.com<br/>decrypted with a local CA" --> S{path}
+  S -- "/v1/messages*, main" --> A[(Anthropic<br/>subscription)]
+  S -- "/v1/messages*, subagent" --> P[(your provider)]
+  S -- "anything else<br/>forwarded untouched" --> A
+  R -- "any other host<br/>plain tunnel" --> N((internet))
+```
+
+The `/v1/messages*` routing is the same code in both modes; only the way requests
+get in differs.
+
+| | Off (default) | On |
+|---|---|---|
+| Clients | CLI | CLI and Claude Desktop |
+| Claude Code settings | `ANTHROPIC_BASE_URL` | `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` |
+| Through the router | API requests only | every HTTPS connection of Claude Code and the programs it starts; only `api.anthropic.com` is decrypted |
+| Router down | API requests fail | Claude Code, git, npm… lose all network access |
+| Local CA | none | one, name-constrained to `api.anthropic.com` |
+
+**To turn it on:** tick the switch at the top of the **Connect** tab (or set
+`"httpsProxy": true`), save, restart the router, then paste the snippet the tab
+shows. Turning it off again means putting `ANTHROPIC_BASE_URL` back.
+
+**Account risk:** nobody can promise it is safe. In both modes the subscription
+requests keep your token and body but leave from the router, with Node's TLS
+fingerprint and two headers Node's `fetch` adds. With the mode on, sign-in,
+telemetry, Remote Control and voice also leave from Node. Measured details, the
+full diagrams, global vs per-repo setup and the risk write-up:
+[docs/https-proxy.md](docs/https-proxy.md).
 
 ## The two request kinds
 

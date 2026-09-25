@@ -4,6 +4,12 @@
 > 不產生 CA，接入分頁顯示的也是原本的 `ANTHROPIC_BASE_URL` 片段。只用 CLI 就不必打開它；
 > 它多出一把本機 CA 與一條 MITM 路徑，換來的是 Claude Desktop 也能接。
 
+## 一句話
+
+關閉時，Claude Code **主動**把 API 請求送到 router（`ANTHROPIC_BASE_URL`）；開啟時，
+Claude Code 以為自己直連 Anthropic，是 router 以 HTTPS 代理的身分**在半路把它接下來**
+（`HTTPS_PROXY`），解開之後交給同一套分流。
+
 ## 為什麼需要
 
 `ANTHROPIC_BASE_URL` 在 Claude Desktop 的 Code 分頁裡不管用。官方文檔寫明 Desktop 的
@@ -17,30 +23,134 @@ Desktop 照讀的是代理與 CA 變數：用 claude.ai 登入的本機、SSH、
 [network-config 文檔](https://code.claude.com/docs/en/network-config)）。所以改從
 `HTTPS_PROXY` 接進來。來源是 [issue #2](https://github.com/1morr/subagent-handoff/issues/2)。
 
-## 怎麼運作
+## 原理
 
-proxy 埠（預設 8787）多收 `CONNECT`：
+### 關閉（預設）
 
-| CONNECT 的目的地 | 怎麼處理 |
-|---|---|
-| `api.anthropic.com:443` | 用本機 CA 簽的證書解開 TLS，再按路徑分（見下表） |
-| 其他任何主機 | 純 TCP 隧道，不解密 |
+```mermaid
+flowchart LR
+  subgraph PC[你的電腦]
+    CLI[Claude Code CLI]
+    DT[Claude Desktop]
+    R[router :8787]
+  end
+  CLI -- "ANTHROPIC_BASE_URL<br/>只有 /v1/messages*" --> R
+  R -- 主對話 --> A[(api.anthropic.com<br/>訂閱)]
+  R -- subagent --> P[(第三方 provider<br/>你的 API key)]
+  CLI -. "登入、遙測、git、npm…<br/>直連" .-> NET((網際網路))
+  DT -. "全部直連<br/>不經 router" .-> A
+```
 
-解開之後：
+### 開啟
 
-| 路徑 | 去向 |
-|---|---|
-| `/v1/messages*` | 交給 proxy 原本的 handler，分流、改寫、流量記錄跟 `ANTHROPIC_BASE_URL` 模式同一套 |
-| 其他路徑 | 原樣轉發給 Anthropic，不記錄 |
-| WebSocket upgrade | 原樣轉發給 Anthropic（voice mode 用 `/api/ws/speech_to_text/voice_stream`） |
+```mermaid
+flowchart LR
+  subgraph PC[你的電腦]
+    CLI[Claude Code CLI]
+    DT[Claude Desktop]
+    subgraph R[router :8787]
+      C{CONNECT<br/>的目的地}
+      D[用本機 CA<br/>解開 TLS]
+      S{路徑}
+    end
+  end
+  CLI -- HTTPS_PROXY --> C
+  DT -- HTTPS_PROXY --> C
+  C -- "api.anthropic.com:443" --> D --> S
+  S -- "/v1/messages*<br/>主對話" --> A[(api.anthropic.com<br/>訂閱)]
+  S -- "/v1/messages*<br/>subagent" --> P[(第三方 provider)]
+  S -- "其他路徑、WebSocket<br/>原樣轉發、不記錄" --> A
+  C -- "其他主機<br/>純隧道、不解密" --> NET((網際網路))
+```
 
-只把 `/v1/messages*` 交給 handler，是為了跟 `ANTHROPIC_BASE_URL` 模式看到一樣的流量。
-那個模式下 router 只收得到 `/v1/messages` 與 `/v1/messages/count_tokens`（master 上實際的
-traffic.log 4666 筆裡沒有別的）。MITM 看得到的東西多得多：第一次實測時一個 `claude -p` 就多出
-14 筆 OAuth、bootstrap、feature flag、MCP registry 與 `event_logging` 遙測，全記下來的話
-流量記錄和進條的統計都會被淹掉。
+兩張圖的右半邊一樣：`/v1/messages*` 走的是同一段程式（`src/proxy.mjs`），分流規則、改寫、
+流量記錄都只有一份。差別只在請求怎麼進到 router。
+
+### 一次請求走一遍（開啟時）
+
+```mermaid
+sequenceDiagram
+  participant CC as Claude Code
+  participant R as router
+  participant A as api.anthropic.com
+  participant P as provider
+  CC->>R: CONNECT api.anthropic.com:443
+  R-->>CC: 200 Connection Established
+  CC->>R: TLS 握手
+  Note over CC,R: router 出示本機 CA 簽的證書，<br/>Claude Code 靠 NODE_EXTRA_CA_CERTS 信任它
+  CC->>R: POST /v1/messages（主對話，帶 OAuth token）
+  R->>A: 同一個請求，由 router 重新發出
+  A-->>R: SSE 串流
+  R-->>CC: 逐塊轉回
+  CC->>R: POST /v1/messages（帶 x-claude-code-agent-id）
+  R->>P: 換成 provider 的 key 與 model、拿掉 metadata
+  P-->>R: SSE 串流
+  R-->>CC: 逐塊轉回
+  CC->>R: GET /api/oauth/profile、遙測…
+  R->>A: 原樣轉發，不記錄
+  CC->>R: CONNECT github.com:443
+  Note over CC,R: 純隧道：TLS 在 Claude Code 與 github 之間，router 看不到內容
+```
+
+只把 `/v1/messages*` 交給分流，是為了跟關閉時看到一樣的流量：關閉時 router 本來就只收得到
+`/v1/messages` 與 `/v1/messages/count_tokens`（實際的 traffic.log 4666 筆裡沒有別的）。解開之後
+看得到的東西多得多，一個 `claude -p` 就多出 14 筆登入、feature flag、遙測，全記下來流量記錄與
+進條的統計就被淹掉。
 
 程式碼：`src/connect.mjs`（CONNECT、隧道、轉發）、`src/ca.mjs`（CA 與證書）。
+
+## 開與關的差別
+
+| | 關閉（預設） | 開啟 |
+|---|---|---|
+| 能接的 client | Claude Code CLI | CLI、Claude Desktop |
+| Claude Code 的設定 | `ANTHROPIC_BASE_URL` | `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` |
+| Claude Code 以為自己連到 | 自訂的 base URL | `api.anthropic.com`（直連） |
+| 經過 router 的連線 | 只有 API 請求（`/v1/messages*`） | Claude Code 與它啟動的程式的**所有** HTTPS 連線 |
+| router 解開、看得到內容的 | `/v1/messages*`（本來就是明文送來） | 所有送往 `api.anthropic.com` 的請求；其他主機看不到 |
+| 分流、改寫、流量記錄 | `/v1/messages*` | 完全相同 |
+| router 沒在跑時 | API 請求失敗 | Claude Code 與它的 git / npm **全部斷網** |
+| 本機 CA | 沒有 | 有，只能簽 `api.anthropic.com` |
+| Remote Control | CLI 停用（base URL 指向非 Anthropic 主機） | Desktop 可用；CLI 要全域改用這個模式才行 |
+| voice mode（CLI） | 直連 Anthropic | 經 router 原樣轉發 |
+
+## 送出了什麼
+
+2026-09-25 在本機用一台假上游接住 router 送出的請求，跟 Claude Code 送進來的逐項比對
+（量測腳本沒有進 repo）：
+
+| 請求 | 送去哪 | body | header 跟 Claude Code 送的相比 | 誰發起 TLS |
+|---|---|---|---|---|
+| 主對話 `/v1/messages` | Anthropic | 原樣（規則指定換 model 時只改 `model`） | 多 `accept-language: *`、`sec-fetch-mode: cors`；`accept-encoding` 換成 `gzip, deflate`；client 沒帶 `accept` 時補 `*/*`。這些是 Node `fetch` 自己加的 | router（Node） |
+| subagent `/v1/messages` | provider | 換 `model`、拿掉 `metadata`、修上游編不動的 `pattern` | 從零組起：只帶 `anthropic-version`、`anthropic-beta`、`accept`、`content-type` 與 provider 的 key。`user-agent` 變成 `node`；訂閱的 OAuth token、`x-app`、session id 都不會送出 | router（Node） |
+| 其他 `api.anthropic.com` 路徑（只有開啟時才經過 router） | Anthropic | 原樣 | 原樣（只有逐跳的 `connection`） | router（Node） |
+| WebSocket（voice mode） | Anthropic | 原樣 | 請求頭原樣 | router（Node） |
+| 其他主機（github、npm…） | 原目的地 | router 看不到 | router 看不到 | Claude Code 自己 |
+
+前兩列兩種模式都一樣；第三、四列是開啟之後才多出來的，關閉時那些請求由 Claude Code 自己直連。
+
+## 會不會被封號
+
+**沒有人能保證不會。** 這是非官方用法，Anthropic 明說不支援把 Claude Code 指向非 Claude 模型。
+這個工具不偽造帳號身分、不改計費、不繞過額度，但它改變了 Anthropic 那一端看到的連線樣貌。
+以下是實際的差異，判斷交給你：
+
+- **兩種模式都一樣的：**
+  - 帳號、OAuth token、主對話的 body 原樣送到 Anthropic。
+  - 主對話請求是 router 發出的：TLS 指紋是 Node（OpenSSL）的，不是 Claude Code（Bun）的；
+    header 多了上表那幾個。
+  - 分到 provider 的 subagent 請求根本不會到 Anthropic。Claude Code 自己的遙測照常原樣送出，
+    裡面**可能**看得出 subagent 在活動、卻沒有對應的 API 請求 —— 這一點是推測，沒有驗證遙測內容。
+- **開啟後多出來的：** 登入、遙測、feature flag、Remote Control、voice 這些連線，header 雖然原樣，
+  但也改由 Node 發出。從 Anthropic 那端看，「TLS 指紋不像 Claude Code」的連線從只有推論請求
+  變成全部。
+- **開啟後少掉的：** Claude Code 不再知道自己設了自訂 base URL，所以不會因此停用 Remote Control。
+  這對判定是加分還是減分，我們不知道。
+
+想把風險壓低：只在要用 Desktop 時才打開；分流規則只動 subagent、主對話留在訂閱；
+不要設 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`（它會讓訂閱線的輔助請求被拒，見
+[claude-code-request-shapes.md](claude-code-request-shapes.md#訂閱線會檢查-system-的開頭)）；
+並自行對照 Anthropic 的使用條款。
 
 ## 開關
 

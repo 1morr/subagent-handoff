@@ -71,12 +71,33 @@ npm start
 
 **預設關閉**，關著的時候 router 的行為跟上面描述的完全一樣。只有想讓 Claude Desktop 也被分流時才需要打開。
 
-Claude Desktop 的 Code 分頁不理 `ANTHROPIC_BASE_URL`，但照讀 `HTTPS_PROXY` 與 `NODE_EXTRA_CA_CERTS`。打開這個模式（**接入**分頁最上面的開關，或 `"httpsProxy": true`，然後重啟 router）之後，proxy 埠也接受 `CONNECT`：
+**為什麼需要：** Claude Desktop 的 Code 分頁不理 `ANTHROPIC_BASE_URL`，所以它的請求根本不會到 router。但它照讀 `HTTPS_PROXY` 與 `NODE_EXTRA_CA_CERTS`。
 
-- `api.anthropic.com:443` 用 router 在 `config.json` 旁邊產生的本機 CA 簽證書解開。`/v1/messages*` 走原本的分流；其他路徑與 WebSocket upgrade 原樣轉給 Anthropic，不記錄。
-- 其他主機一律是純 TCP 隧道，不解密。
+**怎麼運作：** 關閉時，是 Claude Code 主動把 API 請求**送到** router；開啟時，Claude Code 以為自己直連 Anthropic，是 router 以 HTTPS 代理的身分在半路把連線接下來：
 
-之後**接入**分頁會給出設定片段（`HTTPS_PROXY` 加 `NODE_EXTRA_CA_CERTS`），CLI 與 Desktop 都能用。再關掉時，設定也要改回 `ANTHROPIC_BASE_URL`。代價有兩個：Claude Code 啟動的每一支程式（git、npm、curl）都會繼承 `HTTPS_PROXY`，**router 沒在跑的時候它們全部斷網**；以及你多信任了一把本機 CA，它被 name constraint 限定只能簽 `api.anthropic.com`，而且不能裝進系統信任庫。細節、全域與單一 repo 的設定方式、實測見 [docs/https-proxy.md](docs/https-proxy.md)。
+```mermaid
+flowchart LR
+  CC["Claude Code<br/>CLI 或 Desktop"] -- HTTPS_PROXY --> R{router}
+  R -- "api.anthropic.com<br/>用本機 CA 解開" --> S{路徑}
+  S -- "/v1/messages*，主對話" --> A[(Anthropic<br/>訂閱)]
+  S -- "/v1/messages*，subagent" --> P[(你的 provider)]
+  S -- "其他路徑<br/>原樣轉發" --> A
+  R -- "其他主機<br/>純隧道" --> N((網際網路))
+```
+
+`/v1/messages*` 的分流兩種模式是同一段程式，差別只在請求怎麼進到 router。
+
+| | 關閉（預設） | 開啟 |
+|---|---|---|
+| 能接的 client | CLI | CLI、Claude Desktop |
+| Claude Code 的設定 | `ANTHROPIC_BASE_URL` | `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` |
+| 經過 router 的連線 | 只有 API 請求 | Claude Code 與它啟動的程式的所有 HTTPS 連線；只解開 `api.anthropic.com` |
+| router 沒在跑時 | API 請求失敗 | Claude Code、git、npm… 全部斷網 |
+| 本機 CA | 沒有 | 有，只能簽 `api.anthropic.com` |
+
+**怎麼打開：** 在**接入**分頁最上面勾選開關（或設 `"httpsProxy": true`），存檔、重啟 router，再貼上分頁給出的片段。關掉時要把設定改回 `ANTHROPIC_BASE_URL`。
+
+**會不會封號：** 沒有人能保證。兩種模式下，主對話請求的 token 與 body 都原樣，但都是由 router 發出的：TLS 指紋是 Node 的，還多了兩個 Node `fetch` 自己加的 header。開啟之後，登入、遙測、Remote Control、voice 也改由 Node 發出。實測細節、完整的圖、全域與單一 repo 的設定方式與風險分析見 [docs/https-proxy.md](docs/https-proxy.md)。
 
 ## 兩種請求類型
 
