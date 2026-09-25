@@ -37,15 +37,18 @@ agent 下一個請求就會走訂閱，之後配額補回來再切回去。機�
 ## 主對話分到 provider 時，連帶跟過去的東西
 
 `main` 規則指向 provider（例如訂閱的週額度用完了）時，過去的不只是你打字的那一輪。所有沒帶
-agent-id 的推論請求都算 `main`，一起過去：session 標題、上下文壓縮、額度探針、Claude in Chrome
-的輔助請求，以及 **auto mode 的權限分類器**（[request-map.md](request-map.md)）。
+agent-id 的推論請求都算 `main`，只要 model 符合那條規則的 `modelGlob`（預設 `*`）就一起過去：
+session 標題、上下文壓縮、額度探針、Claude in Chrome 的輔助請求，以及 **auto mode 的權限分類器**
+（[request-map.md](request-map.md)）。
 
 - **auto mode 還能用，但判定的是 provider 的模型，不是 Claude。** Claude Code 以為自己在用
   Claude，照樣開放 auto mode；provider 不會回伺服器端的判定，Claude Code 就改成另外發分類器請求，
   而那些請求跟著 `main` 一起到 provider。實測 DeepSeek 擋下了 `git push --force`，但它擋不擋得住
   更隱晦的危險動作，沒有人驗過。額度用完時要用 auto mode，等於把「這個動作安不安全」交給那個模型。
-- **這時整個 session 沒有任何推論到 Anthropic**：不花訂閱額度，也不會「免費用到 Claude」。
-  Claude Code 本身、登入、遙測照常連 Anthropic。
+- **子 agent 照它們自己的規則走。** 沒有指向 provider 的 `subagent` 規則時，它們一條都沒命中、
+  落到底走訂閱（`src/routing.mjs` 的 `resolveRoute`）。子 agent 也分到 provider，這個 session
+  才沒有任何推論到 Anthropic：不花訂閱額度，也不會「免費用到 Claude」。兩種情況下登入、遙測
+  這些非推論的連線都照常連 Anthropic。
 
 反過來，**只把子 agent 分到 provider** 時，子 agent 的動作是由 Claude 判定的，用的是訂閱額度：
 分類器請求沒帶 agent-id，算 `main`。而且只要有一筆請求到了 provider，整個 session 就從伺服器端
