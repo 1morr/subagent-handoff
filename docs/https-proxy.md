@@ -94,8 +94,26 @@ GUI 的接入分頁會給出填好路徑的版本。以前設過的 `ANTHROPIC_B
   （`claude_desktop_config.json`、內嵌的 `claude-code\<版本>\`、`claude-code-sessions\`），
   不在一般的 `%APPDATA%\Claude`：MSIX 會把 AppData 重導到套件自己的目錄。
 
-**還沒實測：** Remote Control、真的 voice mode（upgrade 轉發只用測試裡的假上游驗過）、
-把 subagent 真的分到第三方 provider（分流走的是跟 CLI 同一個 handler，CLI 那邊有測試）。
+**第二輪（Desktop 2.9939.2.0，CLI 2.1.282）。** 測試用的 launcher 另外把 CONNECT、原樣轉發的
+請求與 upgrade 印出來（只在測試時用，沒有進 repo）。
+
+- **分到第三方 provider：** 規則設成 subagent → DeepSeek。CLI 與 Desktop 各開一個 subagent，
+  都被送到 DeepSeek、model 改寫成 `deepseek-flash`、回 200；主對話照走訂閱。
+- **Remote Control（Desktop）：** 在 Desktop 的 session 裡 `/remote-control`，註冊與心跳全部經
+  router 原樣轉發（`POST /v1/code/sessions`、`…/bridge`、`…/worker`、`…/worker/events`、
+  `…/worker/heartbeat`，都是 200）。從 claude.ai/code 送一句話，本機 session 收到、推論請求經
+  router 走訂閱、回答出現在網頁上。
+- **Remote Control（CLI）測不了：** `claude remote-control` 在讀專案設定之前就拿使用者層的
+  `ANTHROPIC_BASE_URL` 做資格檢查，專案層覆寫成 `https://api.anthropic.com` 也壓不過；
+  `--setting-sources` 放在 `remote-control` 前面則直接被拒。要在 CLI 用，得從使用者層拿掉
+  `ANTHROPIC_BASE_URL`，也就是整台機器改用 HTTPS proxy 的接法。
+- **voice mode（CLI）：** `/voice tap` 之後錄音，router 看到
+  `UPGRADE /api/ws/speech_to_text/voice_stream`，Anthropic 回 `101`，音訊經 WebSocket 送出，
+  轉寫結果回到 CLI 並自動送出。
+- **Desktop 的聽寫不走這條路：** 輸入框旁的聽寫按鈕能轉寫，但 router 什麼都沒看到 ——
+  那是 app 自己連線，不經內嵌的 CLI，也就不吃 `HTTPS_PROXY`。proxy 模式影響不到它。
+
+**還沒實測：** Desktop 的 SSH / WSL session（官方文檔說它們跟本機 session 一樣讀這些變數）。
 
 ## 代價與地雷
 

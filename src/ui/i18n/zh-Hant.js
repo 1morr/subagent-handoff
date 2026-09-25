@@ -232,7 +232,7 @@ export default {
   'setup.step3Body': '在 Claude Code 裡叫一個子 agent 做任何事，然後回到<strong>機架</strong>分頁。分流帶上主對話的請求走 <code>SUB 訂閱</code>，規則指向的每一家 provider 各佔一段 <code>PRV</code>，席位卡也一家一張 —— 被導去哪裡，當下的流量就看得出來。',
   'setup.limitsTitle': '已知限制',
   'setup.limit1': 'Anthropic 官方文檔明說不支援把 Claude Code 導到非 Claude 模型，壞了要自己修。',
-  'setup.limit2': 'Claude Code v2.1.196 起，<code>ANTHROPIC_BASE_URL</code> 指向非 Anthropic host 時 <strong>Remote Control 會停用</strong>。HTTPS proxy 的接法不設這個變數；經過它時 Remote Control 能不能用還沒量過。',
+  'setup.limit2': 'Claude Code v2.1.196 起，<code>ANTHROPIC_BASE_URL</code> 指向非 Anthropic host 時 <strong>Remote Control 會停用</strong>。改用 HTTPS proxy 的接法後，Claude Desktop 裡的 Remote Control 可以用（實測過）。CLI 會在讀專案設定之前先檢查使用者層的 <code>ANTHROPIC_BASE_URL</code>，所以要等 <code>~/.claude/settings.json</code> 裡拿掉這個變數才行。',
   'setup.limit3': '只有 <code>/v1/messages</code> 會被分流與記錄。Claude Code 送往 <code>api.anthropic.com</code> 的其他請求（登入、feature flag、遙測、<code>/fast</code> 的可用性檢查、WebFetch 的網域檢查、voice mode）原樣轉給 Anthropic；其他主機一律是 router 不解密的純隧道。',
   'setup.limit4': "Claude Code 每次升級都可能新增 body 欄位或 beta header。router 原樣轉發，provider 不收就會回 400，流量記錄裡看得到 provider 自己的錯誤訊息。",
   'setup.limit5': '<code>/v1/messages/count_tokens</code> 若 provider 不支援會回 404，Claude Code 會自動退回用推論端點估算，不影響運作。',

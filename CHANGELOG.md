@@ -30,6 +30,10 @@
 - **Desktop 實測通過**（2.7032.0.0，內嵌 Claude Code 2.1.280）：變數只放在專案的
   `.claude/settings.local.json` 就生效，51 筆請求全部經過 router、subagent 分類正確。
   Desktop 送的 `count_tokens` 遠比 CLI 多（一個 session 44 筆）。
+- **Remote Control、voice mode、分到第三方 provider 實測都通過。** Remote Control 在
+  Desktop 可用（網頁送訊息 → 本機推論 → 回到網頁）；CLI 版本仍然用不了，因為它拿使用者層的
+  `ANTHROPIC_BASE_URL` 做資格檢查。CLI 的 voice mode 經 router 轉發 WebSocket、Anthropic 回
+  101、轉寫正常；Desktop 的聽寫則根本不經過內嵌 CLI，不受影響。
   細節見 [docs/https-proxy.md](docs/https-proxy.md)。
 
 ## 2026-09-24
