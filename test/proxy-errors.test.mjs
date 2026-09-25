@@ -1,5 +1,6 @@
 import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
+import http from 'node:http'
 import { summarizeUpstreamError, collectRateLimit, translateContextOverflow } from '../src/proxy.mjs'
 import { createHarness, makePost, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
 import { DEEPSEEK_OVERFLOW } from './fixtures/fake-upstream.mjs'
@@ -116,4 +117,28 @@ test('上游的 anthropic-ratelimit-* header 進到流量記錄', async () => {
     'unified-status': 'rejected',
     'unified-reset': '1756598400',
   }, '沒有這個，流量記錄答不出「什麼時候恢復」')
+})
+
+test('請求行是完整網址（把 router 當 HTTP proxy 用）時回 400 並講清楚是哪兩個設定打架，不往上游送', async () => {
+  // HTTPS_PROXY 指向 router、ANTHROPIC_BASE_URL 又是 http:// 時，Claude Code 會這樣送。
+  // 照樣轉發只會組出 https://api.anthropic.comhttp://… 這種網址，回一個看不出原因的 502
+  harness.upstream.state.received.length = 0
+  const { port } = new URL(harness.proxyUrl)
+  const { status, body } = await new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1', port, method: 'POST', path: 'http://127.0.0.1:8787/v1/messages?beta=true',
+      headers: { ...SUBSCRIPTION_HEADERS, host: '127.0.0.1:8787', 'content-type': 'application/json' },
+    }, (res) => {
+      let data = ''
+      res.on('data', (c) => { data += c })
+      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(data) }))
+    })
+    req.on('error', reject)
+    req.end(JSON.stringify(BASE_BODY))
+  })
+  assert.equal(status, 400, '400 讓 Claude Code 不重試；502 會被重送十次')
+  assert.equal(body.error.type, 'invalid_request_error')
+  assert.match(body.error.message, /HTTPS_PROXY.*ANTHROPIC_BASE_URL/)
+  assert.equal(harness.upstream.state.received.length, 0)
+  assert.match(harness.finished.at(-1).error, /proxy-style request for http:\/\/127\.0\.0\.1:8787\/v1\/messages/)
 })

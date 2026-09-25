@@ -15,6 +15,12 @@
 
 ### 修正
 
+- **`HTTPS_PROXY` 與 http:// 的 `ANTHROPIC_BASE_URL` 同時設時，回 400 說清楚是哪兩個設定打架。**
+  審查時用 Claude Code 2.1.282 實測：全域 settings.json 留著 `ANTHROPIC_BASE_URL`、只在專案層加
+  `HTTPS_PROXY` 時，CLI 把 router 當一般 HTTP proxy，請求行送完整網址。router 把它接在上游網址後面，
+  組出 `https://api.anthropic.comhttp://127.0.0.1:8787/…`，回 502 `fetch failed`，Claude Code
+  還重試十次。`docs/https-proxy.md` 原本寫「兩個都設不會出錯」，也一起改正。
+
 - **CA 檔案壞掉時打不開 HTTPS proxy 模式，並說清楚怎麼修。** 之前證書與私鑰不配對（例如上面那個
   並行產生的情況，或只換掉其中一個檔案）、或 CA 過期，router 照樣啟動，之後每次握手都失敗，
   console 只提示去檢查 `NODE_EXTRA_CA_CERTS`；私鑰檔被截斷則是啟動時丟出一整段 stack trace。

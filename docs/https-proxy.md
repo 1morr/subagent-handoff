@@ -185,8 +185,10 @@ Claude Code 的所有連線都會失敗。
 }
 ```
 
-同時拿掉 `ANTHROPIC_BASE_URL`。兩個都設不會出錯，但 CLI 的 API 請求會走 base URL 那條，
-而且 CLI 的 Remote Control 會因為它被停用。
+**同時拿掉 `ANTHROPIC_BASE_URL`。** 兩個都設的話，CLI 會把 router 當成一般的 HTTP proxy，
+送出請求行是完整網址的請求（`POST http://127.0.0.1:8787/v1/messages`）。router 會回 400，
+訊息直接說是這兩個設定打架（2026-09-25 以 Claude Code 2.1.282 實測）；在那之前這種請求會被組成
+壞掉的網址，只看得到 `fetch failed`，還被重試十次。CLI 的 Remote Control 也會因為它被停用。
 
 **只在某個 repo —— `<repo>/.claude/settings.local.json`**（不要用會提交的 `settings.json`：
 CA 路徑是機器專屬的）
@@ -202,6 +204,7 @@ CA 路徑是機器專屬的）
 ```
 
 `ANTHROPIC_BASE_URL` 那行是給 CLI 的：蓋掉全域那個指向 router 的值，讓 API 請求也走 proxy。
+**少了這行、全域又留著 `http://127.0.0.1:8787`，就是上面那種打架的組合**，CLI 會收到 400。
 Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之後才生效（第一次開啟時會問）。
 
 **兩種放法的差別（2026-09-25 實測）**
