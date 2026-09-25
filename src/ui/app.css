@@ -135,6 +135,10 @@
     margin-right: 33px; padding-left: 3px;
   }
   .rackhead > span { padding: 6px 10px; }
+  /* 欄寬總和（見 app.js 的 COLS_BAY／COLS_LOGS）加上機架留給推出進條的右側空間 */
+  .rack-scroll { overflow-x: auto; }
+  .rack-wide { min-width: 960px; }
+  .rack-wide.logs { min-width: 1120px; }
   .slot { transition: transform .18s cubic-bezier(.16,1,.3,1); }
   /* 只有新到的那幾張會播，而且只播一次：閒置時整面機架是死的 */
   @keyframes printed { from { opacity: 0; transform: translateY(-9px); } }
@@ -205,7 +209,7 @@
   .band .qty { font: 12px var(--data); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
   /* ── 席位卡：負載是機架的形變（堆起來的格子），不是一顆數字徽章 ─── */
-  .sectors { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+  .sectors { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 16px; }
   .sector { display: grid; grid-template-columns: 8px 1fr; border: 1px solid var(--rail); background: var(--panel); }
   .sector > .edge { background: var(--rail-lit); }
   .sector.s-sub > .edge { background: var(--sub); }
@@ -308,8 +312,12 @@
   table.cmp .cur { color: var(--on-bay); background: rgba(223,227,232,.04); }
   .explain-body > .hint { overflow-wrap: anywhere; }
 
+  .langpick { display: inline-flex; align-items: baseline; gap: 8px; white-space: nowrap; }
   @media (max-width: 820px) {
     .titleblock, nav, main { padding-left: 14px; padding-right: 14px; }
+    /* 分頁不換行：換行時最後一個分頁會單獨掉到第二列，像是另一組導覽 */
+    nav { flex-wrap: nowrap; overflow-x: auto; }
+    nav button { white-space: nowrap; flex: none; }
     .rack { padding-right: 3px; }
     .slot.chk, .slot.hold { transform: none; }
     .slot.hold { box-shadow: 0 0 0 2px var(--alarm); }

@@ -276,11 +276,14 @@ function rack(entries, withRequested) {
     return `<div class="panel"><div class="empty">${
       S.logs.length ? t('rack.emptyFiltered') : t('rack.emptyAll')}</div></div>`
   }
+  // 欄寬是固定的（時間、埠、狀態碼要對齊），窄螢幕放不下就讓機架自己橫向捲動，不撐破整頁
   return `
-    <div class="rackhead" style="grid-template-columns:${cols}">
-      ${head.map((h) => `<span class="lbl">${h}</span>`).join('')}
-    </div>
-    <div class="rack">${entries.map((e) => stripRow(e, withRequested)).join('')}</div>`
+    <div class="rack-scroll"><div class="${withRequested ? 'rack-wide logs' : 'rack-wide'}">
+      <div class="rackhead" style="grid-template-columns:${cols}">
+        ${head.map((h) => `<span class="lbl">${h}</span>`).join('')}
+      </div>
+      <div class="rack">${entries.map((e) => stripRow(e, withRequested)).join('')}</div>
+    </div></div>`
 }
 
 // ── 機架總覽 ──────────────────────────────────────────────────────
