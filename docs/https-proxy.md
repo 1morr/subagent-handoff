@@ -156,7 +156,8 @@ sequenceDiagram
 
 GUI 接入分頁最下面的「HTTPS proxy 模式」面板，按**開啟並儲存**／**關閉並儲存**：**router 當場切換，
 不用重啟。** 這顆鍵只存這個開關，不經過頁首的儲存鍵：畫面上其他還沒儲存的修改不會被一起存，也不會被丟掉。
-（直接手改 `config.json` 的 `"httpsProxy"` 則跟其他手改一樣，下次啟動才生效。）
+（直接手改 `config.json` 的 `"httpsProxy"` 則跟其他手改一樣，下次啟動才生效；router 還在跑時手改的內容，
+下一次從 GUI 存檔就被蓋掉，見 [configuration.md](configuration.md#手改-configjson)。）
 
 面板放在三個步驟之後而不是最上面：只用 CLI 的人不需要它，不該在第 1 步之前先讀到一個選用功能。
 之前是一個勾選框加頁首的儲存鍵，勾了還沒存時，勾選框與「目前狀態」互相矛盾，要靠一段提示去調和；
@@ -172,8 +173,9 @@ GUI 接入分頁最下面的「HTTPS proxy 模式」面板，按**開啟並儲�
 再重開（Desktop 開新 session）。關掉時這一步特別重要：還留著 `HTTPS_PROXY` 的話，router 不收 `CONNECT`，
 Claude Code 的所有連線都會失敗。
 
-「關掉＝原行為」由 `test/connect.test.mjs` 守著：不掛 `CONNECT`、沒打開過就不產生 CA、guard 的例外
-不存在；執行中關掉時監聽被拿掉、開著的隧道被斷，再打開不用重啟。
+「關掉＝原行為」的測試在 `test/connect.test.mjs`：`createHttpsProxy` 關著時不掛 `CONNECT`、沒打開過
+就不產生 CA；執行中關掉時監聽被拿掉、開著的隧道被斷，再打開不用重啟；proxy 的 runtime 回報「沒開」時
+guard 沒有例外。**`src/index.mjs` 把兩者接起來的那段沒有測試**（見「怎麼驗的」）。
 
 ## 設定 Claude Code
 
@@ -229,9 +231,11 @@ Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之�
 
 ## 本機 CA
 
-- 第一次啟動時產生，放在 `config.json` 旁邊：`https-proxy-ca.pem`（證書）與
-  `https-proxy-ca-key.pem`（私鑰，0600）。兩個都在 `.gitignore` 裡。
-- ECDSA P-256，效期十年。伺服器證書每次啟動重簽一張，只放在記憶體裡。
+- 第一次打開模式時產生（啟動時設定已經是開著的，就在啟動時；在 GUI 打開，就在按下去的時候），
+  放在 `config.json` 旁邊：`https-proxy-ca.pem`（證書）與 `https-proxy-ca-key.pem`（私鑰，0600）。
+  兩個都在 `.gitignore` 裡。用 `ROUTER_CONFIG` 把設定檔放到別處時，CA 跟著過去，
+  `NODE_EXTRA_CA_CERTS` 也要跟著改。
+- ECDSA P-256，效期十年。伺服器證書每次打開模式時重簽一張，只放在記憶體裡。
 - **nameConstraints 限定只能簽 `api.anthropic.com`。** 私鑰外洩的話，拿它簽別的網域，
   驗證端會以 `permitted subtree violation` 拒絕；簽 IP 位址（iPAddress SAN）則以
   `excluded subtree violation` 拒絕。`test/ca.test.mjs` 用真的 TLS 握手驗這兩件事。
@@ -244,7 +248,8 @@ Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之�
   GUI 存檔時回報錯誤、設定不存。訊息會寫出要刪哪兩個檔案。照樣載入的話，每次握手都會失敗，
   console 只看得到指向 `NODE_EXTRA_CA_CERTS` 的警告，方向是錯的。
 - 證書是 `src/ca.mjs` 手工用 DER 拼出來的：Node 只會解析 X.509、不會產生，而這個專案零依賴。
-- 刪掉這兩個檔案，下次啟動就會產生新的一組。路徑不變，但 Claude Code 要重開才會讀到新證書。
+- 刪掉這兩個檔案，下次打開模式時就會產生新的一組（重啟 router，或在 GUI 關掉再打開）。
+  路徑不變，但 Claude Code 要重開才會讀到新證書。
 
 ## 實測（2026-09-25，Windows）
 
@@ -298,13 +303,23 @@ Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之�
 
 | 測試 | 驗的是 |
 |---|---|
-| `test/ca.test.mjs` | 用真的 TLS 握手：CA 簽的證書驗得過；同一把 CA 替別的網域、或替 IP 位址簽的會被 nameConstraints 拒絕；不信任這把 CA 的 client 握手失敗；2050 年後的到期日編碼；CA 落檔後原樣讀回 |
-| `test/connect.test.mjs`（開啟） | 經 CONNECT 解開的子 agent 請求分到 provider、訂閱 token 不會跟過去；主對話原樣走訂閱；其他路徑原樣轉發且不進流量記錄；其他主機走隧道；目的地連不上回 502；解析不出目的地回 400；client 不信任 CA 時提示去查 `NODE_EXTRA_CA_CERTS`；WebSocket upgrade 原樣接到上游 |
-| `test/connect.test.mjs`（關閉） | 不掛 CONNECT、不產生 CA、CONNECT 直接被斷；guard 的例外只在開啟時存在；明文送來、Host 寫 `api.anthropic.com` 的請求照樣 403 |
+| `test/ca.test.mjs` | 用真的 TLS 握手：CA 簽的證書驗得過；同一把 CA 替別的網域、或替 IP 位址簽的會被 nameConstraints 拒絕；不信任這把 CA 的 client 握手失敗；2050 年後的到期日編碼；CA 落檔後原樣讀回；落檔的證書與私鑰不是同一對、過期、或解析不了時拒絕載入，訊息寫出要刪的檔案 |
+| `test/connect.test.mjs`（開啟） | 經 CONNECT 解開的子 agent 請求分到 provider、訂閱 token 不會跟過去；主對話原樣走訂閱；其他路徑原樣轉發且不進流量記錄；明文送來、Host 寫 `api.anthropic.com` 的請求照樣 403；其他主機走隧道；目的地連不上回 502；解析不出目的地回 400；client 不信任 CA 時提示去查 `NODE_EXTRA_CA_CERTS`；WebSocket upgrade 原樣接到上游。這些都跑在 runtime 寫死「開著」的 proxy 上 |
+| `test/connect.test.mjs`（關閉） | `createHttpsProxy` 關著時不掛 CONNECT、不產生 CA、CONNECT 直接被斷；在 runtime 寫死「沒開」的 proxy 上硬掛 CONNECT，解開的請求被 guard 以 403 擋下 |
+| `test/connect.test.mjs`（開關） | 打開時產生 CA、掛上一個 CONNECT 監聽，已經開著再打開不重掛（「關閉」那一列的對照組）；兩次打開同時進來只掛一個監聽、落檔的證書與私鑰是同一對，兩次關掉之後 CONNECT 被斷；執行中關掉時監聽被拿掉、開著的隧道被斷、之後的 CONNECT 被斷，再打開立即可用、沿用同一把 CA |
+| `test/admin.test.mjs` | 同時送兩個 `PUT /api/config`，第二個等第一個存完才開始，前一個失敗不卡住後面。`setConfig` 是測試自己給的假函式，不含 HTTPS proxy 的切換 |
+| `test/config-save.test.mjs` | `saveConfig` 同時存 20 次都成功，`config.json` 是完整的 JSON，不留暫存檔 |
+| `test/proxy-errors.test.mjs` | 請求行是完整網址（`HTTPS_PROXY` 與 http:// 的 `ANTHROPIC_BASE_URL` 同時設）時回 400、訊息點名這兩個設定、不往上游送 |
 | `test/config.test.mjs` | `httpsProxy` 預設關閉，只有布林 `true` 才打開 |
 
-「關閉」那三個測試做過變異驗證：把 guard 的開關判斷拿掉、讓 `setupHttpsProxy` 無視 `enabled`，
-對應的測試會紅；改回來才綠。這一步是手動做的，沒有寫進測試。
+**沒有測試的：`src/index.mjs` 的接線。** guard 看的 `getRuntime().httpsProxy` 讀自
+`createHttpsProxy().enabled`、`setConfig` 先切換再存、存檔失敗時切回原狀，這幾件事只有
+`src/index.mjs` 在做，而它一 import 就綁埠啟動，沒有測試 import 它。上表的 guard 測試用的是寫死的
+runtime，證明的是「runtime 說沒開時沒有例外」，不是「GUI 關掉之後 runtime 會說沒開」。
+
+「關閉」與「開關」那幾列做過變異驗證：拿掉 guard 的開關判斷、讓切換無視 `enabled`（當時還是啟動時
+一次決定的 `setupHttpsProxy`）、關掉時不斷隧道或不拿掉監聽、拿掉 `apply` 的排隊，對應的測試會紅；
+改回來才綠。這一步是手動做的，沒有寫進測試。
 
 **端到端（2026-09-25，手動，細節見上面的「實測」）**
 
@@ -326,16 +341,22 @@ Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之�
 ## 沒有的功能與已知缺口
 
 - **router 對外不會再經過另一層代理。** 如果你的網路要靠 Clash 之類的系統代理才連得到外面：
-  CONNECT 隧道（`net.connect`）與 WebSocket（`tls.connect`）一律直連，`fetch` 與原樣轉發只有在
-  router 啟動時帶 `NODE_USE_ENV_PROXY=1` 才會用環境變數裡的代理。Clash 的 TUN 模式在網路層接管，
-  不受影響。這一條是讀程式碼得出的，沒有實測。
+  CONNECT 隧道（`net.connect`）與 WebSocket（`tls.connect`）一律直連。`fetch`（兩種模式的
+  `/v1/messages*`）與原樣轉發（`https.request`，走 global agent）預設也不理 `HTTPS_PROXY`，只有
+  router 啟動時帶 `NODE_USE_ENV_PROXY=1` 或 `--use-env-proxy` 才會用環境變數裡的代理，而且要看
+  Node 版本：`fetch` 從 v24.0.0 起、`http.request`／`https.request` 的 global agent 與
+  `--use-env-proxy` 從 v24.5.0 起，兩者都 backport 到 v22.21.0；Node 20 沒有這個功能，設了也沒用
+  （[Node 文檔](https://nodejs.org/docs/latest-v24.x/api/http.html#built-in-proxy-support)）。
+  **帶著這個設定、又讓 `HTTPS_PROXY` 指向 router 自己去啟動它，請求會繞回自己。**
+  Clash 的 TUN 模式在網路層接管，不受影響。這一條是讀程式碼與 Node 文檔得出的，沒有實測。
 - **不支援代理認證**（`Proxy-Authorization`）。router 只綁 127.0.0.1，本機任何程式都能拿它當隧道
   —— 它們本來就能自己連出去，所以沒有多開放什麼。
-- **只支援 `CONNECT`。** `HTTP_PROXY` 用的明文代理請求（`GET http://…`）會被 guard 以 403 擋下。
+- **只支援 `CONNECT`。** `HTTP_PROXY` 用的明文代理請求（請求行是完整網址，`GET http://…`）不會被
+  轉發：Host 是別的主機時 guard 回 403，Host 是 router 自己時回 400（見「設定 Claude Code」）。
+  所以不要把 `HTTP_PROXY` 也指過來。
 - **解開的連線只講 HTTP/1.1。** router 的 TLS 沒有宣告 ALPN，Claude Code 會退回 HTTP/1.1；實測正常。
 - **原樣轉發的請求與隧道不進流量記錄**，GUI 上看不到它們。這是刻意的（見上面「原理」），但也代表
   出問題時只能靠 Claude Code 的 debug log 查。
-- **換 CA 要重開 Claude Code** 才會讀到新的證書。開關本身存檔即生效，但 Claude Code 那邊的設定改了也要重開。
 - **Claude Desktop 的聽寫**不經過 router；**CLI 的 Remote Control** 只有全域設定才行。
 - **沒測過**：Desktop 的 SSH / WSL session、背景 agent（`claude agents`、`--bg`）、macOS / Linux 上的
   Desktop、Claude Code 送 CONNECT 時就附帶資料（router 會直接斷線；目前的 client 都等 200 才開始握手）。
@@ -345,17 +366,12 @@ Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之�
 - **`HTTPS_PROXY` 會被 Claude Code 啟動的每一支程式繼承**，包括 Bash 工具裡跑的 git、npm、
   curl。它們經 router 原樣隧道出去，但 **router 沒在跑的時候全部斷網**，Claude Code 本身也是。
   不想經過 router 的主機列進 `NO_PROXY`。
-- **只處理 `CONNECT`。** `HTTP_PROXY` 用的 absolute-form 明文代理請求（`GET http://…`）
-  會被 guard 以 403 擋下，所以不要把 `HTTP_PROXY` 也指過來。
-- **不要讓 router 自己走代理。** Node 的 `fetch` 預設不理 `HTTPS_PROXY`，只有設了
-  `NODE_USE_ENV_PROXY=1` 或 `--use-env-proxy` 才會
-  （[Node 文檔](https://nodejs.org/docs/latest-v24.x/api/http.html#built-in-proxy-support)）。
-  帶著這兩者之一、又讓 `HTTPS_PROXY` 指向自己去啟動 router，請求會繞回自己。
 - **模式開著時，guard 對解開的請求放行。** 它們的 Host 是 `api.anthropic.com`，必然過不了主機名檢查。
   這條路不必防 DNS rebinding 與 CSRF：網頁的 `fetch` 送不出 `CONNECT`，瀏覽器也不信任這把 CA。
   proxy 那台 server 只收明文，所以「socket 是加密的」就代表是這條路進來的
   （`src/proxy.mjs`）。明文送來、Host 寫 `api.anthropic.com` 的請求照樣被擋；模式沒開時這個例外
-  根本不存在。兩件事都有測試守著。
+  根本不存在。`test/connect.test.mjs` 對這兩件事都有測試，但用的是寫死開或關的 runtime；
+  `src/index.mjs` 把 runtime 接到實際開關的那段沒有測試（見「怎麼驗的」）。
 - **握手失敗時 router 會在 console 提示去查 `NODE_EXTRA_CA_CERTS`。** TLS 1.3 下 client
   驗不過證書只會關掉連線，server 端看不到錯誤，只看得到「還沒握完手就關了」，所以 client
   正常中途離開也會觸發這個提示。解開 TLS 用的是自己包的 `TLSSocket`：從 http server 的
