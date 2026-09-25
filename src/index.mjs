@@ -51,7 +51,13 @@ async function setConfig(next) {
   return config
 }
 
-const startup = await httpsProxy.apply(config.httpsProxy)
+let startup
+try {
+  startup = await httpsProxy.apply(config.httpsProxy)
+} catch (err) {
+  console.error(`✗ ${err.message}`)
+  process.exit(1)
+}
 const admin = createAdminServer({ getConfig, setConfig, log, getRuntime })
 
 function listen(server, port, label) {

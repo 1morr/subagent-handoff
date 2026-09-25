@@ -1,4 +1,4 @@
-import { generateKeyPairSync, createHash, randomBytes, sign, X509Certificate } from 'node:crypto'
+import { generateKeyPairSync, createHash, createPrivateKey, randomBytes, sign, X509Certificate } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { isIPv4 } from 'node:net'
 import path from 'node:path'
@@ -215,6 +215,19 @@ export function issueLeaf(ca, host, now = new Date()) {
   return { certPem, keyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }) }
 }
 
+function caProblem(certPem, keyPem, now = new Date()) {
+  let cert, key
+  try {
+    cert = new X509Certificate(certPem)
+    key = createPrivateKey(keyPem)
+  } catch (err) {
+    return `cannot be parsed (${err.message})`
+  }
+  if (!cert.checkPrivateKey(key)) return 'has a certificate and a key that do not belong together'
+  if (new Date(cert.validTo) <= now) return `expired on ${cert.validTo}`
+  return null
+}
+
 /**
  * 讀出 `dir` 底下的 CA；還沒有就產生一組。私鑰 0600，跟 config.json 同一個理由。
  *
@@ -225,11 +238,21 @@ export function issueLeaf(ca, host, now = new Date()) {
 export async function loadOrCreateCa(dir, permittedHost) {
   const certPath = path.join(dir, CA_CERT_FILE)
   const keyPath = path.join(dir, CA_KEY_FILE)
+  let pems
   try {
-    const [certPem, keyPem] = await Promise.all([readFile(certPath, 'utf8'), readFile(keyPath, 'utf8')])
-    return { certPem, keyPem, certPath, created: false }
+    pems = await Promise.all([readFile(certPath, 'utf8'), readFile(keyPath, 'utf8')])
   } catch (err) {
     if (err.code !== 'ENOENT') throw new Error(`Could not read the HTTPS proxy CA in ${dir}: ${err.message}`)
+  }
+  if (pems) {
+    const [certPem, keyPem] = pems
+    // 壞掉的 CA 照樣載入的話，之後每次握手都失敗，console 只看得到「檢查 NODE_EXTRA_CA_CERTS」
+    // 這種指錯方向的警告 —— 在這裡就講清楚是哪裡壞、怎麼修
+    const problem = caProblem(certPem, keyPem)
+    if (problem) {
+      throw new Error(`The HTTPS proxy CA in ${dir} ${problem}. Delete ${CA_CERT_FILE} and ${CA_KEY_FILE} to create a new one, then restart Claude Code.`)
+    }
+    return { certPem, keyPem, certPath, created: false }
   }
   const ca = createCa({ permittedHost })
   await mkdir(dir, { recursive: true })

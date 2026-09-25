@@ -4,7 +4,7 @@ import tls from 'node:tls'
 import net from 'node:net'
 import { once } from 'node:events'
 import { X509Certificate } from 'node:crypto'
-import { mkdtemp, readFile, stat, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile, stat, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createCa, issueLeaf, loadOrCreateCa, CA_CERT_FILE, CA_KEY_FILE } from '../src/ca.mjs'
@@ -87,6 +87,34 @@ test('loadOrCreateCa：第一次產生並落檔，之後原樣讀回同一把', 
     if (process.platform !== 'win32') {
       assert.equal((await stat(path.join(dir, CA_KEY_FILE))).mode & 0o777, 0o600)
     }
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('loadOrCreateCa：落檔的 CA 壞了就拒絕載入，錯誤訊息說哪裡壞、怎麼修', async () => {
+  // 照樣載入的話，每次握手都失敗，使用者只看得到指向 NODE_EXTRA_CA_CERTS 的誤導警告
+  const dir = await mkdtemp(path.join(tmpdir(), 'ca-bad-'))
+  const certPath = path.join(dir, CA_CERT_FILE)
+  const keyPath = path.join(dir, CA_KEY_FILE)
+  try {
+    const a = createCa({ permittedHost: HOST })
+    const b = createCa({ permittedHost: HOST })
+    await writeFile(certPath, a.certPem)
+    await writeFile(keyPath, b.keyPem)
+    await assert.rejects(loadOrCreateCa(dir, HOST), /do not belong together.*Delete https-proxy-ca\.pem/)
+
+    const expired = createCa({ permittedHost: HOST, now: new Date('2000-01-01T00:00:00Z') })
+    await writeFile(certPath, expired.certPem)
+    await writeFile(keyPath, expired.keyPem)
+    await assert.rejects(loadOrCreateCa(dir, HOST), /expired on/)
+
+    await writeFile(keyPath, 'not a key')
+    await assert.rejects(loadOrCreateCa(dir, HOST), /cannot be parsed/)
+
+    await writeFile(certPath, a.certPem)
+    await writeFile(keyPath, a.keyPem)
+    assert.equal((await loadOrCreateCa(dir, HOST)).created, false, '對照組：好的 CA 照常載入')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
