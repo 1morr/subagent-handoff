@@ -918,7 +918,8 @@ function renderModeExplain(proxyMode) {
           </div>
           <div class="fl">
             <div class="lbl">${t('setup.explain.on')}</div>
-            ${row(node('CLI + Desktop'), edge('HTTPS_PROXY'), node('router', 'rt'))}
+            ${row(node('Claude Code CLI'), edge('ANTHROPIC_BASE_URL'), node('router', 'rt'), `<span class="fl-edge">${t('setup.explain.asBefore')}</span>`)}
+            ${row(node(t('setup.explain.proxyClients')), edge('HTTPS_PROXY'), node('router', 'rt'))}
             ${sub(edge(t('setup.explain.edgeMainOn')), anthropic)}
             ${sub(edge(t('setup.explain.edgeSubOn')), provider)}
             ${sub(edge(t('setup.explain.relay')), anthropic)}
@@ -948,8 +949,16 @@ function renderModeExplain(proxyMode) {
  * 第一行是 router 此刻實際的狀態，動作是一顆「開啟／關閉並儲存」：只存這個開關、當場生效
  * （saveOnly），不經過頁首的儲存鍵，所以沒有「勾了還沒存」這種兩個狀態對不起來的中間態。
  */
-function renderModePanel(proxyMode) {
+function renderModePanel(proxyMode, port) {
   const switched = S.modeSwitched && S.modeSwitched === (proxyMode ? 'on' : 'off')
+  // 開啟時才有 CA 路徑可填。JSON.stringify 才會把 Windows 路徑的反斜線跳脫好，貼進 settings.json 才是合法的 JSON
+  const snippet = `{
+  "env": {
+    "HTTPS_PROXY": "http://127.0.0.1:${port}",
+    "NODE_EXTRA_CA_CERTS": ${esc(JSON.stringify(S.runtime.caCertPath ?? ''))}
+  }
+}`
+  const usage = ['cliOnly', 'both', 'repo']
   return `
     <section class="panel" id="mode-panel">
       <div class="panel-head"><h2 class="lbl">${t('setup.modeTitle')}</h2><span class="hint">${t('setup.modeFor')}</span></div>
@@ -966,6 +975,21 @@ function renderModePanel(proxyMode) {
         </div>
         ${switched ? `<div class="marginal ${proxyMode ? 'note' : 'alarm'}" role="status"><i></i><div>${
           t(proxyMode ? 'setup.modeSwitchedOn' : 'setup.modeSwitchedOff')}</div></div>` : ''}
+        ${proxyMode ? `
+        <div class="fld" style="gap:10px">
+          <h3 class="lbl" style="margin:0">${t('setup.proxy.snippetTitle')}</h3>
+          <p style="margin:0">${t('setup.proxy.step1Body')}</p>
+          <pre id="proxy-snippet">${snippet}</pre>
+          <div><button class="btn" data-act="copy" data-key="proxy-snippet">${t('common.copy')}</button></div>
+          <div class="cmp-wrap"><table class="cmp">
+            <thead><tr><th>${t('setup.usage.colUse')}</th><th>${t('setup.usage.colSettings')}</th></tr></thead>
+            <tbody>${usage.map((u) => `<tr><th>${t(`setup.usage.${u}`)}</th><td>${t(`setup.usage.${u}Settings`)}</td></tr>`).join('')}</tbody>
+          </table></div>
+          <div class="marginal alarm"><i></i><div>${t('setup.proxy.conflict')}</div></div>
+          <span class="hint">${t('setup.proxy.inherit')}</span>
+          <span class="hint">${t('setup.proxy.verify', { port })}</span>
+          <span class="hint">${t('setup.proxy.limit3')}</span>
+        </div>` : ''}
         ${renderModeExplain(proxyMode)}
       </div>
     </section>`
@@ -973,34 +997,23 @@ function renderModePanel(proxyMode) {
 
 function renderSetup() {
   const port = S.runtime.boundProxyPort
-  // 片段與說明跟著 router 此刻實際在跑的模式走。模式關著的時候，
-  // 這一頁除了最下面的模式面板，跟沒有這個功能時一字不差
+  // 三個步驟是 CLI 用 ANTHROPIC_BASE_URL 的接法，兩種模式下都一樣：打開 HTTPS proxy 模式只是多一個
+  // CONNECT 入口，原本的入口一行都沒變，CLI 不用改設定。Desktop 要的片段放在最下面的模式面板
   const proxyMode = S.runtime.httpsProxy === true
-  const st = (key, vars) => t(proxyMode ? `setup.proxy.${key}` : `setup.${key}`, vars)
-  // JSON.stringify 才會把 Windows 路徑的反斜線跳脫好，貼進 settings.json 才是合法的 JSON
-  const snippet = proxyMode
-    ? `{
-  "env": {
-    "HTTPS_PROXY": "http://127.0.0.1:${port}",
-    "NODE_EXTRA_CA_CERTS": ${esc(JSON.stringify(S.runtime.caCertPath))}
-  }
-}`
-    : `{
+  const snippet = `{
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:${port}"
   }
 }`
   return `
     <section class="panel">
-      <div class="panel-head"><span class="lbl">${t('setup.step1Title')}</span>${
-        proxyMode ? `<a class="hint" href="#mode-panel">${t('setup.step1ForMode')}</a>` : ''}</div>
+      <div class="panel-head"><span class="lbl">${t('setup.step1Title')}</span></div>
       <div class="panel-body" style="display:flex;flex-direction:column;gap:12px">
-        <p style="margin:0">${st('step1Body')}</p>
+        <p style="margin:0">${t('setup.step1Body')}</p>
         <pre id="snippet">${snippet}</pre>
-        <div><button class="btn" data-act="copy">${t('common.copy')}</button></div>
-        ${proxyMode ? `<span class="hint">${t('setup.proxy.inherit')}</span>` : ''}
+        <div><button class="btn" data-act="copy" data-key="snippet">${t('common.copy')}</button></div>
         <div class="marginal alarm"><i></i><div>
-          ${st('warnCreds')}
+          ${t('setup.warnCreds')}
         </div></div>
         <div class="marginal note"><i></i><div>
           ${t('setup.attributionWarn')}
@@ -1013,7 +1026,7 @@ function renderSetup() {
       <div class="panel-body">
         <p style="margin:0 0 8px">${t('setup.step2Body')}</p>
         <ul style="margin:0 0 8px;padding-left:20px;line-height:1.8">
-          <li>${st('step2Item1', { port })}</li>
+          <li>${t('setup.step2Item1', { port })}</li>
           <li>${t('setup.step2Item2')}</li>
         </ul>
         <p style="margin:0">${t('setup.step2Note')}</p>
@@ -1032,15 +1045,15 @@ function renderSetup() {
       <div class="panel-body">
         <ul style="margin:0;padding-left:20px;line-height:1.8">
           <li>${t('setup.limit1')}</li>
-          <li>${st('limit2')}</li>
-          <li>${st('limit3')}</li>
+          <li>${t('setup.limit2')}</li>
+          <li>${t('setup.limit3')}</li>
           <li>${t('setup.limit4')}</li>
           <li>${t('setup.limit5')}</li>
         </ul>
       </div>
     </section>
 
-    ${renderModePanel(proxyMode)}`
+    ${renderModePanel(proxyMode, port)}`
 }
 
 // ── render / 事件 ─────────────────────────────────────────────────
@@ -1268,7 +1281,7 @@ document.addEventListener('click', async (ev) => {
     } else if (act === 'clear-logs') {
       await api('POST', '/api/logs/clear'); S.logs = []; S.open = null; render()
     } else if (act === 'copy') {
-      await navigator.clipboard.writeText($('#snippet').textContent)
+      await navigator.clipboard.writeText(document.getElementById(btn.dataset.key).textContent)
       btn.textContent = t('common.copied')
       setTimeout(() => { btn.textContent = t('common.copy') }, 1200)
     }

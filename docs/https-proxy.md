@@ -104,12 +104,12 @@ sequenceDiagram
 | | 關閉（預設） | 開啟 |
 |---|---|---|
 | 能接的 client | Claude Code CLI | CLI、Claude Desktop |
-| Claude Code 的設定 | `ANTHROPIC_BASE_URL` | `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` |
+| Claude Code 的設定 | `ANTHROPIC_BASE_URL` | 用 `ANTHROPIC_BASE_URL` 的 CLI 不用改；Desktop（與改過去的 CLI）用 `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` |
 | Claude Code 以為自己連到 | 自訂的 base URL | `api.anthropic.com`（直連） |
 | 經過 router 的連線 | 只有 API 請求（`/v1/messages*`） | Claude Code 與它啟動的程式的**所有** HTTPS 連線 |
 | router 解開、看得到內容的 | `/v1/messages*`（本來就是明文送來） | 所有送往 `api.anthropic.com` 的請求；其他主機看不到 |
 | 分流、改寫、流量記錄 | `/v1/messages*` | 完全相同 |
-| router 沒在跑時 | API 請求失敗 | Claude Code 與它的 git / npm **全部斷網** |
+| router 沒在跑時 | API 請求失敗 | 設了 `HTTPS_PROXY` 的 Claude Code 與它的 git / npm **全部斷網** |
 | 本機 CA | 沒有 | 有，只能簽 `api.anthropic.com` |
 | Remote Control | CLI 停用（base URL 指向非 Anthropic 主機） | Desktop 可用；CLI 要全域改用這個模式才行 |
 | voice mode（CLI） | 直連 Anthropic | 經 router 原樣轉發 |
@@ -169,9 +169,17 @@ GUI 接入分頁最下面的「HTTPS proxy 模式」面板，按**開啟並儲�
 - 先切換再存檔：切換失敗（例如 CA 寫不進去）就不存，GUI 顯示錯誤，設定檔不會跟實際狀態不一致。
 
 面板第一行是 router **此刻實際**的模式，按鍵旁邊寫著按下去會發生什麼（關掉時會斷網的警告就在鍵旁邊）；
-剛切換完時提醒 Claude Code 那邊還沒變。模式開著時，第 1 步的標題旁會標出這是 HTTPS proxy 模式的片段。**router 切換了，Claude Code 不會跟著變**：它的 `settings.json` 要換成新的片段、
-再重開（Desktop 開新 session）。關掉時這一步特別重要：還留著 `HTTPS_PROXY` 的話，router 不收 `CONNECT`，
-Claude Code 的所有連線都會失敗。
+剛切換完時提醒 Claude Code 那邊還沒變。
+
+**打開不會影響原本用 `ANTHROPIC_BASE_URL` 的 CLI。** 模式只是在同一個埠上多掛一個 `CONNECT` 入口，
+明文送來的 `/v1/messages*` 照舊走原本那條路（開啟狀態下實測過：`ANTHROPIC_BASE_URL` 式的請求照樣轉到
+Anthropic）。所以接入分頁的三個步驟在兩種模式下都是 `ANTHROPIC_BASE_URL` 的接法；Desktop 要的
+`HTTPS_PROXY` 片段、放在哪一層的選擇表、以及設定打架的警告，只在模式開著時出現在最下面的面板裡。
+之前的版本在開啟時把第 1 步整個換成 `HTTPS_PROXY`、並要人拿掉 `ANTHROPIC_BASE_URL`，會讓人以為一打開
+CLI 就得跟著改。
+
+要讓 Desktop 走 router，它讀得到的 `settings.json` 要放進新的片段、再開新的 session。關掉時：還留著
+`HTTPS_PROXY` 的 Claude Code 的所有連線都會失敗，要把它拿掉再重開。
 
 「關掉＝原行為」的測試在 `test/connect.test.mjs`：`createHttpsProxy` 關著時不掛 `CONNECT`、沒打開過
 就不產生 CA；執行中關掉時監聽被拿掉、開著的隧道被斷，再打開不用重啟；proxy 的 runtime 回報「沒開」時
@@ -179,7 +187,8 @@ guard 沒有例外。**`src/index.mjs` 把兩者接起來的那段沒有測試**
 
 ## 設定 Claude Code
 
-模式打開之後，接入分頁會給出填好 CA 路徑的片段。放在哪一層決定影響範圍：
+模式打開之後，接入分頁最下面的面板會給出填好 CA 路徑的片段。只用 CLI 的話什麼都不用改；
+要讓 Desktop 走 router，放在哪一層決定影響範圍：
 
 **全域 —— `~/.claude/settings.json`（CLI 與 Desktop 共用）**
 

@@ -295,7 +295,7 @@
   .mode-pill.off { color: var(--on-bay-dim); border-color: var(--rail-lit); }
   .mode-action { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
   .mode-action > .hint { flex: 1; min-width: 240px; }
-  h2.lbl { margin: 0; }
+  h2.lbl, h3.lbl { margin: 0; }
   a.hint { color: #7fc7b8; }
 
   /* 接入分頁：HTTPS proxy 模式的原理說明（流向圖 + 比較表） */

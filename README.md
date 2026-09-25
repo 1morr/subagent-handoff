@@ -120,21 +120,37 @@ get in differs.
 | | Off (default) | On |
 |---|---|---|
 | Clients | CLI | CLI and Claude Desktop |
-| Claude Code settings | `ANTHROPIC_BASE_URL` | `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` |
+| Claude Code settings | `ANTHROPIC_BASE_URL` | unchanged for the CLI; Desktop (or a CLI you switch over) uses `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` |
 | Through the router | API requests only | every HTTPS connection of Claude Code and the programs it starts; only `api.anthropic.com` is decrypted |
-| Router down | API requests fail | Claude Code, git, npm… lose all network access |
+| Router down | API requests fail | clients set to `HTTPS_PROXY`, plus their git, npm…, lose all network access |
 | Local CA | none | one, name-constrained to `api.anthropic.com` |
 
-**To turn it on:** press **Turn on and save** in the *HTTPS proxy mode* panel at the
-bottom of the **Connect** tab. The router switches on the spot, no restart. Then put
-the snippet step 1 now shows into Claude Code's settings (and remove
-`ANTHROPIC_BASE_URL`), and restart Claude Code. Hand-editing `"httpsProxy"` in
-`config.json` only takes effect when the router restarts.
+**Turning it on does not change the CLI setup.** The mode only *adds* an entrance
+(`CONNECT`); requests sent to `ANTHROPIC_BASE_URL` come in exactly as before, so a
+CLI using it keeps working without any change. The mode is for clients that cannot
+be pointed at the router with `ANTHROPIC_BASE_URL`: Claude Desktop, and the CLI's
+Remote Control. If you only use the CLI, you do not need it.
 
-**To turn it off:** press **Turn off and save**, then in Claude Code's settings remove
-`HTTPS_PROXY` and `NODE_EXTRA_CA_CERTS`, put the `ANTHROPIC_BASE_URL` snippet back,
-and restart Claude Code. A Claude Code still set to `HTTPS_PROXY` has no network at
-all once the mode is off.
+**To turn it on:** press **Turn on and save** in the *HTTPS proxy mode* panel at the
+bottom of the **Connect** tab. The router switches on the spot, no restart. The panel
+then shows the `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` snippet for Desktop and where to
+put it:
+
+| Your setup | Where the settings go |
+|---|---|
+| CLI only | Keep `ANTHROPIC_BASE_URL`; the mode is not needed |
+| CLI and Desktop both through the router | The snippet in the global `~/.claude/settings.json`, with `ANTHROPIC_BASE_URL` removed there; the CLI then also goes through the proxy |
+| Desktop in one repo only | The snippet in that repo's `.claude/settings.local.json`, plus `"ANTHROPIC_BASE_URL": "https://api.anthropic.com"` to override the global one |
+
+One set of settings must not hold both `HTTPS_PROXY` and an `http://`
+`ANTHROPIC_BASE_URL` — project settings add to the global ones. The CLI then treats
+the router as an ordinary proxy and the router answers every request with a 400
+naming the two settings. Hand-editing `"httpsProxy"` in `config.json` only takes
+effect when the router restarts.
+
+**To turn it off:** press **Turn off and save**. A CLI using `ANTHROPIC_BASE_URL` is
+not affected. Anything still set to `HTTPS_PROXY` has no network at all once the mode
+is off: remove `HTTPS_PROXY` and `NODE_EXTRA_CA_CERTS` from its settings and restart it.
 
 **Account risk:** nobody can promise it is safe. In both modes the subscription
 requests keep your token and body but leave from the router, with Node's TLS

@@ -92,14 +92,24 @@ flowchart LR
 | | 關閉（預設） | 開啟 |
 |---|---|---|
 | 能接的 client | CLI | CLI、Claude Desktop |
-| Claude Code 的設定 | `ANTHROPIC_BASE_URL` | `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` |
+| Claude Code 的設定 | `ANTHROPIC_BASE_URL` | CLI 不用改；Desktop（或改過去的 CLI）用 `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` |
 | 經過 router 的連線 | 只有 API 請求 | Claude Code 與它啟動的程式的所有 HTTPS 連線；只解開 `api.anthropic.com` |
-| router 沒在跑時 | API 請求失敗 | Claude Code、git、npm… 全部斷網 |
+| router 沒在跑時 | API 請求失敗 | 設了 `HTTPS_PROXY` 的 Claude Code 與它的 git、npm… 全部斷網 |
 | 本機 CA | 沒有 | 有，只能簽 `api.anthropic.com` |
 
-**怎麼打開：** 在**接入**分頁最下面的「HTTPS proxy 模式」面板按**開啟並儲存** —— router 當場切換，不用重啟 —— 再把第 1 步換上的片段放進 Claude Code 的設定（並拿掉 `ANTHROPIC_BASE_URL`）、重開 Claude Code。直接手改 `config.json` 的 `"httpsProxy"` 要重啟 router 才生效。
+**打開它不會改變 CLI 的設定。** 這個模式只是*多一個*入口（`CONNECT`）：送到 `ANTHROPIC_BASE_URL` 的請求照舊進來，用它的 CLI 不用改任何設定就照常可用。這個模式是給沒辦法用 `ANTHROPIC_BASE_URL` 指到 router 的 client 用的：Claude Desktop，以及 CLI 的 Remote Control。只用 CLI 就不需要它。
 
-**怎麼關掉：** 按**關閉並儲存**，再把 Claude Code 設定裡的 `HTTPS_PROXY` 與 `NODE_EXTRA_CA_CERTS` 拿掉、放回 `ANTHROPIC_BASE_URL` 的片段、重開 Claude Code。模式關掉之後，還設著 `HTTPS_PROXY` 的 Claude Code 會完全連不上網路。
+**怎麼打開：** 在**接入**分頁最下面的「HTTPS proxy 模式」面板按**開啟並儲存** —— router 當場切換，不用重啟。面板接著給出 Desktop 要的 `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` 片段，以及放在哪裡：
+
+| 你的用法 | 設定放哪裡 |
+|---|---|
+| 只用 CLI | 維持 `ANTHROPIC_BASE_URL`，用不到這個模式 |
+| CLI 與 Desktop 都走 router | 片段放進全域 `~/.claude/settings.json`，並拿掉那裡的 `ANTHROPIC_BASE_URL`；CLI 也改走 proxy |
+| 只在某個 repo 用 Desktop | 片段放進那個 repo 的 `.claude/settings.local.json`，再加 `"ANTHROPIC_BASE_URL": "https://api.anthropic.com"` 蓋掉全域那個 |
+
+同一套設定裡不能同時有 `HTTPS_PROXY` 和 `http://` 的 `ANTHROPIC_BASE_URL`（專案設定是疊在全域上面的）：CLI 會把 router 當成一般的 proxy，router 對每個請求回 400，訊息會點名這兩個設定。直接手改 `config.json` 的 `"httpsProxy"` 要重啟 router 才生效。
+
+**怎麼關掉：** 按**關閉並儲存**。用 `ANTHROPIC_BASE_URL` 的 CLI 不受影響；還設著 `HTTPS_PROXY` 的會完全連不上網路，要把它設定裡的 `HTTPS_PROXY` 與 `NODE_EXTRA_CA_CERTS` 拿掉再重開。
 
 **會不會封號：** 沒有人能保證。兩種模式下，主對話請求的 token 與 body 都原樣，但都是由 router 發出的：TLS 指紋是 Node 的，還多了兩個 Node `fetch` 自己加的 header。開啟之後，登入、遙測、Remote Control、voice 也改由 Node 發出。實測細節、完整的圖、全域與單一 repo 的設定方式與風險分析見 [docs/https-proxy.md](docs/https-proxy.md)。
 
