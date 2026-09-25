@@ -95,7 +95,9 @@ flowchart LR
 | router 沒在跑時 | API 請求失敗 | Claude Code、git、npm… 全部斷網 |
 | 本機 CA | 沒有 | 有，只能簽 `api.anthropic.com` |
 
-**怎麼打開：** 在**接入**分頁最上面勾選開關（或設 `"httpsProxy": true`），按儲存 —— router 當場切換，不用重啟 —— 再把分頁給出的片段放進 Claude Code 的設定、重開 Claude Code。關掉時要把設定改回 `ANTHROPIC_BASE_URL`。
+**怎麼打開：** 在**接入**分頁最下面的「HTTPS proxy 模式」面板按**開啟並儲存** —— router 當場切換，不用重啟 —— 再把第 1 步換上的片段放進 Claude Code 的設定（並拿掉 `ANTHROPIC_BASE_URL`）、重開 Claude Code。直接手改 `config.json` 的 `"httpsProxy"` 要重啟 router 才生效。
+
+**怎麼關掉：** 按**關閉並儲存**，再把 Claude Code 設定裡的 `HTTPS_PROXY` 與 `NODE_EXTRA_CA_CERTS` 拿掉、放回 `ANTHROPIC_BASE_URL` 的片段、重開 Claude Code。模式關掉之後，還設著 `HTTPS_PROXY` 的 Claude Code 會完全連不上網路。
 
 **會不會封號：** 沒有人能保證。兩種模式下，主對話請求的 token 與 body 都原樣，但都是由 router 發出的：TLS 指紋是 Node 的，還多了兩個 Node `fetch` 自己加的 header。開啟之後，登入、遙測、Remote Control、voice 也改由 Node 發出。實測細節、完整的圖、全域與單一 repo 的設定方式與風險分析見 [docs/https-proxy.md](docs/https-proxy.md)。
 

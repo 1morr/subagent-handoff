@@ -868,8 +868,8 @@ function renderLogs() {
 
 // ── 接入說明 ───────────────────────────────────────────────────────
 
-/** HTTPS proxy 模式的原理：兩種模式的流向、差別與風險。完整版在 docs/https-proxy.md */
-function renderModeExplain() {
+/** HTTPS proxy 模式的原理：兩種模式的流向、差別與風險。完整版在 docs/https-proxy.md。目前的模式那一欄標出來 */
+function renderModeExplain(proxyMode) {
   const node = (text, cls = '') => `<span class="fl-node ${cls}">${text}</span>`
   const edge = (text) => `<span class="fl-edge">${text} →</span>`
   const row = (...parts) => `<div class="fl-row">${parts.join('')}</div>`
@@ -902,9 +902,10 @@ function renderModeExplain() {
         <span class="hint">${t('setup.explain.sameCode')}</span>
         <div class="cmp-wrap">
           <table class="cmp">
-            <thead><tr><th></th><th>${t('setup.explain.off')}</th><th>${t('setup.explain.on')}</th></tr></thead>
+            <thead><tr><th></th>${[['off', !proxyMode], ['on', proxyMode]].map(([k, cur]) =>
+              `<th class="${cur ? 'cur' : ''}">${t(`setup.explain.${k}`)}${cur ? ` ${t('setup.explain.current')}` : ''}</th>`).join('')}</tr></thead>
             <tbody>${cmpRows.map((r) => `
-              <tr><th>${t(`setup.explain.${r}`)}</th><td>${t(`setup.explain.${r}Off`)}</td><td>${t(`setup.explain.${r}On`)}</td></tr>`).join('')}
+              <tr><th>${t(`setup.explain.${r}`)}</th><td class="${proxyMode ? '' : 'cur'}">${t(`setup.explain.${r}Off`)}</td><td class="${proxyMode ? 'cur' : ''}">${t(`setup.explain.${r}On`)}</td></tr>`).join('')}
             </tbody>
           </table>
         </div>
@@ -916,10 +917,38 @@ function renderModeExplain() {
     </details>`
 }
 
+/**
+ * HTTPS proxy 模式：選用的進階接法，放在三個步驟之後 —— 只用 CLI 的人不該在第 1 步之前先讀到它。
+ * 第一行是 router 此刻實際的狀態，動作是一顆「開啟／關閉並儲存」：只存這個開關、當場生效
+ * （saveOnly），不經過頁首的儲存鍵，所以沒有「勾了還沒存」這種兩個狀態對不起來的中間態。
+ */
+function renderModePanel(proxyMode) {
+  const switched = S.modeSwitched && S.modeSwitched === (proxyMode ? 'on' : 'off')
+  return `
+    <section class="panel" id="mode-panel">
+      <div class="panel-head"><h2 class="lbl">${t('setup.modeTitle')}</h2><span class="hint">${t('setup.modeFor')}</span></div>
+      <div class="panel-body" style="display:flex;flex-direction:column;gap:14px">
+        <div class="mode-status">
+          <span class="lbl">${t('setup.modeNow')}</span>
+          <span class="mode-pill ${proxyMode ? 'on' : 'off'}">${t(proxyMode ? 'setup.modeOn' : 'setup.modeOff')}</span>
+          <span>${t(proxyMode ? 'setup.modeOnState' : 'setup.modeOffState')}</span>
+        </div>
+        <div class="mode-action">
+          <button class="btn ${proxyMode ? 'danger' : ''}" data-act="mode" ${S.modeBusy ? 'disabled' : ''}>${
+            t(proxyMode ? 'setup.modeTurnOff' : 'setup.modeTurnOn')}</button>
+          <span class="hint">${t(proxyMode ? 'setup.modeTurnOffNote' : 'setup.modeTurnOnNote')}</span>
+        </div>
+        ${switched ? `<div class="marginal ${proxyMode ? 'note' : 'alarm'}" role="status"><i></i><div>${
+          t(proxyMode ? 'setup.modeSwitchedOn' : 'setup.modeSwitchedOff')}</div></div>` : ''}
+        ${renderModeExplain(proxyMode)}
+      </div>
+    </section>`
+}
+
 function renderSetup() {
   const port = S.runtime.boundProxyPort
-  // 片段與說明跟著 router 實際在跑的模式走（啟動時決定），不是設定裡還沒重啟生效的那個值。
-  // 模式關著的時候，這一頁除了最上面的開關，跟沒有這個功能時一字不差
+  // 片段與說明跟著 router 此刻實際在跑的模式走。模式關著的時候，
+  // 這一頁除了最下面的模式面板，跟沒有這個功能時一字不差
   const proxyMode = S.runtime.httpsProxy === true
   const st = (key, vars) => t(proxyMode ? `setup.proxy.${key}` : `setup.${key}`, vars)
   // JSON.stringify 才會把 Windows 路徑的反斜線跳脫好，貼進 settings.json 才是合法的 JSON
@@ -937,28 +966,8 @@ function renderSetup() {
 }`
   return `
     <section class="panel">
-      <div class="panel-head"><span class="lbl">${t('setup.modeTitle')}</span></div>
-      <div class="panel-body" style="display:flex;flex-direction:column;gap:8px">
-        <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
-          <input type="checkbox" data-f="httpsProxy" ${S.config.httpsProxy ? 'checked' : ''}> ${t('setup.modeLabel')}
-        </label>
-        <div class="mode-status">
-          <span class="lbl">${t('setup.modeNow')}</span>
-          <span class="mode-pill ${proxyMode ? 'on' : 'off'}">${t(proxyMode ? 'setup.modeOn' : 'setup.modeOff')}</span>
-          <span class="hint">${t(proxyMode ? 'setup.modeOnState' : 'setup.modeOffState')}</span>
-        </div>
-        ${(S.config.httpsProxy === true) === proxyMode ? '' : `<div class="marginal note"><i></i><div>${
-          t(S.config.httpsProxy ? 'setup.modePendingOn' : 'setup.modePendingOff')}</div></div>`}
-        ${S.modeSwitched && S.modeSwitched === (proxyMode ? 'on' : 'off') ? `<div class="marginal ${proxyMode ? 'note' : 'alarm'}"><i></i><div>${
-          t(proxyMode ? 'setup.modeSwitchedOn' : 'setup.modeSwitchedOff')}</div></div>` : ''}
-        <span class="hint">${t('setup.modeHint')}</span>
-        ${renderModeExplain()}
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head"><span class="lbl">${t('setup.step1Title')}</span><span class="hint">${
-        t('setup.step1ForMode', { mode: t(proxyMode ? 'setup.modeOn' : 'setup.modeOff') })}</span></div>
+      <div class="panel-head"><span class="lbl">${t('setup.step1Title')}</span>${
+        proxyMode ? `<a class="hint" href="#mode-panel">${t('setup.step1ForMode')}</a>` : ''}</div>
       <div class="panel-body" style="display:flex;flex-direction:column;gap:12px">
         <p style="margin:0">${st('step1Body')}</p>
         <pre id="snippet">${snippet}</pre>
@@ -1003,7 +1012,9 @@ function renderSetup() {
           <li>${t('setup.limit5')}</li>
         </ul>
       </div>
-    </section>`
+    </section>
+
+    ${renderModePanel(proxyMode)}`
 }
 
 // ── render / 事件 ─────────────────────────────────────────────────
@@ -1082,15 +1093,6 @@ document.addEventListener('input', (ev) => {
   const f = el.dataset.f
   if (!f) return
 
-  // 接入分頁的模式開關是頂層設定，不屬於任何 provider 卡片或規則列
-  if (f === 'httpsProxy') {
-    S.config.httpsProxy = el.checked
-    S.modeSwitched = null
-    markDirty()
-    render()
-    return
-  }
-
   const card = el.closest('[data-pid]')
   const row = el.closest('[data-rid]')
 
@@ -1126,6 +1128,8 @@ document.addEventListener('click', async (ev) => {
 
   if (btn.dataset.tab) {
     S.tab = btn.dataset.tab
+    // 「剛切換完」的提醒只在當下那一頁有意義，換頁就收掉
+    S.modeSwitched = null
     render()
     if (S.tab === 'logs' || S.tab === 'bay') startLogPolling(); else stopLogPolling()
     return
@@ -1190,6 +1194,18 @@ document.addEventListener('click', async (ev) => {
       }
       toast([t(act === 'flip' ? 'bay.flipToast' : 'bay.unflipToast'), hadDraft ? t('bay.draftKept') : '']
         .filter(Boolean).join(lang === 'en' ? ' ' : ''))
+    } else if (act === 'mode') {
+      const on = S.runtime.httpsProxy !== true
+      S.modeBusy = true
+      render()
+      try {
+        await saveOnly((cfg) => { cfg.httpsProxy = on })
+      } finally {
+        S.modeBusy = false
+      }
+      // 存檔當下 router 就切換了；記下來，面板才能提醒 Claude Code 那邊也要跟著換
+      S.modeSwitched = S.runtime.httpsProxy === true ? 'on' : 'off'
+      render()
     } else if (act === 'test') {
       const provider = S.config.providers.find((p) => p.id === pid)
       S.busy[pid] = true; render()
@@ -1225,10 +1241,7 @@ $('#save').addEventListener('click', async () => {
   const btn = $('#save')
   btn.disabled = true
   try {
-    const wasProxyMode = S.runtime.httpsProxy === true
     applyState(await api('PUT', '/api/config', S.config))
-    // 存檔當下 router 就切換了；記下來，接入分頁才能提醒 Claude Code 那邊也要跟著換
-    if ((S.runtime.httpsProxy === true) !== wasProxyMode) S.modeSwitched = S.runtime.httpsProxy ? 'on' : 'off'
     render()
     toast(t('common.savedToast'))
   } catch (err) {

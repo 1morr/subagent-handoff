@@ -270,11 +270,16 @@
   #toast.bad { border-color: #4a2a24; } #toast.bad > i { background: var(--alarm); }
   #toast[hidden] { display: none; }
 
-  /* 接入分頁：HTTPS proxy 模式目前的狀態 */
-  .mode-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  .mode-pill { font: 600 11px/1 var(--sign); letter-spacing: .08em; padding: 4px 9px; border: 1px solid; }
-  .mode-pill.on { color: var(--sub); border-color: var(--sub); }
+  /* 接入分頁：HTTPS proxy 模式目前的狀態。開啟用實心淺色塊、關閉用暗框 ——
+     不用青綠：那是訂閱席位的顏色，「開啟」不是一個席位 */
+  .mode-status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; }
+  .mode-pill { font: 600 13px/1 var(--sign); letter-spacing: .08em; padding: 6px 12px; border: 1px solid; }
+  .mode-pill.on { background: var(--on-bay); border-color: var(--on-bay); color: #10161a; }
   .mode-pill.off { color: var(--on-bay-dim); border-color: var(--rail-lit); }
+  .mode-action { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .mode-action > .hint { flex: 1; min-width: 240px; }
+  h2.lbl { margin: 0; }
+  a.hint { color: #7fc7b8; }
 
   /* 接入分頁：HTTPS proxy 模式的原理說明（流向圖 + 比較表） */
   details.explain > summary { cursor: pointer; font: 12px/1.6 var(--han); color: #7fc7b8; }
@@ -295,6 +300,7 @@
   table.cmp th, table.cmp td { border: 1px solid var(--rail); padding: 6px 10px; text-align: left; vertical-align: top; }
   table.cmp thead th { color: var(--on-bay-dim); font-weight: 500; background: var(--recess); }
   table.cmp tbody th { color: var(--on-bay); font-weight: 500; width: 22%; }
+  table.cmp .cur { color: var(--on-bay); background: rgba(223,227,232,.04); }
   .explain-body > .hint { overflow-wrap: anywhere; }
 
   @media (max-width: 820px) {

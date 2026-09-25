@@ -116,9 +116,16 @@ get in differs.
 | Router down | API requests fail | Claude Code, git, npm… lose all network access |
 | Local CA | none | one, name-constrained to `api.anthropic.com` |
 
-**To turn it on:** tick the switch at the top of the **Connect** tab (or set
-`"httpsProxy": true`) and save — the router switches on the spot, no restart —
-then paste the snippet the tab shows into Claude Code's settings and restart Claude Code. Turning it off again means putting `ANTHROPIC_BASE_URL` back.
+**To turn it on:** press **Turn on and save** in the *HTTPS proxy mode* panel at the
+bottom of the **Connect** tab. The router switches on the spot, no restart. Then put
+the snippet step 1 now shows into Claude Code's settings (and remove
+`ANTHROPIC_BASE_URL`), and restart Claude Code. Hand-editing `"httpsProxy"` in
+`config.json` only takes effect when the router restarts.
+
+**To turn it off:** press **Turn off and save**, then in Claude Code's settings remove
+`HTTPS_PROXY` and `NODE_EXTRA_CA_CERTS`, put the `ANTHROPIC_BASE_URL` snippet back,
+and restart Claude Code. A Claude Code still set to `HTTPS_PROXY` has no network at
+all once the mode is off.
 
 **Account risk:** nobody can promise it is safe. In both modes the subscription
 requests keep your token and body but leave from the router, with Node's TLS

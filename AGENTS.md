@@ -10,7 +10,7 @@ Anthropic-compatible provider you pay for; everything else passes through to
 - **HTTPS proxy mode (`config.httpsProxy`, `src/connect.mjs`) is opt-in, and off
   must mean the router behaves as if the feature did not exist**: no `CONNECT`
   listener, no CA files unless it was turned on before, no guard exemption, and
-  the original setup steps on the Connect tab (only the mode panel above them is
+  the original setup steps on the Connect tab (only the mode panel below them is
   new). It switches at runtime on save (`createHttpsProxy().apply`), and turning
   it off also drops open tunnels. `test/connect.test.mjs` pins the listener, CA,
   guard and runtime-toggle parts; keep new proxy-mode behaviour behind the switch.
