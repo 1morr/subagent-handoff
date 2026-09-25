@@ -638,7 +638,7 @@ function providerCard(p) {
     <div class="panel-head" style="background:var(--prv);border-bottom:0">
       <span class="sign" style="font-size:15px;color:#17130a">PRV</span>
       <span style="font-weight:700;color:#17130a;font-size:14px">${esc(p.label)}</span>
-      <span class="num" style="font-size:11px;color:rgba(23,19,10,.66)">provider id: ${esc(p.id)}</span>
+      <span class="num" style="font-size:11px;color:rgba(23,19,10,.85)">provider id: ${esc(p.id)}</span>
       <span class="spacer"></span>
       <button class="btn tiny" style="color:#17130a;border-color:rgba(23,19,10,.4)" data-act="del-provider">${t('providers.deleteSeat')}</button>
     </div>
@@ -738,17 +738,19 @@ function renderRules() {
       </div>
       <div class="say">
         <div class="line">
-          <label class="check" title="${t('rules.enabledTitle')}"><input type="checkbox" data-f="enabled" ${r.enabled ? 'checked' : ''}></label>
-          <select data-f="match">${Object.entries(matchLabels)
+          <label class="check" title="${t('rules.enabledTitle')}"><input type="checkbox" data-f="enabled" ${r.enabled ? 'checked' : ''}
+            aria-label="${t('rules.enabledTitle')}"></label>
+          <select data-f="match" aria-label="${t('rules.requestSource')}">${Object.entries(matchLabels)
             .map(([k, v]) => `<option value="${k}" ${r.match === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
           <span class="word">${t('rules.wordModel')}</span>
-          <input type="text" class="w-sm" data-f="modelGlob" value="${esc(r.modelGlob)}" title="${t('rules.modelGlobTitle')}">
+          <input type="text" class="w-sm" data-f="modelGlob" value="${esc(r.modelGlob)}" title="${t('rules.modelGlobTitle')}"
+                 aria-label="${t('rules.modelGlobTitle')}">
           <svg class="arrow" width="20" height="12" viewBox="0 0 20 12" fill="none" aria-hidden="true">
             <path d="M0 6h16M12 2l4 4-4 4" stroke="rgba(26,30,36,.45)" stroke-width="1.4" stroke-linecap="square"/>
           </svg>
-          <select class="target ${toPrv ? 'prv' : 'sub'}" data-f="providerId">${targetOpts(r.providerId)}</select>
+          <select class="target ${toPrv ? 'prv' : 'sub'}" data-f="providerId" aria-label="${t('rules.result.target')}">${targetOpts(r.providerId)}</select>
           <span class="word">${t('rules.wordSentAs')}</span>
-          <input type="text" class="w-md" data-f="modelOverride" list="model-hints"
+          <input type="text" class="w-md" data-f="modelOverride" list="model-hints" aria-label="${t('rack.col.sentModel')}"
                  value="${esc(r.modelOverride ?? '')}" placeholder="${t('rules.noRewritePlaceholder')}">
           <span class="spacer"></span>
           <button class="btn tiny" data-act="up" ${i === 0 ? 'disabled' : ''} aria-label="${t('common.moveUp')}">${ICON.up}</button>
@@ -820,12 +822,12 @@ function renderRules() {
           <span class="tab ${pv.providerId ? 'prv' : 'sub'}"><span class="code">${pv.providerId ? 'PRV' : 'SUB'}</span></span>
           <span class="body" style="padding:10px 13px">
             <dl style="margin:0;display:grid;grid-template-columns:80px 1fr;gap:3px 10px">
-              <dt class="lbl" style="color:#8f8878">${t('rules.result.classifiedAs')}</dt><dd style="margin:0;font:11.5px var(--data);color:#3c4149">${
+              <dt class="lbl" style="color:var(--ink-dim)">${t('rules.result.classifiedAs')}</dt><dd style="margin:0;font:11.5px var(--data);color:#3c4149">${
                 esc(kindLabels[pv.kind] ?? pv.kind)}</dd>
-              <dt class="lbl" style="color:#8f8878">${t('rules.result.target')}</dt><dd style="margin:0;font:11.5px var(--data);color:var(--ink)">${esc(displayTarget(pv))}</dd>
-              <dt class="lbl" style="color:#8f8878">${t('rack.col.sentModel')}</dt><dd style="margin:0;font:11.5px var(--data);color:var(--ink)">${
+              <dt class="lbl" style="color:var(--ink-dim)">${t('rules.result.target')}</dt><dd style="margin:0;font:11.5px var(--data);color:var(--ink)">${esc(displayTarget(pv))}</dd>
+              <dt class="lbl" style="color:var(--ink-dim)">${t('rack.col.sentModel')}</dt><dd style="margin:0;font:11.5px var(--data);color:var(--ink)">${
                 pv.requestedModel === pv.sentModel ? esc(pv.sentModel) : `${esc(pv.requestedModel)} → ${esc(pv.sentModel)}`}</dd>
-              <dt class="lbl" style="color:#8f8878">${t('rules.result.matched')}</dt><dd style="margin:0;font:11.5px var(--data);color:#3c4149">${
+              <dt class="lbl" style="color:var(--ink-dim)">${t('rules.result.matched')}</dt><dd style="margin:0;font:11.5px var(--data);color:#3c4149">${
                 pv.ruleId ? esc(pv.ruleId) : t('rules.result.noMatch')}</dd>
             </dl>
           </span>
@@ -862,7 +864,7 @@ function renderLogs() {
           ['client aborted', t('common.claudeBackedOff')],
           [t('logs.notThere'), t('logs.neverArrived')],
         ].map(([k, v]) => `<div class="fld" style="gap:2px">
-          <span class="lbl" style="color:#8a6c64">${esc(k)}</span>
+          <span class="lbl" style="color:#a8867d">${esc(k)}</span>
           <span class="num" style="font-size:11.5px;color:#e4cdc6">${esc(v)}</span>
         </div>`).join('')}
       </div>

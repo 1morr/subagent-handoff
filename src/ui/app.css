@@ -68,7 +68,8 @@
   nav button:hover { color: var(--on-bay); }
   nav button[aria-selected="true"] { color: var(--on-bay); border-bottom-color: var(--sub); }
 
-  main { padding: 22px 26px 60px; display: flex; flex-direction: column; gap: 22px; }
+  main { padding: 22px 26px 60px; }
+  #view { display: flex; flex-direction: column; gap: 22px; }
 
   /* ── 控制項 ───────────────────────────────────────────────── */
   .btn {
@@ -80,7 +81,8 @@
   .btn[aria-pressed="true"] { background: var(--sub); border-color: var(--sub); color: #10161a; }
   .btn.go { color: var(--sub); border-color: var(--sub); }
   .btn.warn { color: var(--prv); border-color: var(--prv); }
-  .btn.danger { color: var(--alarm); border-color: var(--alarm); }
+  /* 按鈕字是 11px：告警色當小字要用亮一階的 --alarm-ink（見 docs/ui-notes.md），框線仍用 --alarm */
+  .btn.danger { color: var(--alarm-ink); border-color: var(--alarm); }
   .btn:disabled { opacity: .38; cursor: not-allowed; }
   .btn:disabled:hover { background: transparent; }
   .btn.tiny { padding: 5px 8px; font-size: 11px; }
@@ -233,7 +235,8 @@
   .clearance.shadowed { opacity: .4; }
   .clearance > .ord {
     display: grid; place-items: center; align-content: center; gap: 2px; padding: 8px 0;
-    background: var(--rail); color: var(--on-bay-dim);
+    /* --on-bay-dim 在導軌灰上只有 4.16:1，這格的 ON／OFF 是 11px 功能字，要再亮一階 */
+    background: var(--rail); color: #a3abb6;
   }
   .clearance.hit > .ord { background: var(--sub); color: #10161a; }
   .clearance > .ord > b { font: 700 15px/1 var(--data); }

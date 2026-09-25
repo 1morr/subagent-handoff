@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="subagent-handoff: route Claude Code subagents to a third-party provider">
 <title>subagent-handoff</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%231b1f26'/><rect x='2' y='4' width='12' height='3' fill='%2343a08e'/><rect x='2' y='9' width='12' height='3' fill='%23bd9047'/></svg>">
 <!--
@@ -31,21 +32,21 @@
       <option value="zh-Hant">繁體中文</option>
     </select>
   </span>
-  <span class="lbl" id="dirty-note">Config saved</span>
+  <span class="lbl" id="dirty-note" aria-live="polite">Config saved</span>
   <button class="btn go" id="save" disabled>Save</button>
 </header>
 
-<nav id="nav">
-  <button data-tab="bay" aria-selected="true">Rack</button>
-  <button data-tab="providers" aria-selected="false">Providers</button>
-  <button data-tab="rules" aria-selected="false">Routing</button>
-  <button data-tab="logs" aria-selected="false">Traffic</button>
-  <button data-tab="setup" aria-selected="false">Connect</button>
+<nav id="nav" role="tablist">
+  <button role="tab" aria-controls="view" data-tab="bay" aria-selected="true">Rack</button>
+  <button role="tab" aria-controls="view" data-tab="providers" aria-selected="false">Providers</button>
+  <button role="tab" aria-controls="view" data-tab="rules" aria-selected="false">Routing</button>
+  <button role="tab" aria-controls="view" data-tab="logs" aria-selected="false">Traffic</button>
+  <button role="tab" aria-controls="view" data-tab="setup" aria-selected="false">Connect</button>
 </nav>
 
-<main id="view"></main>
+<main><div id="view" role="tabpanel"></div></main>
 
-<div id="toast" hidden><i></i><span></span></div>
+<div id="toast" role="status" aria-live="polite" hidden><i></i><span></span></div>
 
 <datalist id="model-hints">
   <option value="claude-opus-5"></option>
