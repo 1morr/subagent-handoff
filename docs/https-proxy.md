@@ -271,6 +271,54 @@ Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之�
 
 **還沒實測：** Desktop 的 SSH / WSL session（官方文檔說它們跟本機 session 一樣讀這些變數）。
 
+## 怎麼驗的
+
+**自動測試（`npm test`，每次提交都跑，CI 在 Ubuntu / Windows × Node 20 / 22 / 24）**
+
+| 測試 | 驗的是 |
+|---|---|
+| `test/ca.test.mjs` | 用真的 TLS 握手：CA 簽的證書驗得過；同一把 CA 替別的網域簽的會被 nameConstraints 拒絕；不信任這把 CA 的 client 握手失敗；2050 年後的到期日編碼；CA 落檔後原樣讀回 |
+| `test/connect.test.mjs`（開啟） | 經 CONNECT 解開的子 agent 請求分到 provider、訂閱 token 不會跟過去；主對話原樣走訂閱；其他路徑原樣轉發且不進流量記錄；其他主機走隧道；目的地連不上回 502；解析不出目的地回 400；client 不信任 CA 時提示去查 `NODE_EXTRA_CA_CERTS`；WebSocket upgrade 原樣接到上游 |
+| `test/connect.test.mjs`（關閉） | 不掛 CONNECT、不產生 CA、CONNECT 直接被斷；guard 的例外只在開啟時存在；明文送來、Host 寫 `api.anthropic.com` 的請求照樣 403 |
+| `test/config.test.mjs` | `httpsProxy` 預設關閉，只有布林 `true` 才打開 |
+
+「關閉」那三個測試做過變異驗證：把 guard 的開關判斷拿掉、讓 `setupHttpsProxy` 無視 `enabled`，
+對應的測試會紅；改回來才綠。這一步是手動做的，沒有寫進測試。
+
+**端到端（2026-09-25，手動，細節見上面的「實測」）**
+
+- 測試用的 router 跑在另外的埠（18787 / 18788），設定檔是副本，全域設定與正在用的 router 不動；
+  Claude Code 那邊只在一個測試資料夾的 `.claude/settings.local.json` 設變數。
+- 真的 Claude Code：CLI 用 `claude -p … --debug-file`，看 `CA certs: Appended …` 等行。
+- Claude Desktop：用 Orca 的 computer use 操作介面（開資料夾、送訊息、`/remote-control`、聽寫），
+  系統資料夾選擇視窗用 Windows UI Automation 填路徑。
+- Remote Control：從 Chrome 開 claude.ai/code 上的那個 session 送一句話，看本機有沒有收到、回答
+  有沒有回到網頁。
+- voice mode：CLI 開 `/voice tap`，錄音時用 Windows 的語音合成從喇叭念一句話給麥克風聽。
+- 看 router 做了什麼：測試用的 launcher 另外印出每個 CONNECT、每筆原樣轉發的請求與 upgrade，或包住
+  `fetch` 記下送往上游的每一筆（[request-map.md](request-map.md#怎麼驗的)）。
+- 「送出了什麼」那張表：一台假上游接住 router 送出的請求，跟送進去的逐項比對 header。
+- GUI 用 Playwright 開關兩種模式、檢查片段是合法 JSON；文檔裡的 mermaid 圖用 mermaid 11 渲染過。
+
+這些輔助腳本都沒有進 repo；Claude Code 或 Desktop 升級後要重驗，照上面的做法重做。
+
+## 沒有的功能與已知缺口
+
+- **router 對外不會再經過另一層代理。** 如果你的網路要靠 Clash 之類的系統代理才連得到外面：
+  CONNECT 隧道（`net.connect`）與 WebSocket（`tls.connect`）一律直連，`fetch` 與原樣轉發只有在
+  router 啟動時帶 `NODE_USE_ENV_PROXY=1` 才會用環境變數裡的代理。Clash 的 TUN 模式在網路層接管，
+  不受影響。這一條是讀程式碼得出的，沒有實測。
+- **不支援代理認證**（`Proxy-Authorization`）。router 只綁 127.0.0.1，本機任何程式都能拿它當隧道
+  —— 它們本來就能自己連出去，所以沒有多開放什麼。
+- **只支援 `CONNECT`。** `HTTP_PROXY` 用的明文代理請求（`GET http://…`）會被 guard 以 403 擋下。
+- **解開的連線只講 HTTP/1.1。** router 的 TLS 沒有宣告 ALPN，Claude Code 會退回 HTTP/1.1；實測正常。
+- **原樣轉發的請求與隧道不進流量記錄**，GUI 上看不到它們。這是刻意的（見上面「原理」），但也代表
+  出問題時只能靠 Claude Code 的 debug log 查。
+- **開關、換 CA 都要重啟**：開關要重啟 router；CA 換了之後 Claude Code 要重開才會讀到。
+- **Claude Desktop 的聽寫**不經過 router；**CLI 的 Remote Control** 只有全域設定才行。
+- **沒測過**：Desktop 的 SSH / WSL session、背景 agent（`claude agents`、`--bg`）、macOS / Linux 上的
+  Desktop、Claude Code 送 CONNECT 時就附帶資料（router 會直接斷線；目前的 client 都等 200 才開始握手）。
+
 ## 代價與地雷
 
 - **`HTTPS_PROXY` 會被 Claude Code 啟動的每一支程式繼承**，包括 Bash 工具裡跑的 git、npm、

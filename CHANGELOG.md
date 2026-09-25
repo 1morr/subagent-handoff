@@ -23,6 +23,8 @@
   額度，而且整個 session 都多出分類器請求（每筆第一次約 3 萬 input tokens）。對照組：完全不分流
   時沒有任何分類器請求。新增 [docs/request-map.md](docs/request-map.md) 列出每一種請求的去向；
   GUI 路由分頁在有主對話規則指向 provider 時提醒這件事。
+- 補上 HTTPS proxy 模式「怎麼驗的」與「沒有的功能與已知缺口」（[docs/https-proxy.md](docs/https-proxy.md#怎麼驗的)），
+  其中一條沒實測：router 對外的隧道與 WebSocket 一律直連，不會再經過 Clash 之類的系統代理。
 - 修正 claude-code-request-shapes.md 兩處過時的敘述：分類器的 `max_tokens` 已經從 2112 變成
   兩階段 64 / 8192；背景請求「一律走訂閱」只在主對話沒分流時成立。
 
