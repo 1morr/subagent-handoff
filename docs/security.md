@@ -27,10 +27,33 @@ session 還命不命中沒量過。一般帳
 號的並發上限本來也是所有 `user_id` 合計，拿掉不影響。分區實驗的細節見
 [claude-code-request-shapes.md](claude-code-request-shapes.md)。
 
+## 本機來源檢查
+
+兩台 server 都只綁 127.0.0.1，但那只擋得住別台機器，擋不住使用者瀏覽器裡的網頁。
+`src/guard.mjs` 在 proxy 與 GUI 兩台上、做任何事之前都先檢查來源，擋兩種攻擊：
+
+| 攻擊 | 怎麼打 | 擋它的 |
+| --- | --- | --- |
+| 一般 CSRF | 網頁用 `content-type: text/plain` 發簡單請求（不觸發 preflight）打 `POST /api/test`，body 裡 apiKey 填保留值、baseUrl 填自己的網域，router 會把真的 API key 還原出來送過去。攻擊者不必讀得到回應 | `Origin`：有帶就必須是 GUI 自己的 `http://127.0.0.1:<埠>` 或 `http://localhost:<埠>` |
+| DNS rebinding | 攻擊者的網域重綁到 127.0.0.1 之後，對瀏覽器來說就是同源，可以自由 `PUT /api/config` 加一個自己的 provider、把主對話的規則指過去 —— 之後每一輪對話的完整內容都會送給他 | `Host`：主機名必須是 `127.0.0.1`、`localhost` 或 `[::1]` |
+
+兩個都要，缺一個就擋不住對應的那一種。幾個刻意的選擇：
+
+- **沒有 `Origin` 放行。** Claude Code 走 undici 不送 Origin，擋掉的話 proxy 一個請求都收不到；
+  curl 也一樣。沙箱 iframe 送的字串 `"null"` 不算沒有，照樣擋。
+- **`Host` 只驗主機名、不驗埠。** DNS rebinding 時瀏覽器送的埠本來就是我們綁的那個，比對它擋不到
+  任何東西，卻會誤殺埠轉發之類的正常用法。
+- **proxy 那台用實際綁定的埠組 Origin**，不是設定檔裡的 `proxyPort`：存進設定的新埠要重啟才生效。
+- proxy 那台也要擋：它握有第三方的 API key，網頁 rebinding 之後可以自己補上 agent-id header
+  命中分流規則，拿你的額度跑推論。
+
+`test/guard.test.mjs` 守著這些：admin 與 proxy 各自擋下跨來源的 Origin 與外來的 Host（被擋時設定
+沒被改到、一個 byte 都沒往上游送）、`POST /api/test` 的簡單請求 CSRF 送不出真 key、admin 對沒有
+Origin 與自己的 Origin 放行、對 `Origin: null` 擋下，以及 proxy 看的是綁定的埠。HTTPS proxy 模式對 guard 的
+例外另見下一節最後一點。
+
 ## router 實際擋住的攻擊面
 
-`src/guard.mjs` 在 proxy 與 GUI 兩台 server 上都做了本機來源檢查（Origin 擋一般
-CSRF、Host 擋 DNS rebinding），細節與驗證方式見 README 的對應章節。這裡補記
 guard 之外、跟資料安全直接相關的幾點：
 
 - **`buildProviderHeaders`（`src/proxy.mjs`）從零組出送給第三方的 header**，只從
@@ -56,5 +79,3 @@ guard 之外、跟資料安全直接相關的幾點：
   nameConstraints 限定只能簽 `api.anthropic.com`（IP 位址也一併排除），私鑰 0600，不裝進系統信任庫。
   proxy 的 guard 對 CONNECT 解開的請求放行（它們的 Host 必然是 `api.anthropic.com`），
   理由與守著它的測試見 [https-proxy.md](https-proxy.md#代價與地雷)。
-- **DNS rebinding 真正想拿的**，是 `PUT /api/config` 加一個自己的 provider、把主對話
-  的規則指過去 —— 之後每一輪對話的完整內容都會送給他。Host 檢查擋的就是這條。

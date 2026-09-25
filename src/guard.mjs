@@ -1,17 +1,8 @@
 /**
- * 本機來源守衛。
+ * 本機來源守衛：Origin 擋一般 CSRF，Host 擋 DNS rebinding，兩個都要。
+ * 攻擊情境與為什麼只綁 127.0.0.1 不夠，見 docs/security.md 的「本機來源檢查」。
  *
- * 兩台 server 都只綁 127.0.0.1，但那只擋得住別台機器，擋不住使用者瀏覽器裡的網頁：
- *
- *   一般 CSRF        網頁用 `content-type: text/plain` 發簡單請求（不觸發 preflight）打
- *                    `POST /api/test`，body 裡 apiKey 填保留值、baseUrl 填自己的網域，
- *                    router 會把真的 API key 還原出來送過去。攻擊者不必讀得到回應。
- *   DNS rebinding    攻擊者的網域重綁到 127.0.0.1 之後，對瀏覽器來說就是同源，
- *                    可以自由 `PUT /api/config` 加一個自己的 provider、把主對話的規則指過去 ——
- *                    之後每一輪對話的完整內容都會送給他。
- *
- * Origin 擋前者，Host 擋後者，兩個都要。Claude Code 走 undici 不送 Origin，
- * 所以「沒有 Origin」必須放行，否則 proxy 一個請求都收不到。
+ * Claude Code 走 undici 不送 Origin，所以「沒有 Origin」必須放行，否則 proxy 一個請求都收不到。
  */
 
 const LOCAL_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]', '::1'])
