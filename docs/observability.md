@@ -121,7 +121,11 @@ network` 只說了「在等」，沒說是誰擋的。答案在流量記錄的**
 - `client aborted` → 是 Claude Code 自己收手（按了 esc、subagent 被取消、上一輪
   結束）。這不是錯誤。
 - **完全沒有對應的那一筆** → 請求根本沒送到 router，問題在 Claude Code 到
-  127.0.0.1 之間。
+  127.0.0.1 之間。HTTPS proxy 模式開著時另有兩種刻意不進流量記錄的情況：
+  `/v1/messages*` 以外的請求（登入、遙測…）與隧道原樣轉發、不記；TLS 握手沒完成的連線
+  （最常見是 Claude Code 沒拿到 `NODE_EXTRA_CA_CERTS`）也沒有請求可記，只在 router 的
+  console 印一行 `a client closed the api.anthropic.com connection before the TLS
+  handshake finished` 的警告（[https-proxy.md](https-proxy.md#代價與地雷)）。
 
 上游**有給** `retry-after` 時，畫面上倒數的秒數就是它的值，所以狀態欄顯示
 `429 ·146s 後重試` 而畫面寫 `will retry in 2m 26s` 是同一件事，不是 router 卡住。

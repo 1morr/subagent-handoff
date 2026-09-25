@@ -12,7 +12,7 @@ provider 線的改寫是固定的，沒有開關（`src/proxy.mjs` 的 `buildPro
 
 | | 做了什麼 |
 | --- | --- |
-| header | 從零組起：`content-type`、provider 自己的 key、從 client 帶過去的 `anthropic-version` 與 `anthropic-beta`。client 的 `authorization`、`cookie`、`x-claude-code-*` 一律不帶 |
+| header | 從零組起：`content-type`、provider 自己的 key、從 client 帶過去的 `anthropic-version`、`anthropic-beta` 與 `accept`（client 沒帶時 `anthropic-version` 補 `2023-06-01`、`accept` 補 `application/json`）。client 的 `authorization`、`cookie`、`x-claude-code-*` 一律不帶 |
 | `model` | 換成規則的 `modelOverride`，其次 provider 的 `model`，都沒有就照原樣 |
 | `metadata` | 整個拿掉，理由見 [security.md](security.md#送去-provider-的請求一律拿掉-metadata) |
 | `tools[].input_schema` 裡的 `pattern` | 正規表達式的 `\0` 換成等價的 `\x00`，見下一節。schema 的其他部分一個字不動 |
