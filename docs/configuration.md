@@ -11,13 +11,29 @@
 ROUTER_CONFIG=/path/to/my-config.json npm start
 ```
 
-## 欄位
+```powershell
+$env:ROUTER_CONFIG = 'C:\path\to\my-config.json'; npm start
+```
 
-`config.json` 也可以直接手改，GUI 是它的完整前端 —— 表格裡每一項都改得到（埠號除外）。
+**跟著設定檔搬家的不只設定。** `traffic.log`（與輪替出來的 `traffic.log.1`）和 HTTPS proxy 模式的
+CA（`https-proxy-ca.pem`、`https-proxy-ca-key.pem`）都放在設定檔旁邊（`src/index.mjs`）。換了
+`ROUTER_CONFIG`，流量記錄從新的位置重新開始；模式開著的話，新位置沒有 CA 就產生一把新的，
+Claude Code 的 `NODE_EXTRA_CA_CERTS` 要改指過去、再重開 Claude Code。
+
+## 手改 `config.json`
+
+GUI 是它的完整前端 —— 下表每一項都改得到，埠號除外。也可以直接手改，但要知道兩件事：
+
+- **router 只在啟動時讀一次設定檔。** 執行中手改不會生效，要重啟 router。
+- **執行中手改、又沒重啟的話，下一次從 GUI 存檔會把它蓋掉。** GUI 存的是 router 記憶體裡那一份
+  （啟動時讀進來、之後被 GUI 改過的），不會先回頭讀檔案。「交還給訂閱」與 HTTPS proxy 模式的
+  開關鍵也是存檔。
+
+## 欄位
 
 | 欄位 | 說明 |
 | --- | --- |
-| `proxyPort` / `adminPort` | 分別是 proxy 與 GUI 的埠，預設 8787 / 8788。GUI 改不到，手改之後要重啟；其他設定即時生效。1–65,535 以外的值載入時退回預設 |
+| `proxyPort` / `adminPort` | 分別是 proxy 與 GUI 的埠，預設 8787 / 8788。GUI 改不到，手改之後要重啟；其他設定從 GUI 存檔即時生效。1–65,535 以外的值載入時退回預設 |
 | `httpsProxy` | HTTPS proxy 模式，給 Claude Desktop 用，預設 `false`。只有布林 `true` 才算打開。GUI 存檔當場切換，不用重啟；手改則下次啟動生效。見 [https-proxy.md](https-proxy.md) |
 | `providers[].baseUrl` | 必須是 Anthropic Messages 格式的端點，router 會往 `{baseUrl}/v1/messages` 送。只收 `http:` / `https:` |
 | `providers[].apiKey` | 送給這個 provider 的 key。GUI 只拿得到遮罩值，見 [security.md](security.md) |

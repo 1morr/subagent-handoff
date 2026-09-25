@@ -27,7 +27,7 @@ the subscription, untouched.
 >   Route subagents somewhere you would be comfortable sending your repository.
 > - **Your claude.ai OAuth token passes through this local proxy.** It is forwarded
 >   to Anthropic unchanged and is never sent to a third-party provider
->   ([the code that guarantees it](src/proxy.mjs), and the test that pins it).
+>   ([the code that guarantees it](src/proxy.mjs), and [the tests that pin it](test/routing.test.mjs)).
 > - Third-party usage is billed to your own API key. This tool does not modify or
 >   spoof any billing identity, and does not bypass anyone's usage limits. Check
 >   it against your terms with each provider. Use at your own risk.
@@ -78,10 +78,19 @@ Open <http://127.0.0.1:8788>:
    confirm every **Required** check passes. A failing **Capability** check
    does not stop Claude Code from working, but that capability silently fails
    for subagents; see [the built-in tests](docs/providers.md#內建的測試).
-2. **Routing** — tick the "all subagents → your provider" rule to enable it.
-3. **Connect** — copy the `settings.json` snippet and restart Claude Code.
+   Click **Save** (top right).
+2. **Routing** — tick the "All subagents (including Workflow / ultracode)" rule,
+   make sure it points at your provider, then click **Save**.
+3. **Connect** — copy the snippet into `~/.claude/settings.json` and restart
+   Claude Code. A per-repo `<repo>/.claude/settings.local.json` `env` block works
+   too, if you only want one project routed.
 4. Run `/status` and confirm `Login method` still points at your claude.ai account.
 5. Give a subagent some work, then watch the split on the **Rack** tab.
+
+Keep the router running while Claude Code runs: when it is down, Claude Code's
+API requests fail. To stop using it, remove `ANTHROPIC_BASE_URL` from Claude
+Code's settings and restart Claude Code. Using Claude Desktop? It ignores
+`ANTHROPIC_BASE_URL`; read [HTTPS proxy mode](#https-proxy-mode-optional-for-claude-desktop).
 
 ## HTTPS proxy mode (optional, for Claude Desktop)
 
@@ -101,7 +110,7 @@ flowchart LR
   R -- "api.anthropic.com<br/>decrypted with a local CA" --> S{path}
   S -- "/v1/messages*, main" --> A[(Anthropic<br/>subscription)]
   S -- "/v1/messages*, subagent" --> P[(your provider)]
-  S -- "anything else<br/>forwarded untouched" --> A
+  S -- "other paths, WebSocket<br/>forwarded untouched" --> A
   R -- "any other host<br/>plain tunnel" --> N((internet))
 ```
 
@@ -149,12 +158,12 @@ request type and where it goes, measured: [docs/request-map.md](docs/request-map
 
 ## Configuration
 
-The GUI is a complete front end for `config.json`; everything is editable there.
-Rules are evaluated top to bottom and the first match wins.
+The GUI is a complete front end for `config.json`; everything except the ports is
+editable there. Rules are evaluated top to bottom and the first match wins.
 
 | Field | |
 |---|---|
-| `proxyPort` / `adminPort` | 8787 and 8788. Changing them needs a restart; everything else takes effect per request |
+| `proxyPort` / `adminPort` | 8787 and 8788. Not in the GUI: edit `config.json` and restart. Everything else takes effect as soon as it is saved in the GUI |
 | `httpsProxy` | HTTPS proxy mode for Claude Desktop, default `false`. Saving it in the GUI switches the router immediately |
 | `providers[].baseUrl` | Must speak the Anthropic Messages format — the router posts to `{baseUrl}/v1/messages` |
 | `providers[].model` | Rewrites `model` before sending. Empty = leave alone |
@@ -164,7 +173,13 @@ Rules are evaluated top to bottom and the first match wins.
 | `rules[].modelOverride` | Rewrites `model`, beating `providers[].model`. Works on `passthrough` too |
 
 Unmatched requests go to `https://api.anthropic.com` with their credentials
-unchanged; that target is fixed. Full reference, including what an older
+unchanged; that target is fixed.
+
+The router reads `config.json` once, at startup. Hand edits made while it runs
+are ignored, and the next GUI save overwrites them — stop the router, edit,
+start it again. The `ROUTER_CONFIG` environment variable moves the file, and
+`traffic.log` and the HTTPS proxy mode CA move with it (so
+`NODE_EXTRA_CA_CERTS` must follow). Full reference, including what an older
 `config.json` loses on its next save: [docs/configuration.md](docs/configuration.md).
 
 **Two things worth knowing.** When a third-party quota runs dry, switch that
@@ -242,6 +257,8 @@ The in-depth docs are written in Traditional Chinese.
 | [docs/security.md](docs/security.md) | Threat model and what is and is not protected |
 | [docs/request-map.md](docs/request-map.md) | Every request Claude Code sends, how it is classified and where it goes in each mode, including the auto mode classifier |
 | [docs/https-proxy.md](docs/https-proxy.md) | HTTPS proxy mode for Claude Desktop: how it works, the local CA, measurements, pitfalls |
+| [docs/measurements.md](docs/measurements.md) | The measurements behind the router's design decisions |
+| [docs/ui-notes.md](docs/ui-notes.md) | GUI engineering rules worth keeping when editing `src/ui/` |
 
 ## License
 

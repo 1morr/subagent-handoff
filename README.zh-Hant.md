@@ -22,7 +22,7 @@ ultracode 與 Workflow 會一次展開好幾十個子代理，claude.ai 訂閱�
 >   選擇路由子代理的目的地時，請只選你願意把整個 repository 送過去的地方。
 > - **你的 claude.ai OAuth token 會經過這個本機 proxy。** 它會原封不動地轉發給
 >   Anthropic，絕對不會送到任何第三方供應商
->   （[保證這件事的程式碼](src/proxy.mjs)，以及釘住這個行為的測試）。
+>   （[保證這件事的程式碼](src/proxy.mjs)，以及[釘住這個行為的測試](test/routing.test.mjs)）。
 > - 第三方用量會計入你自己的 API key。這個工具不會修改或偽造任何帳務身分，
 >   也不會繞過任何人的用量限制。請自行對照每個供應商的條款確認合規性。
 >   使用風險自負。
@@ -61,11 +61,13 @@ npm start
 
 打開 <http://127.0.0.1:8788>：
 
-1. **Providers** —— 填入 Base URL、API Key 與 Model，按「執行測試」，確認「必要」項目全過。「能力」項目沒過，Claude Code 照樣跑得起來，只是子 agent 用到那個能力時靜默失效，見[內建的測試](docs/providers.md#內建的測試)。
-2. **Routing** —— 勾選「all subagents → your provider」規則來啟用它。
-3. **Connect** —— 複製 `settings.json` 片段，重新啟動 Claude Code。
+1. **Providers** —— 填入 Base URL、API Key 與 Model，按「執行測試」，確認「必要」項目全過。「能力」項目沒過，Claude Code 照樣跑得起來，只是子 agent 用到那個能力時靜默失效，見[內建的測試](docs/providers.md#內建的測試)。按右上角的**儲存**。
+2. **路由** —— 勾選「所有子 agent（含 Workflow / ultracode）」那條規則、確認它指向你的 provider，再按**儲存**。
+3. **接入** —— 把片段複製進 `~/.claude/settings.json`，重新啟動 Claude Code。只想讓某個專案走 router 的話，放在那個 repo 的 `.claude/settings.local.json` 的 `env` 裡也可以。
 4. 執行 `/status`，確認 `Login method` 仍然指向你的 claude.ai 帳號。
-5. 派一個子代理去做點事，然後在 **Rack** 分頁看分流結果。
+5. 派一個子代理去做點事，然後在**機架**分頁看分流結果。
+
+Claude Code 在跑的時候 router 也要一直開著：router 沒在跑，Claude Code 的 API 請求就會失敗。不想用了，把 Claude Code 設定裡的 `ANTHROPIC_BASE_URL` 拿掉、重開 Claude Code 即可。用的是 Claude Desktop？它不理 `ANTHROPIC_BASE_URL`，請看 [HTTPS proxy 模式](#https-proxy-模式選用給-claude-desktop)。
 
 ## HTTPS proxy 模式（選用，給 Claude Desktop）
 
@@ -103,7 +105,7 @@ flowchart LR
 
 ## 兩種請求類型
 
-| Condition | How it is detected | Who it is |
+| 條件 | 判定依據 | 是誰 |
 |---|---|---|
 | `main` | 沒有 `x-claude-code-agent-id` | 你在輸入框裡打字 |
 | `subagent` | 帶有 `x-claude-code-agent-id` | Claude Code 派生的任何 agent。**Workflow 與 ultracode 的 `agent()` 呼叫全部落在這裡**，子代理再派生的 agent 也是 |
@@ -112,11 +114,11 @@ flowchart LR
 
 ## 設定
 
-這個 GUI 是 `config.json` 的完整前端介面，所有東西都能在裡面編輯。規則會由上到下依序判斷，第一個符合的就採用。
+這個 GUI 是 `config.json` 的完整前端介面，除了埠號之外都能在裡面編輯。規則會由上到下依序判斷，第一個符合的就採用。
 
-| Field | |
+| 欄位 | |
 |---|---|
-| `proxyPort` / `adminPort` | 8787 與 8788。改這兩個需要重新啟動；其他所有設定都是逐請求即時生效 |
+| `proxyPort` / `adminPort` | 8787 與 8788。GUI 裡改不到：手改 `config.json` 再重新啟動。其他設定在 GUI 存檔後即時生效 |
 | `httpsProxy` | 給 Claude Desktop 用的 HTTPS proxy 模式，預設 `false`。在 GUI 存檔就當場切換 |
 | `providers[].baseUrl` | 必須說 Anthropic Messages 格式 —— router 會對 `{baseUrl}/v1/messages` 發送請求 |
 | `providers[].model` | 送出前改寫 `model`。留空 = 不動它 |
@@ -125,7 +127,9 @@ flowchart LR
 | `rules[].providerId` | 指定哪個供應商，或用保留值 `passthrough` 把請求送回訂閱額度 |
 | `rules[].modelOverride` | 改寫 `model`，優先權高於 `providers[].model`。對 `passthrough` 一樣有效 |
 
-沒匹配到任何規則的請求一律送去 `https://api.anthropic.com`，憑證原封不動轉發；這個目標是固定的。完整參考文件（含舊版 `config.json` 下次存檔時會少掉哪些欄位）：[docs/configuration.md](docs/configuration.md)。
+沒匹配到任何規則的請求一律送去 `https://api.anthropic.com`，憑證原封不動轉發；這個目標是固定的。
+
+router 只在啟動時讀一次 `config.json`。執行中手改不會生效，下一次從 GUI 存檔還會把它蓋掉 —— 要手改就先停掉 router、改完再啟動。`ROUTER_CONFIG` 環境變數可以把設定檔放到別處，`traffic.log` 與 HTTPS proxy 模式的 CA 會跟著過去（`NODE_EXTRA_CA_CERTS` 也要跟著改）。完整參考文件（含舊版 `config.json` 下次存檔時會少掉哪些欄位）：[docs/configuration.md](docs/configuration.md)。
 
 **有兩件事值得知道。** 第三方額度用完時，把那條規則的目標切成 `passthrough`，而不是直接停用它 —— 停用會讓流量往下掉到*下一條*規則，而指到 passthrough 才是真正把它停在訂閱額度上。另外，`modelOverride` 是唯一能讓子代理使用跟主對話不同模型的方法，因為 `agent()` 在沒有指定模型時會繼承主對話的模型，而這件事 Claude Code 本身沒辦法改。
 
@@ -179,6 +183,8 @@ npm test     # node --test, no dependencies, no network
 | [docs/security.md](docs/security.md) | 威脅模型，以及哪些有保護、哪些沒有 |
 | [docs/request-map.md](docs/request-map.md) | Claude Code 送出的每一種請求、怎麼被分類、兩種模式下走哪裡，包括 auto mode 的分類器 |
 | [docs/https-proxy.md](docs/https-proxy.md) | 給 Claude Desktop 用的 HTTPS proxy 模式：運作方式、本機 CA、實測、地雷 |
+| [docs/measurements.md](docs/measurements.md) | router 各項設計決定背後的實測數據 |
+| [docs/ui-notes.md](docs/ui-notes.md) | 改 `src/ui/` 時要守的 GUI 工程規則 |
 
 ## 授權
 
