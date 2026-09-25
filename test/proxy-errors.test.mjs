@@ -1,8 +1,8 @@
 import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { summarizeUpstreamError, collectRateLimit, translateContextOverflow } from '../src/proxy.mjs'
-import { createHarness, makePost, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
+import { summarizeUpstreamError, collectRateLimit, translateContextOverflow, describeFetchError } from '../src/proxy.mjs'
+import { createHarness, makePost, listen, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
 import { DEEPSEEK_OVERFLOW } from './fixtures/fake-upstream.mjs'
 
 let harness, post
@@ -22,6 +22,13 @@ test('summarizeUpstreamError 挖出 error.type 與訊息，非 JSON 退回原文
   assert.equal(summarizeUpstreamError(Buffer.from('<html>502 Bad Gateway</html>')), '<html>502 Bad Gateway</html>')
   assert.equal(summarizeUpstreamError(Buffer.alloc(0)), null)
   assert.equal(summarizeUpstreamError(Buffer.from('x'.repeat(600))).length, 401, '過長要截斷，不然流量記錄會被一頁 HTML 撐爛')
+})
+
+test('describeFetchError 帶上 fetch failed 背後的原因，但不附會被誤認成 client 收手的 abort 字樣', () => {
+  const refused = new TypeError('fetch failed', { cause: new Error('connect ECONNREFUSED 127.0.0.1:1') })
+  assert.equal(describeFetchError(refused), 'fetch failed: connect ECONNREFUSED 127.0.0.1:1')
+  assert.equal(describeFetchError(new TypeError('fetch failed', { cause: new Error('read ECONNABORTED') })), 'fetch failed')
+  assert.equal(describeFetchError(new Error('terminated')), 'terminated')
 })
 
 test('collectRateLimit 沒有相關 header 時回 null，不留空物件', () => {
@@ -141,4 +148,22 @@ test('請求行是完整網址（把 router 當 HTTP proxy 用）時回 400 並�
   assert.match(body.error.message, /HTTPS_PROXY.*ANTHROPIC_BASE_URL/)
   assert.equal(harness.upstream.state.received.length, 0)
   assert.match(harness.finished.at(-1).error, /proxy-style request for http:\/\/127\.0\.0\.1:8787\/v1\/messages/)
+})
+
+test('連不上 provider 時回 502，流量記錄寫出 fetch failed 背後的原因', async () => {
+  const saved = harness.getConfig()
+  const cfg = structuredClone(saved)
+  // 借一個埠再關掉，保證沒人在聽（port 1 會被 fetch 以 bad port 直接拒絕，測不到連線層的原因）
+  const closed = http.createServer()
+  const { port } = new URL(await listen(closed))
+  await new Promise((resolve) => closed.close(resolve))
+  cfg.providers.find((p) => p.id === 'kimi').baseUrl = `http://127.0.0.1:${port}`
+  harness.setConfig(cfg)
+  try {
+    const res = await post(PROVIDER_HEADERS, BASE_BODY)
+    assert.equal(res.status, 502)
+    assert.match(harness.finished.at(-1).error, /^fetch failed: .*ECONNREFUSED/)
+  } finally {
+    harness.setConfig(saved)
+  }
 })

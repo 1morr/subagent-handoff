@@ -15,6 +15,10 @@
 
 ### 修正
 
+- **流量記錄的 `fetch failed` 帶上底層原因。** fetch 把真正的原因（拒絕連線、DNS、TLS 握手被切、
+  `bad port`）放在 `err.cause`，之前只記 `fetch failed`，每一種連不上都長得一樣 —— 上一條那個
+  打架的設定，就是臨時把 cause 印出來才查到的。含 abort 字樣的原因不附，免得 GUI 誤判成 client 收手。
+
 - **`HTTPS_PROXY` 與 http:// 的 `ANTHROPIC_BASE_URL` 同時設時，回 400 說清楚是哪兩個設定打架。**
   審查時用 Claude Code 2.1.282 實測：全域 settings.json 留著 `ANTHROPIC_BASE_URL`、只在專案層加
   `HTTPS_PROXY` 時，CLI 把 router 當一般 HTTP proxy，請求行送完整網址。router 把它接在上游網址後面，

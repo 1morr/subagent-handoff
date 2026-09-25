@@ -111,7 +111,10 @@ network` 只說了「在等」，沒說是誰擋的。答案在流量記錄的**
   `request-id`。
 - 狀態欄直接寫著 `fetch failed` 這類文字、批註欄寫「router 連不上上游」→ 上游
   連回應都沒給，client 收到的是 router 合成的 502，Claude Code 會照它自己的退避
-  重試。
+  重試。冒號後面是底層的原因：`connect ECONNREFUSED …`（那個位址沒人在聽）、
+  `getaddrinfo ENOTFOUND …`（網域打錯或 DNS 不通）、`Client network socket
+  disconnected before secure TLS connection was established`（TLS 握手被切，常見於
+  防火牆或公司 proxy）。
 - 狀態欄寫著 `terminated`、批註欄寫「串流中途斷線」→ **上游回了 200、串流送到
   一半才斷**，router 也把 client 那頭的連線切斷，讓 Claude Code 當成連線錯誤重送
   （為什麼不補 error 事件見 [reliability.md](reliability.md)）。

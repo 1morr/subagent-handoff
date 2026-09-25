@@ -401,6 +401,17 @@ function baseEntry(req, ctx, over) {
 }
 
 /**
+ * fetch 連不上時只丟 `fetch failed`，真正的原因（拒絕連線、DNS、TLS 握手被切）在 `cause` 裡。
+ * 不帶上它，流量記錄裡每一種連不上都長得一樣。含 abort 字樣的原因不附：GUI 靠 /abort/ 認
+ * 「client 自己收手」（readout.mjs 的 isAborted），ECONNABORTED 之類的會被誤判成那一類。
+ */
+export function describeFetchError(err) {
+  const message = String(err?.message ?? err)
+  const cause = err?.cause?.message
+  return cause && !/abort/i.test(cause) ? `${message}: ${cause}` : message
+}
+
+/**
  * @param {() => object} getConfig 每次請求都重新取，所以 GUI 改完設定即時生效（改 port 除外）
  * @param {import('./proxy.mjs').TrafficLog} log
  * @param {object} [options]
@@ -623,7 +634,7 @@ export function createProxyServer(getConfig, log, options = {}) {
         }
         res.end()
       } catch (err) {
-        entry.error = err.name === 'AbortError' ? 'client aborted' : String(err.message ?? err)
+        entry.error = err.name === 'AbortError' ? 'client aborted' : describeFetchError(err)
         if (!res.headersSent) {
           res.writeHead(502, { 'content-type': 'application/json' })
           res.end(
