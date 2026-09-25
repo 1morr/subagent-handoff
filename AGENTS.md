@@ -12,8 +12,12 @@ Anthropic-compatible provider you pay for; everything else passes through to
   listener, no CA files unless it was turned on before, no guard exemption, and
   the original setup steps on the Connect tab (only the mode panel below them is
   new). It switches at runtime on save (`createHttpsProxy().apply`), and turning
-  it off also drops open tunnels. `test/connect.test.mjs` pins the listener, CA,
-  guard and runtime-toggle parts; keep new proxy-mode behaviour behind the switch.
+  it off also drops open tunnels. `test/connect.test.mjs` pins `createHttpsProxy`
+  (listener, CA, concurrent and runtime toggles) and the proxy guard under a
+  runtime that reports on or off. The wiring in `src/index.mjs` (`getRuntime`
+  reading `httpsProxy.enabled`, `setConfig` switching before saving and switching
+  back on failure) is untested — that file binds ports on import. Keep new
+  proxy-mode behaviour behind the switch.
 - **Zero runtime and zero dev dependencies — deliberate, please keep it.** The whole
   point is that a proxy in front of your API traffic has the smallest possible supply
   chain. Tests use built-in `node --test`; syntax gating uses built-in `node --check`.
@@ -27,14 +31,20 @@ Anthropic-compatible provider you pay for; everything else passes through to
 ## Reading order
 
 1. `README.md` — what it does, the two request kinds, risk disclosure.
-2. `src/index.mjs` → `src/proxy.mjs` → `src/routing.mjs` — the request path.
+2. `src/index.mjs` → `src/proxy.mjs` → `src/routing.mjs` — the request path;
+   `src/connect.mjs` is how requests get in when HTTPS proxy mode is on.
 3. `docs/` — routing rules, configuration reference, provider compatibility notes,
-   observability, security. These hold the empirical knowledge (request shapes that
-   real providers rejected, measurements) that the code cannot tell you.
+   observability, security, `https-proxy.md`, and `request-map.md` (where each
+   request Claude Code sends ends up). These hold the empirical knowledge
+   (request shapes that real providers rejected, measurements) that the code
+   cannot tell you.
 
 ## Conventions
 
-- Docs and comments: see README's language policy (English and zh-Hant mirrors).
+- Language: `docs/`, `CHANGELOG.md` and code comments in zh-Hant. `README.md`
+  (English) and `README.zh-Hant.md` are mirrors — change both together. Log and
+  error strings in English. GUI strings live in `src/ui/i18n/en.js` and
+  `zh-Hant.js`; only their key parity is tested (`test/admin.test.mjs`).
 - Commits: Conventional Commits, English.
 - **`CHANGELOG.md` is a work log, not a release changelog** (this project has no
   versions). Record behaviour changes, removals, and decisions backed by a

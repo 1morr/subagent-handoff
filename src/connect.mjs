@@ -208,8 +208,14 @@ export function attachConnect(proxy, leaf, { upstreamBaseUrl = PASSTHROUGH_BASE_
 /**
  * HTTPS proxy 模式的開關，執行中隨時切換，不用重啟。
  *
- * 關著的時候 router 跟沒有這個功能時一樣：沒有 CONNECT 監聽、guard 沒有例外（它看 `enabled`）、
- * 不讀 CA；從沒打開過的話連 CA 檔案都不存在。打開時才讀取或產生 CA。test/connect.test.mjs 守著這些。
+ * 關著的時候 router 跟沒有這個功能時一樣：沒有 CONNECT 監聽、不讀 CA；從沒打開過的話連 CA 檔案都
+ * 不存在。打開時才讀取或產生 CA。guard 的例外看的是 proxy 的 getRuntime().httpsProxy，由 src/index.mjs
+ * 接到這裡的 `enabled`。
+ *
+ * test/connect.test.mjs 守著的是這個函式本身（關閉時不掛監聽、不產生 CA；開、關、並行開、執行中關掉
+ * 斷隧道）與 proxy 的 guard 在 runtime 回報開或關時的行為（測試用的 runtime 是寫死的）。src/index.mjs
+ * 把兩者接起來的那段（getRuntime 讀 `enabled`、setConfig 先切換再存、存失敗切回去）沒有測試：
+ * 那個檔案一 import 就綁埠啟動。
  *
  * @param {import('node:http').Server} proxy
  * @param {{ dir: string, warn?: (message: string) => void, upstreamBaseUrl?: string }} options

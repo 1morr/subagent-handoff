@@ -415,8 +415,9 @@ export function describeFetchError(err) {
  * @param {() => object} getConfig 每次請求都重新取，所以 GUI 改完設定即時生效（改 port 除外）
  * @param {import('./proxy.mjs').TrafficLog} log
  * @param {object} [options]
- * @param {() => { boundProxyPort: number, httpsProxy?: boolean }} [options.getRuntime] 回報**實際綁定**的埠，
- *   以及啟動時有沒有開 HTTPS proxy 模式；不給的話退回讀 `config.proxyPort`，但那在使用者改埠又還沒重啟時會跟真正綁定的埠不一致。
+ * @param {() => { boundProxyPort: number, httpsProxy?: boolean }} [options.getRuntime] 每筆請求現查：**實際綁定**的埠，
+ *   以及 HTTPS proxy 模式此刻有沒有開（存檔即切換，src/index.mjs 讀 createHttpsProxy 的 `enabled`）。
+ *   不給的話退回讀 `config.proxyPort`，但存進設定的埠要重啟才生效，重啟前兩者可能不一致。
  * @param {string} [options.passthroughBaseUrl] 測試用：把訂閱線指到假上游
  * @param {number} [options.maxRequestBytes] 測試用：不必真的送 64MB 才看得到 413
  */
@@ -434,13 +435,13 @@ export function createProxyServer(getConfig, log, options = {}) {
 
       // 這條線握有第三方的 API key。DNS rebinding 之後網頁就能自己補上 agent-id header
       // 命中分流規則，拿你的額度去跑推論，所以來源檢查要在做任何事之前。
-      // 用的是實際綁定的埠，不是 config.proxyPort —— 使用者在 GUI 改埠但還沒重啟時，
-      // 兩者會不一樣，這裡要信的是真正在監聽的那個。
+      // 用的是實際綁定的埠，不是 config.proxyPort —— 埠只在啟動時綁定，存進設定的新值
+      // （GUI 沒有改埠的欄位，但 PUT /api/config 收得下）要重啟才生效，這裡要信的是真正在監聽的那個。
       //
       // 例外是 HTTPS proxy 模式下 CONNECT 解開的請求（src/connect.mjs）：它們的 Host 是
       // api.anthropic.com，必然過不了主機名檢查。這條路不必防：網頁的 fetch 送不出 CONNECT，
       // 瀏覽器也不信任 router 的 CA。這台 server 本身只收明文，socket 是加密的就只可能是那條路。
-      // 看的是啟動時綁定的狀態：模式沒開，這個例外就不存在，跟沒有這個功能時一樣。
+      // 看的是模式此刻的實際狀態（getRuntime 每筆現查）：模式沒開，這個例外就不存在，跟沒有這個功能時一樣。
       const runtime = getRuntime()
       const tunneled = runtime.httpsProxy === true && req.socket.encrypted === true
       if (!tunneled && !isLocalRequest(req, runtime.boundProxyPort)) {
