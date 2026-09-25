@@ -77,6 +77,7 @@ async function readJson(req) {
  */
 export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
   const runtimeState = () => ({ ...getRuntime(), configPath: CONFIG_PATH, passthroughBaseUrl: PASSTHROUGH_BASE_URL })
+  let saving = Promise.resolve()
 
   return http.createServer(async (req, res) => {
     applySecurityHeaders(res)
@@ -107,10 +108,16 @@ export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
 
       if (route === 'PUT /api/config') {
         const incoming = await readJson(req)
-        const problems = describeConfigProblems(incoming, getConfig())
-        if (problems.length) return send(res, 400, { error: problems.join('；') })
-        const saved = await setConfig(fromClientConfig(incoming, getConfig()))
-        send(res, 200, { config: toClientConfig(saved), runtime: runtimeState() })
+        // 一次只存一份：兩個 PUT 交錯的話（連點、開兩個分頁），HTTPS proxy 模式會被打開兩次、
+        // 關掉時只拆得掉一個 CONNECT 監聽；遮罩 key 的還原也要對著前一份存完的設定做
+        const run = saving.then(async () => {
+          const problems = describeConfigProblems(incoming, getConfig())
+          if (problems.length) return [400, { error: problems.join('；') }]
+          const saved = await setConfig(fromClientConfig(incoming, getConfig()))
+          return [200, { config: toClientConfig(saved), runtime: runtimeState() }]
+        })
+        saving = run.catch(() => {})
+        send(res, ...(await run))
         return
       }
 

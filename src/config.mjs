@@ -214,7 +214,19 @@ export async function loadConfig() {
   }
 }
 
-export async function saveConfig(cfg) {
+let saving = Promise.resolve()
+
+/**
+ * 寫進暫存檔再 rename，一次只跑一個：同時存的話會共用同一個暫存檔、交錯寫出壞掉的 JSON，
+ * Windows 上同時 rename 到同一個目標還會 EPERM。
+ */
+export function saveConfig(cfg) {
+  const run = saving.then(() => writeConfig(cfg))
+  saving = run.catch(() => {})
+  return run
+}
+
+async function writeConfig(cfg) {
   const normalized = normalizeConfig(cfg)
   await mkdir(path.dirname(CONFIG_PATH), { recursive: true })
   const tmp = `${CONFIG_PATH}.${process.pid}.tmp`

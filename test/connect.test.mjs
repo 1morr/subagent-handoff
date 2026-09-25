@@ -4,7 +4,8 @@ import http from 'node:http'
 import net from 'node:net'
 import tls from 'node:tls'
 import { once } from 'node:events'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { X509Certificate, createPrivateKey } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createCa, issueLeaf } from '../src/ca.mjs'
@@ -232,6 +233,29 @@ test('createHttpsProxy：開啟時產生 CA 並掛上 CONNECT —— 上一個�
     assert.equal(status, 502, 'CONNECT 有人處理了，只是這個目的地連不上')
   } finally {
     await on.close()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('createHttpsProxy：兩次打開同時進來只掛一個監聽，關掉後 CONNECT 真的沒了', async () => {
+  // 沒有依序執行時，兩次都看到「還沒開」：掛上兩個監聽，關掉只拆得掉一個，CONNECT 照樣被接受
+  const dir = await mkdtemp(path.join(tmpdir(), 'https-proxy-race-'))
+  const h = await createHarness({}, { runtime: { httpsProxy: true } })
+  try {
+    const sw = createHttpsProxy(h.proxy, { dir, warn: () => {} })
+    const outcomes = await Promise.all([sw.apply(true), sw.apply(true)])
+    assert.deepEqual(outcomes.map((o) => o.changed), [true, false])
+    assert.equal(h.proxy.listenerCount('connect'), 1)
+    const [certPem, keyPem] = await Promise.all(
+      ['https-proxy-ca.pem', 'https-proxy-ca-key.pem'].map((f) => readFile(path.join(dir, f), 'utf8')),
+    )
+    assert.ok(new X509Certificate(certPem).checkPrivateKey(createPrivateKey(keyPem)), '落檔的 CA 證書與私鑰要是同一對')
+
+    await Promise.all([sw.apply(false), sw.apply(false)])
+    assert.equal(h.proxy.listenerCount('connect'), 0)
+    await assert.rejects(connect('127.0.0.1:1', h.proxyUrl), undefined, '關掉之後 CONNECT 被斷線')
+  } finally {
+    await h.close()
     await rm(dir, { recursive: true, force: true })
   }
 })

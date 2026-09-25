@@ -15,6 +15,14 @@
 
 ### 修正
 
+- **同時進來的存檔改成依序執行。** 審查時實測：兩個 `PUT /api/config` 同時帶著 HTTPS proxy
+  模式打開（連點「交回訂閱」、或開兩個分頁各存一次），會掛上兩個 `CONNECT` 監聽；之後關掉只拆得
+  掉一個，GUI 顯示「關閉」但 `CONNECT` 照樣回 200 —— 違反「關閉＝沒有這個功能」。同時產生 CA
+  還可能讓落檔的證書與私鑰不是同一對。`saveConfig` 本身也會壞：並行存檔共用同一個暫存檔，200 輪裡
+  57 輪留下壞掉的 `config.json`（下次啟動直接起不來），Windows 上同時 rename 還會 `EPERM`。
+  現在 admin 的存檔、HTTPS proxy 的切換、`saveConfig` 三處各自排隊，三個都有並行測試（變異驗證過：
+  拿掉排隊就紅）。
+
 - **本機 CA 的 nameConstraints 補上 IP 位址的排除。** 原本只列允許 `api.anthropic.com`，但
   RFC 5280 的 permittedSubtrees 只管它列出的名稱種類：拿外洩的 CA 私鑰簽一張 iPAddress SAN
   的證書，連 IP 的 client 照樣接受（審查時實測重現）。現在把 `0.0.0.0/0` 與 `::/0` 列進

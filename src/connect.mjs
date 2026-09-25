@@ -217,25 +217,34 @@ export function attachConnect(proxy, leaf, { upstreamBaseUrl = PASSTHROUGH_BASE_
  */
 export function createHttpsProxy(proxy, { dir, warn, upstreamBaseUrl }) {
   let active = null
+  let pending = Promise.resolve()
+
+  async function toggle(enabled) {
+    if (enabled && !active) {
+      const ca = await loadOrCreateCa(dir, INTERCEPT_HOST)
+      const detach = attachConnect(proxy, issueLeaf(ca, INTERCEPT_HOST), { warn, upstreamBaseUrl })
+      active = { certPath: ca.certPath, detach }
+      return { changed: true, created: ca.created }
+    }
+    if (!enabled && active) {
+      active.detach()
+      active = null
+      return { changed: true }
+    }
+    return { changed: false }
+  }
+
   return {
     get enabled() { return active !== null },
     get certPath() { return active?.certPath ?? null },
     /**
      * @returns {Promise<{ changed: boolean, created?: boolean }>} `created`：這次打開時新產生了 CA
      */
-    async apply(enabled) {
-      if (enabled && !active) {
-        const ca = await loadOrCreateCa(dir, INTERCEPT_HOST)
-        const detach = attachConnect(proxy, issueLeaf(ca, INTERCEPT_HOST), { warn, upstreamBaseUrl })
-        active = { certPath: ca.certPath, detach }
-        return { changed: true, created: ca.created }
-      }
-      if (!enabled && active) {
-        active.detach()
-        active = null
-        return { changed: true }
-      }
-      return { changed: false }
+    apply(enabled) {
+      // 依序執行：打開要 await 讀寫 CA，兩次同時打開會都看到「還沒開」而掛上兩個監聽
+      const run = pending.then(() => toggle(enabled))
+      pending = run.catch(() => {})
+      return run
     },
   }
 }

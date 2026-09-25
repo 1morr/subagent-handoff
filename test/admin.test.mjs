@@ -4,7 +4,8 @@ import net from 'node:net'
 import { toClientConfig, defaultRule, KEEP_SECRET } from '../src/config.mjs'
 import en from '../src/ui/i18n/en.js'
 import zhHant from '../src/ui/i18n/zh-Hant.js'
-import { createHarness, makeAdminApi, rawRequest } from './helpers.mjs'
+import { createAdminServer } from '../src/admin.mjs'
+import { createHarness, makeAdminApi, rawRequest, listen } from './helpers.mjs'
 
 let harness, adminApi
 let snapshot
@@ -86,6 +87,42 @@ test('PUT /api/config：baseUrl scheme 不合法時 400，且不寫入設定', a
  * `POST /api/test` 會真的把 key 送出去：body 裡 apiKey 填遮罩值、baseUrl 填別的網域，
  * 就能把已存的 key 送到那裡。只有 baseUrl 跟已存的完全一樣才還原。
  */
+test('PUT /api/config 一次只存一份：同時送兩個，第二個等第一個存完才開始；前一個失敗不卡住後面', async () => {
+  // 交錯的存檔會讓 HTTPS proxy 模式被打開兩次、關掉時拆不乾淨（src/index.mjs 的 setConfig）
+  let config = harness.getConfig()
+  let running = 0
+  let overlapped = false
+  let failNext = false
+  const admin = createAdminServer({
+    getConfig: () => config,
+    setConfig: async (next) => {
+      running += 1
+      if (running > 1) overlapped = true
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      running -= 1
+      if (failNext) { failNext = false; throw new Error('disk full') }
+      config = next
+      return config
+    },
+    log: harness.logStore,
+    getRuntime: () => ({ boundProxyPort: 8787, boundAdminPort: 8788 }),
+  })
+  const api = makeAdminApi(await listen(admin))
+  try {
+    const { json: state } = await api('GET', '/api/state')
+    const both = await Promise.all([api('PUT', '/api/config', state.config), api('PUT', '/api/config', state.config)])
+    assert.deepEqual(both.map((r) => r.status), [200, 200])
+    assert.equal(overlapped, false, '第二個存檔在第一個還沒存完時就開始了')
+
+    failNext = true
+    const [failed, after] = await Promise.all([api('PUT', '/api/config', state.config), api('PUT', '/api/config', state.config)])
+    assert.equal(failed.status, 500)
+    assert.equal(after.status, 200, '前一個存檔失敗，後面的照樣要存得進去')
+  } finally {
+    admin.close()
+  }
+})
+
 test('POST /api/test：baseUrl 跟已存的不同又沿用遮罩值時，拒絕並且不外流 key', async () => {
   const { status, json } = await adminApi('POST', '/api/test', {
     provider: { id: 'kimi', apiKey: KEEP_SECRET, baseUrl: 'http://127.0.0.1:1', authStyle: 'bearer' },
