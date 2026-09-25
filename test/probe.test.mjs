@@ -289,6 +289,7 @@ test('看圖：模型不呼叫 Read 時是「無法判定」，不打第二輪',
     async (url, seen) => {
       const [result] = (await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['vision'] })).results
       assert.equal(result.ok, false)
+      assert.equal(result.inconclusive, true, 'GUI 靠它印 N/A，不印 FAIL')
       assert.match(result.error, /did not call Read.*cannot judge/)
       assert.equal(seen.length, 1)
     },
@@ -301,6 +302,7 @@ test('看圖：上游把圖片丟掉、模型照猜，要判失敗', async () =>
     async (url) => {
       const [result] = (await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['vision'] })).results
       assert.equal(result.ok, false)
+      assert.equal(result.inconclusive, undefined, '判得出來的失敗不是無法判定')
       assert.match(result.error, /never reached the model/)
     },
   )
@@ -315,6 +317,7 @@ test('看圖：思考吃光 max_tokens 沒有回覆時是「無法判定」，�
     async (url) => {
       const [result] = (await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['vision'] })).results
       assert.equal(result.ok, false)
+      assert.equal(result.inconclusive, true)
       assert.match(result.error, /cannot judge/)
       assert.match(result.error, /max_tokens/)
       assert.doesNotMatch(result.error, /never reached the model/)

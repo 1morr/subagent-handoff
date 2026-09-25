@@ -270,6 +270,11 @@
   #toast.bad { border-color: #4a2a24; } #toast.bad > i { background: var(--alarm); }
   #toast[hidden] { display: none; }
 
+  /* Provider 測試：結論在上、各列在下。設定改過之後舊結果壓暗，並說明它量的是改之前的設定 */
+  .probe-out { display: flex; flex-direction: column; gap: 10px; }
+  .probe-out.stale > .marginal, .probe-out.stale > .rack { opacity: .5; }
+  .stale-note { margin: 0; color: var(--prv); }
+
   /* 接入分頁：HTTPS proxy 模式目前的狀態。開啟用實心淺色塊、關閉用暗框 ——
      不用青綠：那是訂閱席位的顏色，「開啟」不是一個席位 */
   .mode-status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; }

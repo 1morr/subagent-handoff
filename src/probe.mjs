@@ -154,8 +154,10 @@ async function judgeReply(response, started, judge) {
   const json = await response.json()
   const text = textOf(json.content ?? [])
   if (!text) {
+    // inconclusive：沒過，但也沒證明 provider 壞了。GUI 印成 N/A 而不是 FAIL
     return {
       ok: false,
+      inconclusive: true,
       ms: Date.now() - started,
       error: `no text reply (stop_reason=${json.stop_reason}), cannot judge${json.stop_reason === 'max_tokens' ? ' — thinking used up max_tokens' : ''}`,
     }
@@ -477,7 +479,7 @@ async function readFileTurns(provider, model, started, { instruction, resultCont
   const turn1 = await first.json()
   const toolUse = (turn1.content ?? []).find((b) => b.type === 'tool_use')
   if (!toolUse) {
-    return { ok: false, ms: Date.now() - started, error: `the model did not call Read (stop_reason=${turn1.stop_reason}), cannot judge` }
+    return { ok: false, inconclusive: true, ms: Date.now() - started, error: `the model did not call Read (stop_reason=${turn1.stop_reason}), cannot judge` }
   }
 
   const second = await call(provider, model, {

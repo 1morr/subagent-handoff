@@ -583,15 +583,17 @@ const probeLabel = (r) => (PROBE_LABEL_KEY[r.id] && t(PROBE_LABEL_KEY[r.id]) !==
 function probeRow(r) {
   // 必要項目沒過＝被擋下（整圈告警框）；能力項目沒過＝跑得起來但出了事，推出機架、不發告警色。
   // 兩種都印 FAIL，差別在位置與框 —— 把「看不到 PDF」畫得跟「連不上」一樣響就是在誇大。
+  // 無法判定（模型沒給出能判斷的回覆）印 N/A：沒證明 provider 壞了，不能印成 FAIL。
   // 沒有 tier 的（設定錯誤、連 admin 都打不到）一律當必要看待
   const required = r.tier !== 'capability'
-  const cls = r.ok ? 'clr' : required ? 'hold' : 'chk'
-  const tabStyle = r.ok ? 'background:var(--sub)' : required ? 'background:var(--alarm)' : ''
+  const cls = r.ok ? 'clr' : required && !r.inconclusive ? 'hold' : 'chk'
+  // 導軌灰的標籤塊上用淺色字：深色字在 --rail-lit 上只有 1.9:1
+  const tabStyle = r.ok ? 'background:var(--sub)' : cls === 'hold' ? 'background:var(--alarm)' : 'color:var(--on-bay)'
   return `
     <div class="slot ${cls}">
       <div class="strip" style="cursor:default">
         <span class="tab" style="${tabStyle}">
-          <span class="code">${r.ok ? 'PASS' : 'FAIL'}</span>
+          <span class="code">${r.ok ? 'PASS' : r.inconclusive ? 'N/A' : 'FAIL'}</span>
         </span>
         <span style="padding:9px 12px;display:flex;flex-direction:column;gap:4px;min-width:0">
           <span style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap">
@@ -606,15 +608,24 @@ function probeRow(r) {
     </div>`
 }
 
-/** 測試結果底下那一行結論。回傳 HTML：測項名稱已過 esc()，字串本身帶 <strong> 之類的標記。 */
+/**
+ * 測試的結論，放在各列上面：先講能不能用，細節才往下看。回傳 [語氣, HTML]；
+ * 測項名稱已過 esc()，字串本身帶 <strong> 之類的標記。
+ */
 function probeSummary(results) {
   const names = (list) => list.map((r) => esc(probeLabel(r))).join(t('providers.listSep'))
-  const blocked = results.filter((r) => !r.ok && r.tier !== 'capability')
-  const degraded = results.filter((r) => !r.ok && r.tier === 'capability')
-  if (blocked.length) return t('providers.requiredFailed', { names: names(blocked) })
-  if (degraded.length) return t('providers.capabilityFailed', { names: names(degraded) })
-  return t('providers.allPass')
+  const blocked = results.filter((r) => !r.ok && !r.inconclusive && r.tier !== 'capability')
+  const degraded = results.filter((r) => !r.ok && !r.inconclusive && r.tier === 'capability')
+  const unsure = results.filter((r) => !r.ok && r.inconclusive)
+  const tail = unsure.length ? ` ${t('providers.inconclusive', { names: names(unsure) })}` : ''
+  if (blocked.length) return ['alarm', t('providers.requiredFailed', { names: names(blocked) }) + tail]
+  if (degraded.length) return ['note', t('providers.capabilityFailed', { names: names(degraded) }) + tail]
+  if (unsure.length) return ['note', t('providers.allPassButUnsure') + tail]
+  return ['', t('providers.allPass')]
 }
+
+/** 送出路徑的預覽：`baseUrl` 結尾的斜線 router 會去掉，這裡照樣去掉 */
+const endpointOf = (baseUrl) => esc(String(baseUrl ?? '').replace(/\/+$/, '') || 'https://…')
 
 function providerCard(p) {
   const t2 = S.tests[p.id]
@@ -638,10 +649,8 @@ function providerCard(p) {
       </label>
       <label class="fld wide"><span class="lbl">${t('providers.baseUrlLabel')}</span>
         <input type="text" data-f="baseUrl" value="${esc(p.baseUrl)}" placeholder="https://api.moonshot.ai/anthropic">
-        <span class="hint">${t('providers.baseUrlHint')}${
-          /\/v1$/.test(p.baseUrl)
-            ? ` <strong style="color:var(--alarm)">${t('providers.trailingV1Warning')}</strong>`
-            : ''}</span>
+        <span class="hint">${t('providers.baseUrlHint', { baseUrl: `<span data-echo="baseUrl">${endpointOf(p.baseUrl)}</span>` })}
+          <strong data-warn="v1" style="color:var(--alarm-ink)" ${/\/v1\/?$/.test(p.baseUrl) ? '' : 'hidden'}>${t('providers.trailingV1Warning')}</strong></span>
       </label>
       <label class="fld wide"><span class="lbl">API Key</span>
         <input type="password" data-f="apiKey" value="${p.apiKey === KEEP ? KEEP : ''}"
@@ -663,8 +672,14 @@ function providerCard(p) {
         </label>
         <button class="btn go" data-act="test" ${busy ? 'disabled' : ''}>${busy ? t('common.testing') : t('providers.runTest')}</button>
       </div>
-      ${t2?.results?.length ? `<div class="rack" style="padding:3px 26px 3px 3px">${t2.results.map(probeRow).join('')}</div>` : ''}
-      <span class="hint">${t2?.results?.length ? probeSummary(t2.results) : t('providers.notTested')}</span>
+      ${t2?.results?.length ? (() => {
+        const [tone, text] = probeSummary(t2.results)
+        return `<div class="probe-out${t2.stale ? ' stale' : ''}">
+          <p class="stale-note hint" ${t2.stale ? '' : 'hidden'}>${t('providers.staleResults')}</p>
+          <div class="marginal ${tone}" role="status"><i></i><div>${text}</div></div>
+          <div class="rack" style="padding:3px 26px 3px 3px">${t2.results.map(probeRow).join('')}</div>
+        </div>`
+      })() : `<span class="hint">${t('providers.notTested')}</span>`}
     </div>
   </section>`
 }
@@ -1102,6 +1117,20 @@ document.addEventListener('input', (ev) => {
     if (!p) return
     p[f] = el.value
     markDirty()
+    // 不重繪（游標會跳走），只改受影響的那幾處：送出路徑、/v1 警告、測試結果過期
+    if (f === 'baseUrl') {
+      const echo = card.querySelector('[data-echo="baseUrl"]')
+      if (echo) echo.innerHTML = endpointOf(el.value)
+      const warn = card.querySelector('[data-warn="v1"]')
+      if (warn) warn.hidden = !/\/v1\/?$/.test(el.value)
+    }
+    const tested = S.tests[card.dataset.pid]
+    if (tested?.results?.length && !tested.stale) {
+      tested.stale = true
+      card.querySelector('.probe-out')?.classList.add('stale')
+      const note = card.querySelector('.stale-note')
+      if (note) note.hidden = false
+    }
   } else if (row) {
     const r = S.config.rules.find((x) => x.id === row.dataset.rid)
     if (!r) return
