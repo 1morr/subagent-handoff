@@ -983,11 +983,43 @@ function applyStaticI18n() {
   if (sel) sel.value = lang
 }
 
+/**
+ * 焦點所在控制項的選擇器，重繪後用它找回同一個控制項。只認得出靠 data-* 或 id 標出來的
+ * 那些（進條、篩選鍵、規則列與 provider 卡的欄位），外層的 data-eid／rid／pid 用來分辨是哪一列。
+ */
+function focusSelector(el) {
+  if (!el || !$('#view').contains(el)) return null
+  if (el.id) return `#${CSS.escape(el.id)}`
+  const own = ['data-act', 'data-key', 'data-f']
+    .filter((a) => el.hasAttribute(a)).map((a) => `[${a}="${CSS.escape(el.getAttribute(a))}"]`).join('')
+  if (!own) return null
+  const scope = el.closest('[data-eid],[data-rid],[data-pid]')
+  const at = scope && ['data-eid', 'data-rid', 'data-pid'].find((a) => scope.hasAttribute(a))
+  return `${at ? `[${at}="${CSS.escape(scope.getAttribute(at))}"] ` : ''}${el.tagName.toLowerCase()}${own}`
+}
+
+/** 使用者正在 #view 裡選取文字（例如從批註複製 request-id）。這時輪詢不該把它換掉 */
+function selectingInView() {
+  const sel = window.getSelection()
+  return !!sel && !sel.isCollapsed && $('#view').contains(sel.anchorNode)
+}
+
+/**
+ * 整個 #view 換掉重畫。innerHTML 會把焦點丟回 body —— 每 3 秒輪詢一次，鍵盤使用者就每 3 秒
+ * 被踢回頁首 —— 所以換之前記下焦點（文字欄位連游標位置），換完放回同一個控制項。
+ */
 function render() {
   document.querySelectorAll('nav button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === S.tab)))
   const view = $('#view')
   if (!S.config) { view.innerHTML = `<div class="panel"><div class="empty">${t('common.loading')}</div></div>`; return }
+  const active = document.activeElement
+  const sel = focusSelector(active)
+  const range = active?.type === 'text' ? [active.selectionStart, active.selectionEnd] : null
   view.innerHTML = VIEWS[S.tab]()
+  const again = sel && view.querySelector(sel)
+  if (!again) return
+  again.focus({ preventScroll: true })
+  if (range && again.type === 'text') again.setSelectionRange(...range)
 }
 
 function setLang(next) {
@@ -1036,16 +1068,10 @@ document.addEventListener('input', (ev) => {
     r[f] = el.type === 'checkbox' ? el.checked : el.value
     const hadPreview = S.preview != null
     markDirty()
-    // 模擬是對著改之前的規則跑的，第一個字打下去標記就該收掉。只有這一下要重繪，重繪完把游標
-    // 放回原處。不等 change 事件：它在失焦時才來，那時重繪會換掉使用者正要按下去的「預覽」鍵，
-    // 滑鼠按下與放開落在不同的元素上，那一下點擊就不算數。
-    if (hadPreview && el.type === 'text') {
-      const { selectionStart, selectionEnd } = el
-      render()
-      const again = document.querySelector(`[data-rid="${CSS.escape(r.id)}"] [data-f="${f}"]`)
-      again?.focus()
-      again?.setSelectionRange(selectionStart, selectionEnd)
-    }
+    // 模擬是對著改之前的規則跑的，第一個字打下去標記就該收掉。只有這一下要重繪（render 會把
+    // 焦點與游標放回原處）。不等 change 事件：它在失焦時才來，那時重繪會換掉使用者正要按下去的
+    // 「預覽」鍵，滑鼠按下與放開落在不同的元素上，那一下點擊就不算數。
+    if (hadPreview && el.type === 'text') render()
   }
 })
 
@@ -1171,7 +1197,8 @@ function startLogPolling() {
   const tick = async () => {
     try {
       S.logs = (await api('GET', '/api/logs')).entries
-      if (S.tab === 'logs' || S.tab === 'bay') render()
+      // 正在選字就先不換：下一輪再畫，資料不會少
+      if ((S.tab === 'logs' || S.tab === 'bay') && !selectingInView()) render()
       for (const e of S.logs) SEEN.add(e.id)
     } catch {}
   }

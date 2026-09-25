@@ -26,6 +26,14 @@
 三件事：新進條印進機架的下滑淡入、進條推出／收回的位移、分流帶每一段的寬度變化 ——
 這三個在 reduced-motion 下全部關掉，不做退化成「變慢」的處理，直接消失。
 
+## 重繪會換掉整個 `#view`，焦點要自己放回去
+
+`render()` 用 innerHTML 整頁重畫，機架與流量分頁每 3 秒輪詢一次。innerHTML 會把焦點
+丟回 body，所以 `render()` 換之前記下焦點所在控制項的選擇器（`data-act`／`data-key`／
+`data-f` 加上外層的 `data-eid`／`data-rid`／`data-pid`，文字欄位連游標位置），換完放回去。
+新增可聚焦的控制項時要帶這些 data 屬性之一，否則重繪後焦點會掉。使用者在 `#view` 裡選字時
+輪詢跳過那一輪，不然選取會被換掉。
+
 ## `.num`（等寬數字體）不套在中文上
 
 `.num` 用的字堆疊（Cascadia Mono / Consolas / SF Mono / Menlo / monospace）**沒有任何
