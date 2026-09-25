@@ -207,6 +207,7 @@ export default {
   'rules.requestedModelLabel': '請求的 model',
   'rules.result.classifiedAs': '判定為',
   'rules.result.target': '導向',
+  'rules.ref': '第 {n} 條',
   'rules.result.matched': '命中',
   'rules.result.noMatch': '無規則命中 · 掉到機架底板',
 

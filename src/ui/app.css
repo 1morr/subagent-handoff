@@ -21,7 +21,9 @@
     /* Bahnschrift 與 Cascadia Mono 是 Windows 自帶，不下載任何東西。
        Bahnschrift 是 DIN 系壓縮體 —— 標誌系字體，正好是這個世界的聲音。 */
     --sign: "Bahnschrift SemiCondensed", Bahnschrift, "DIN Alternate", "Franklin Gothic Medium", system-ui, sans-serif;
-    --data: "Cascadia Mono", ui-monospace, Consolas, "SF Mono", Menlo, monospace;
+    /* 漢字排在泛用的 monospace 之前：等寬字族都沒有漢字，不列出來的話中文會掉到瀏覽器隨便挑的字，
+       跟同一行的拉丁字母分屬兩個無關字族（ui-notes.md） */
+    --data: "Cascadia Mono", ui-monospace, Consolas, "SF Mono", Menlo, "Microsoft JhengHei UI", "Noto Sans TC", "PingFang TC", monospace;
     --han: "Microsoft JhengHei UI", "Noto Sans TC", "PingFang TC", system-ui, sans-serif;
     color-scheme: dark;
   }
@@ -233,6 +235,9 @@
   .clearance { display: grid; grid-template-columns: 44px 1fr; transition: transform .18s cubic-bezier(.16,1,.3,1); }
   .clearance.hit { transform: translateX(12px); box-shadow: 0 0 0 2px var(--sub); }
   .clearance.shadowed { opacity: .4; }
+  /* 停用的規則不參與比對：句子壓暗、導向不再是實心色塊，免得讀成「這條正在把流量送去 provider」 */
+  .clearance.off > .say { opacity: .55; }
+  .clearance.off select.target { font-weight: 400; background: transparent; border-color: rgba(26,30,36,.2); color: var(--ink); }
   .clearance > .ord {
     display: grid; place-items: center; align-content: center; gap: 2px; padding: 8px 0;
     /* --on-bay-dim 在導軌灰上只有 4.16:1，這格的 ON／OFF 是 11px 功能字，要再亮一階 */

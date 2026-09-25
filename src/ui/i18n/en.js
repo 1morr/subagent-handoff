@@ -209,6 +209,7 @@ export default {
   'rules.requestedModelLabel': 'Requested model',
   'rules.result.classifiedAs': 'Classified as',
   'rules.result.target': 'Target',
+  'rules.ref': 'rule #{n}',
   'rules.result.matched': 'Matched',
   'rules.result.noMatch': 'No rule matched · falls to the rack floor',
 

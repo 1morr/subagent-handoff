@@ -138,6 +138,12 @@ function sectorOf(e) {
 
 const FLAG = { clr: 'CLR', chk: 'CHK', hold: 'HOLD', live: '···' }
 
+/** 規則在畫面上的名字是它的排序號（#2），不是內部 id；已經刪掉的規則才退回 id */
+function ruleRef(id) {
+  const i = S.config.rules.findIndex((r) => r.id === id)
+  return i >= 0 ? t('rules.ref', { n: i + 1 }) : id
+}
+
 /** provider 的 label 是使用者自己填的，原樣顯示；訂閱線與沒送出的照語言翻譯。
  *  吃流量記錄與規則預覽共有的 { providerId, target }，跟 sectorOf 用同一套判斷。 */
 function displayTarget(e) {
@@ -179,7 +185,7 @@ function annotation(e) {
     rows.push([label, e.error, !isAborted(e)])
   }
   rows.push([t('rack.ann.ruleHit'), e.ruleId
-    ? `${e.ruleId} → ${displayTarget(e)}`
+    ? `${ruleRef(e.ruleId)} → ${displayTarget(e)}`
     : t('rack.ann.noRuleHit', { target: displayTarget(e) })])
   if (e.retryAfter) rows.push(['retry-after', `${e.retryAfter}s`, true])
   if (e.rateLimit) {
@@ -239,7 +245,7 @@ function stripRow(e, withRequested) {
   const statusCls = st === 'hold' ? 'bad' : st === 'chk' ? 'warnink' : st === 'live' ? 'dimink' : 'okink'
   const cells = [
     `<span class="cell">${esc(e.ts.slice(11, 19))}</span>`,
-    `<span class="cell">${esc(e.kind)}</span>`,
+    `<span class="cell han">${esc(KIND_LABELS()[e.kind] ?? e.kind)}</span>`,
     `<span class="cell ${e.cwd ? '' : 'dimink'}">${esc(shortCwd(e.cwd))}</span>`,
     withRequested ? `<span class="cell">${esc(e.requestedModel ?? '–')}</span>` : '',
     `<span class="cell ${e.sentModel && e.sentModel !== e.requestedModel ? '' : 'dimink'}">${esc(e.sentModel ?? '–')}</span>`,
@@ -731,7 +737,7 @@ function renderRules() {
     const shadowed = hitAt >= 0 && i > hitAt
     const toPrv = r.providerId && r.providerId !== 'passthrough'
     return `
-    <div class="clearance ${isHit ? 'hit' : ''} ${shadowed ? 'shadowed' : ''}" data-rid="${esc(r.id)}">
+    <div class="clearance ${isHit ? 'hit' : ''} ${shadowed ? 'shadowed' : ''} ${r.enabled ? '' : 'off'}" data-rid="${esc(r.id)}">
       <div class="ord">
         <b>${i + 1}</b>
         <span>${!r.enabled ? 'OFF' : isHit ? 'HIT' : shadowed ? 'SHDW' : sim ? 'PASS' : 'ON'}</span>
@@ -828,7 +834,7 @@ function renderRules() {
               <dt class="lbl" style="color:var(--ink-dim)">${t('rack.col.sentModel')}</dt><dd style="margin:0;font:11.5px var(--data);color:var(--ink)">${
                 pv.requestedModel === pv.sentModel ? esc(pv.sentModel) : `${esc(pv.requestedModel)} → ${esc(pv.sentModel)}`}</dd>
               <dt class="lbl" style="color:var(--ink-dim)">${t('rules.result.matched')}</dt><dd style="margin:0;font:11.5px var(--data);color:#3c4149">${
-                pv.ruleId ? esc(pv.ruleId) : t('rules.result.noMatch')}</dd>
+                pv.ruleId ? esc(ruleRef(pv.ruleId)) : t('rules.result.noMatch')}</dd>
             </dl>
           </span>
         </div></div>
@@ -996,9 +1002,9 @@ function renderSetup() {
         <div class="marginal alarm"><i></i><div>
           ${st('warnCreds')}
         </div></div>
-        <span class="hint">
+        <div class="marginal note"><i></i><div>
           ${t('setup.attributionWarn')}
-        </span>
+        </div></div>
       </div>
     </section>
 
