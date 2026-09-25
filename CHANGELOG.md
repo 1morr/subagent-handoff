@@ -26,7 +26,10 @@
 - WebSocket upgrade 也原樣轉發：Claude Code 2.1.281 的 voice mode 對
   `/api/ws/speech_to_text/voice_stream` 開 WebSocket，沒接住的話開了這個模式它就壞。
 - 實測 Claude Code 2.1.281（CLI，Windows）接受這把帶 nameConstraints 的 CA，主對話與
-  subagent 分類正確。Desktop、Remote Control、真的 voice mode 還沒測。
+  subagent 分類正確。Remote Control、真的 voice mode 還沒測。
+- **Desktop 實測通過**（2.7032.0.0，內嵌 Claude Code 2.1.280）：變數只放在專案的
+  `.claude/settings.local.json` 就生效，51 筆請求全部經過 router、subagent 分類正確。
+  Desktop 送的 `count_tokens` 遠比 CLI 多（一個 session 44 筆）。
   細節見 [docs/https-proxy.md](docs/https-proxy.md)。
 
 ## 2026-09-24

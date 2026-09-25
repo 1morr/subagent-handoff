@@ -69,18 +69,33 @@ GUI 的接入分頁會給出填好路徑的版本。以前設過的 `ANTHROPIC_B
 - 證書是 `src/ca.mjs` 手工用 DER 拼出來的：Node 只會解析 X.509、不會產生，而這個專案零依賴。
 - 刪掉這兩個檔案，下次啟動就會產生新的一組。路徑不變，但 Claude Code 要重開才會讀到新證書。
 
-## 實測（2026-09-25，Claude Code 2.1.281，Windows，CLI）
+## 實測（2026-09-25，Windows）
 
-用 `claude -p` 設 `HTTPS_PROXY` 與 `NODE_EXTRA_CA_CERTS`、不設 `ANTHROPIC_BASE_URL`，
-叫它開一個 subagent：
+**CLI（Claude Code 2.1.281）。** 用 `claude -p` 設 `HTTPS_PROXY` 與 `NODE_EXTRA_CA_CERTS`、
+不設 `ANTHROPIC_BASE_URL`，叫它開一個 subagent：
 
 - debug log 有 `CA certs: Appended extra certificates from NODE_EXTRA_CA_CERTS`，握手成功，
   nameConstraints 沒有讓 Claude Code 的 TLS 堆疊拒絕。
 - 主對話記成 `main`、subagent 記成 `subagent`，跟 `ANTHROPIC_BASE_URL` 模式一樣。
 - 原樣轉發的登入、bootstrap、遙測都正常，session 照常跑完。
+- 不給 CA 時 Claude Code 自己回 `SSL certificate verification failed
+  (UNABLE_TO_VERIFY_LEAF_SIGNATURE) … set NODE_EXTRA_CA_CERTS`，router 的 console 也印出提示。
 
-**還沒實測：** Desktop 本身（依據是上面引的官方文檔）、Remote Control、真的 voice mode
-（upgrade 轉發只用測試裡的假上游驗過）。
+**Desktop（2.7032.0.0，Microsoft Store 版，內嵌 Claude Code 2.1.280）。** 兩個變數只放在一個
+測試資料夾的 `.claude/settings.local.json`，`~/.claude/settings.json` 裡照舊是指向另一台 router
+的 `ANTHROPIC_BASE_URL`。在 Code 分頁（Local、claude.ai 登入）開那個資料夾，叫它開一個 subagent：
+
+- 51 筆請求全部經過這台 router、全部 200：主對話 `/v1/messages` 6 筆、subagent 1 筆（分類正確）、
+  `/v1/messages/count_tokens` 44 筆。流量記錄的 session id 對得上 Desktop 自己的 session 檔。
+- 專案層的設定就夠：官方文檔說 claude.ai 登入的本機 session 每一層都讀，實測相符。
+- `count_tokens` 比 CLI 多得多（CLI 在 master 的 4666 筆裡才 75 筆），推測是介面在算 context 用量。
+  走訂閱線，不影響分流，但會佔掉流量記錄的篇幅。
+- Store 版 Desktop 的資料在 `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Roaming\Claude\`
+  （`claude_desktop_config.json`、內嵌的 `claude-code\<版本>\`、`claude-code-sessions\`），
+  不在一般的 `%APPDATA%\Claude`：MSIX 會把 AppData 重導到套件自己的目錄。
+
+**還沒實測：** Remote Control、真的 voice mode（upgrade 轉發只用測試裡的假上游驗過）、
+把 subagent 真的分到第三方 provider（分流走的是跟 CLI 同一個 handler，CLI 那邊有測試）。
 
 ## 代價與地雷
 
