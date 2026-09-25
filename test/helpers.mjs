@@ -19,8 +19,10 @@ export function listen(server) {
  * 跟「getRuntime 回報的埠」對不對得上，兩者本來就跟 listen() 拿到的隨機埠無關。
  *
  * @param {object} [overrides] 覆寫預設 config 的任何欄位（見 normalizeConfig）
+ * @param {object} [options]
+ * @param {object} [options.runtime] 蓋過 getRuntime 的回報，例如 `{ httpsProxy: true }`
  */
-export async function createHarness(overrides = {}) {
+export async function createHarness(overrides = {}, { runtime = {} } = {}) {
   const upstream = createFakeUpstream()
   const upstreamUrl = await listen(upstream.server)
 
@@ -37,7 +39,7 @@ export async function createHarness(overrides = {}) {
 
   const finished = []
   const logStore = new TrafficLog(300, (entry) => finished.push(entry))
-  const getRuntime = () => ({ boundProxyPort: 8787, boundAdminPort: 8788 })
+  const getRuntime = () => ({ boundProxyPort: 8787, boundAdminPort: 8788, ...runtime })
 
   const proxy = createProxyServer(() => config, logStore, { getRuntime, passthroughBaseUrl: upstreamUrl })
   const proxyUrl = await listen(proxy)

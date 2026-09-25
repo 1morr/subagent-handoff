@@ -61,7 +61,14 @@ test('normalizeConfig：已經拿掉的頂層設定（passthrough、trafficLog�
   const cfg = normalizeConfig({
     passthrough: { baseUrl: 'https://gateway.example' }, trafficLog: { file: 'x.log' }, maxRequestBytes: 1, retry: { attempts: 2 },
   })
-  assert.deepEqual(Object.keys(cfg).sort(), ['adminPort', 'providers', 'proxyPort', 'rules'])
+  assert.deepEqual(Object.keys(cfg).sort(), ['adminPort', 'httpsProxy', 'providers', 'proxyPort', 'rules'])
+})
+
+test('normalizeConfig：httpsProxy 預設關閉，只有布林 true 才打開', () => {
+  assert.equal(normalizeConfig({}).httpsProxy, false, '舊設定檔沒有這個欄位，載入後是關的')
+  assert.equal(normalizeConfig({ httpsProxy: true }).httpsProxy, true)
+  // 手改打錯的值不能悄悄打開 MITM
+  for (const typo of ['true', 'yes', 1, {}]) assert.equal(normalizeConfig({ httpsProxy: typo }).httpsProxy, false)
 })
 
 test('normalizeConfig：已經拿掉的 provider 欄位不會被留下來', () => {

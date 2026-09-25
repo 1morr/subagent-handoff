@@ -4,6 +4,7 @@ import http from 'node:http'
 import https from 'node:https'
 import { pipeline } from 'node:stream'
 import { PASSTHROUGH_BASE_URL } from './proxy.mjs'
+import { loadOrCreateCa, issueLeaf } from './ca.mjs'
 
 /**
  * HTTPS proxy 模式：讓 proxy 埠也接受 `CONNECT`，Claude Code 設 `HTTPS_PROXY` 就能接進來。
@@ -184,4 +185,20 @@ export function attachConnect(proxy, leaf, { upstreamBaseUrl = PASSTHROUGH_BASE_
   })
 
   return decrypted
+}
+
+/**
+ * 啟動時的唯一入口：`config.httpsProxy` 沒開就什麼都不做 —— 不掛 CONNECT、不讀也不產生 CA，
+ * router 跟沒有這個功能時一模一樣（test/connect.test.mjs 守著這一點）。
+ *
+ * @param {import('node:http').Server} proxy
+ * @param {{ enabled: boolean, dir: string, warn?: (message: string) => void }} options
+ *   `dir` 是 CA 落檔的目錄，跟 config.json 放在一起
+ * @returns {Promise<{ certPath: string, created: boolean, decrypted: import('node:http').Server } | null>}
+ */
+export async function setupHttpsProxy(proxy, { enabled, dir, warn }) {
+  if (!enabled) return null
+  const ca = await loadOrCreateCa(dir, INTERCEPT_HOST)
+  const decrypted = attachConnect(proxy, issueLeaf(ca, INTERCEPT_HOST), { warn })
+  return { certPath: ca.certPath, created: ca.created, decrypted }
 }

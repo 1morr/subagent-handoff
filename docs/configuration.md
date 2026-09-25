@@ -18,6 +18,7 @@ ROUTER_CONFIG=/path/to/my-config.json npm start
 | 欄位 | 說明 |
 | --- | --- |
 | `proxyPort` / `adminPort` | 分別是 proxy 與 GUI 的埠，預設 8787 / 8788。GUI 改不到，手改之後要重啟；其他設定即時生效。1–65,535 以外的值載入時退回預設 |
+| `httpsProxy` | HTTPS proxy 模式，給 Claude Desktop 用，預設 `false`。只有布林 `true` 才算打開。跟埠一樣要重啟才生效。見 [https-proxy.md](https-proxy.md) |
 | `providers[].baseUrl` | 必須是 Anthropic Messages 格式的端點，router 會往 `{baseUrl}/v1/messages` 送。只收 `http:` / `https:` |
 | `providers[].apiKey` | 送給這個 provider 的 key。GUI 只拿得到遮罩值，見 [security.md](security.md) |
 | `providers[].model` | 送出前把 `model` 改寫成這個值。留空 = 不改寫 |

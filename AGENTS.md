@@ -5,16 +5,13 @@ Local router (`127.0.0.1:8787` + admin GUI on 8788): requests carrying Claude Co
 Anthropic-compatible provider you pay for; everything else passes through to
 `api.anthropic.com` on the subscription.
 
-## This branch: `feat/https-proxy`
-
-Adds an HTTPS proxy (`CONNECT`) mode so Claude Desktop can use the router
-(`src/connect.mjs`, `src/ca.mjs`, `docs/https-proxy.md`). It is kept **off
-`master` on purpose** — master stays with the single `ANTHROPIC_BASE_URL` setup.
-Do not merge it; rebase it onto `master` instead. Keep changes to shared files
-small so the rebase stays cheap.
-
 ## Hard constraints
 
+- **HTTPS proxy mode (`config.httpsProxy`, `src/connect.mjs`) is opt-in, and off
+  must mean the router behaves as if the feature did not exist**: no `CONNECT`
+  listener, no CA files, no guard exemption, the original Connect-tab text.
+  `test/connect.test.mjs` pins the first three; keep new proxy-mode behaviour
+  behind the same switch.
 - **Zero runtime and zero dev dependencies — deliberate, please keep it.** The whole
   point is that a proxy in front of your API traffic has the smallest possible supply
   chain. Tests use built-in `node --test`; syntax gating uses built-in `node --check`.

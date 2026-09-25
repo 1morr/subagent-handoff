@@ -1,7 +1,8 @@
 # HTTPS proxy 模式
 
-> 這個模式只在 `feat/https-proxy` 分支上。master 維持 `ANTHROPIC_BASE_URL` 一種接法，
-> 刻意不合併：它多出一把本機 CA 與一個 MITM 路徑，換來的只是 Desktop 也能接。
+> 選用功能，**預設關閉**。關著的時候 router 跟沒有這個功能時一模一樣：不收 `CONNECT`、
+> 不產生 CA，接入分頁顯示的也是原本的 `ANTHROPIC_BASE_URL` 片段。只用 CLI 就不必打開它；
+> 它多出一把本機 CA 與一條 MITM 路徑，換來的是 Claude Desktop 也能接。
 
 ## 為什麼需要
 
@@ -41,9 +42,23 @@ traffic.log 4666 筆裡沒有別的）。MITM 看得到的東西多得多：第�
 
 程式碼：`src/connect.mjs`（CONNECT、隧道、轉發）、`src/ca.mjs`（CA 與證書）。
 
-## 設定
+## 開關
 
-`~/.claude/settings.json`：
+GUI 接入分頁最上面的「HTTPS proxy 模式」，或 `config.json` 的 `"httpsProxy": true`。
+跟埠一樣是啟動時決定的：**存檔之後要重啟 router**。重啟前，接入分頁的片段仍然對應舊的模式。
+
+- **打開：** 第一次啟動時在 `config.json` 旁邊產生 CA，proxy 埠開始接受 `CONNECT`。
+- **關掉：** 不再接受 `CONNECT`（連線直接被斷），也不讀 CA。CA 檔案留著，下次打開不必重新設定信任。
+  **Claude Code 那邊的設定要一起改回來**：還留著 `HTTPS_PROXY` 的話，router 不收 `CONNECT`，
+  Claude Code 的所有連線都會失敗。
+
+「關掉＝原行為」由 `test/connect.test.mjs` 守著：不掛 `CONNECT`、不產生 CA、guard 的例外不存在。
+
+## 設定 Claude Code
+
+模式打開、重啟之後，接入分頁會給出填好 CA 路徑的片段。放在哪一層決定影響範圍：
+
+**全域 —— `~/.claude/settings.json`（CLI 與 Desktop 共用）**
 
 ```json
 {
@@ -54,8 +69,39 @@ traffic.log 4666 筆裡沒有別的）。MITM 看得到的東西多得多：第�
 }
 ```
 
-GUI 的接入分頁會給出填好路徑的版本。以前設過的 `ANTHROPIC_BASE_URL` 要拿掉。
-兩個都設不會出錯，但 API 請求會走 base URL 那條，MITM 就用不到。
+同時拿掉 `ANTHROPIC_BASE_URL`。兩個都設不會出錯，但 CLI 的 API 請求會走 base URL 那條，
+而且 CLI 的 Remote Control 會因為它被停用。
+
+**只在某個 repo —— `<repo>/.claude/settings.local.json`**（不要用會提交的 `settings.json`：
+CA 路徑是機器專屬的）
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+    "HTTPS_PROXY": "http://127.0.0.1:8787",
+    "NODE_EXTRA_CA_CERTS": "<CA 路徑>"
+  }
+}
+```
+
+`ANTHROPIC_BASE_URL` 那行是給 CLI 的：蓋掉全域那個指向 router 的值，讓 API 請求也走 proxy。
+Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之後才生效（第一次開啟時會問）。
+
+**兩種放法的差別（2026-09-25 實測）**
+
+| | 全域 | 只在 repo |
+|---|---|---|
+| 分流、分到第三方 provider（CLI / Desktop） | ✅ | ✅ |
+| Remote Control（Desktop） | ✅ | ✅ |
+| Remote Control（CLI） | ✅ 前提是全域已經沒有 `ANTHROPIC_BASE_URL` | ❌ `claude remote-control` 只看使用者層的 `ANTHROPIC_BASE_URL` |
+| voice mode（CLI） | ✅ | ✅ |
+| Desktop 的聽寫按鈕 | 不經過 router | 不經過 router |
+| router 沒在跑時 | 所有專案的 Claude Code 與它啟動的 git / npm 都斷網 | 只有這個 repo |
+| 背景 agent（`claude agents`、`--bg`） | 官方建議把代理變數放在這一層 | 沒量過 |
+
+設好之後重開 Claude Code（Desktop 開新的 session），`/status` 應該看到 `Proxy` 指向 router、
+`Additional CA cert(s)` 是 CA 路徑，`Login method` 仍然是 claude.ai 帳號。
 
 ## 本機 CA
 
@@ -126,10 +172,11 @@ GUI 的接入分頁會給出填好路徑的版本。以前設過的 `ANTHROPIC_B
   `NODE_USE_ENV_PROXY=1` 或 `--use-env-proxy` 才會
   （[Node 文檔](https://nodejs.org/docs/latest-v24.x/api/http.html#built-in-proxy-support)）。
   帶著這兩者之一、又讓 `HTTPS_PROXY` 指向自己去啟動 router，請求會繞回自己。
-- **guard 對解開的請求放行。** 它們的 Host 是 `api.anthropic.com`，必然過不了主機名檢查。
+- **模式開著時，guard 對解開的請求放行。** 它們的 Host 是 `api.anthropic.com`，必然過不了主機名檢查。
   這條路不必防 DNS rebinding 與 CSRF：網頁的 `fetch` 送不出 `CONNECT`，瀏覽器也不信任這把 CA。
   proxy 那台 server 只收明文，所以「socket 是加密的」就代表是這條路進來的
-  （`src/proxy.mjs`）。明文送來、Host 寫 `api.anthropic.com` 的請求照樣被擋，有測試守著。
+  （`src/proxy.mjs`）。明文送來、Host 寫 `api.anthropic.com` 的請求照樣被擋；模式沒開時這個例外
+  根本不存在。兩件事都有測試守著。
 - **握手失敗時 router 會在 console 提示去查 `NODE_EXTRA_CA_CERTS`。** TLS 1.3 下 client
   驗不過證書只會關掉連線，server 端看不到錯誤，只看得到「還沒握完手就關了」，所以 client
   正常中途離開也會觸發這個提示。解開 TLS 用的是自己包的 `TLSSocket`：從 http server 的

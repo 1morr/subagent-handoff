@@ -67,16 +67,16 @@ npm start
 4. 執行 `/status`，確認 `Login method` 仍然指向你的 claude.ai 帳號。
 5. 派一個子代理去做點事，然後在 **Rack** 分頁看分流結果。
 
-## HTTPS proxy 模式（本分支）
+## HTTPS proxy 模式（選用，給 Claude Desktop）
 
-> 這一節只在 `feat/https-proxy` 分支上。`master` 維持 `ANTHROPIC_BASE_URL` 一種接法。
+**預設關閉**，關著的時候 router 的行為跟上面描述的完全一樣。只有想讓 Claude Desktop 也被分流時才需要打開。
 
-Claude Desktop 的 Code 分頁不理 `ANTHROPIC_BASE_URL`，但照讀 `HTTPS_PROXY` 與 `NODE_EXTRA_CA_CERTS`。所以這個分支讓 proxy 埠也接受 `CONNECT`：
+Claude Desktop 的 Code 分頁不理 `ANTHROPIC_BASE_URL`，但照讀 `HTTPS_PROXY` 與 `NODE_EXTRA_CA_CERTS`。打開這個模式（**接入**分頁最上面的開關，或 `"httpsProxy": true`，然後重啟 router）之後，proxy 埠也接受 `CONNECT`：
 
 - `api.anthropic.com:443` 用 router 在 `config.json` 旁邊產生的本機 CA 簽證書解開。`/v1/messages*` 走原本的分流；其他路徑與 WebSocket upgrade 原樣轉給 Anthropic，不記錄。
 - 其他主機一律是純 TCP 隧道，不解密。
 
-**接入**分頁會給出設定片段（`HTTPS_PROXY` 加 `NODE_EXTRA_CA_CERTS`），CLI 與 Desktop 都能用。代價有兩個：Claude Code 啟動的每一支程式（git、npm、curl）都會繼承 `HTTPS_PROXY`，**router 沒在跑的時候它們全部斷網**；以及你多信任了一把本機 CA，它被 name constraint 限定只能簽 `api.anthropic.com`，而且不能裝進系統信任庫。細節、實測與還沒測過的部分見 [docs/https-proxy.md](docs/https-proxy.md)。
+之後**接入**分頁會給出設定片段（`HTTPS_PROXY` 加 `NODE_EXTRA_CA_CERTS`），CLI 與 Desktop 都能用。再關掉時，設定也要改回 `ANTHROPIC_BASE_URL`。代價有兩個：Claude Code 啟動的每一支程式（git、npm、curl）都會繼承 `HTTPS_PROXY`，**router 沒在跑的時候它們全部斷網**；以及你多信任了一把本機 CA，它被 name constraint 限定只能簽 `api.anthropic.com`，而且不能裝進系統信任庫。細節、全域與單一 repo 的設定方式、實測見 [docs/https-proxy.md](docs/https-proxy.md)。
 
 ## 兩種請求類型
 
@@ -92,6 +92,7 @@ Claude Desktop 的 Code 分頁不理 `ANTHROPIC_BASE_URL`，但照讀 `HTTPS_PRO
 | Field | |
 |---|---|
 | `proxyPort` / `adminPort` | 8787 與 8788。改這兩個需要重新啟動；其他所有設定都是逐請求即時生效 |
+| `httpsProxy` | 給 Claude Desktop 用的 HTTPS proxy 模式，預設 `false`。跟埠一樣要重新啟動 |
 | `providers[].baseUrl` | 必須說 Anthropic Messages 格式 —— router 會對 `{baseUrl}/v1/messages` 發送請求 |
 | `providers[].model` | 送出前改寫 `model`。留空 = 不動它 |
 | `providers[].authStyle` | `bearer` 或 `x-api-key` |

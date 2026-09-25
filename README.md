@@ -83,13 +83,15 @@ Open <http://127.0.0.1:8788>:
 4. Run `/status` and confirm `Login method` still points at your claude.ai account.
 5. Give a subagent some work, then watch the split on the **Rack** tab.
 
-## HTTPS proxy mode (this branch)
+## HTTPS proxy mode (optional, for Claude Desktop)
 
-> This section exists only on the `feat/https-proxy` branch. `master` keeps the
-> single `ANTHROPIC_BASE_URL` setup.
+**Off by default**, and while it is off the router behaves exactly as described
+above. Turn it on only if you want Claude Desktop routed too.
 
 Claude Desktop's Code tab ignores `ANTHROPIC_BASE_URL` but honours `HTTPS_PROXY`
-and `NODE_EXTRA_CA_CERTS`. So on this branch the proxy port also accepts `CONNECT`:
+and `NODE_EXTRA_CA_CERTS`. With the mode on (the switch at the top of the
+**Connect** tab, or `"httpsProxy": true`, then restart the router) the proxy
+port also accepts `CONNECT`:
 
 - `api.anthropic.com:443` is decrypted with a certificate from a local CA the
   router generates next to `config.json`. `/v1/messages*` goes through the usual
@@ -97,12 +99,13 @@ and `NODE_EXTRA_CA_CERTS`. So on this branch the proxy port also accepts `CONNEC
   untouched and not logged.
 - Every other host is a plain TCP tunnel, never decrypted.
 
-The **Connect** tab gives the snippet (`HTTPS_PROXY` plus `NODE_EXTRA_CA_CERTS`).
-It works in the CLI and in Desktop. Two costs: every program Claude Code starts
+The **Connect** tab then gives the snippet (`HTTPS_PROXY` plus `NODE_EXTRA_CA_CERTS`),
+which works in the CLI and in Desktop. Turning the mode off again also means putting
+`ANTHROPIC_BASE_URL` back in your settings. Two costs: every program Claude Code starts
 (git, npm, curl) inherits `HTTPS_PROXY`, so **while the router is down they all
 lose network access**; and you now trust a local CA, which is name-constrained to
 `api.anthropic.com` and must not go into your system trust store. Details,
-measurements and what has not been tested yet: [docs/https-proxy.md](docs/https-proxy.md).
+global vs per-repo setup, and measurements: [docs/https-proxy.md](docs/https-proxy.md).
 
 ## The two request kinds
 
@@ -119,6 +122,7 @@ Rules are evaluated top to bottom and the first match wins.
 | Field | |
 |---|---|
 | `proxyPort` / `adminPort` | 8787 and 8788. Changing them needs a restart; everything else takes effect per request |
+| `httpsProxy` | HTTPS proxy mode for Claude Desktop, default `false`. Needs a restart, like the ports |
 | `providers[].baseUrl` | Must speak the Anthropic Messages format — the router posts to `{baseUrl}/v1/messages` |
 | `providers[].model` | Rewrites `model` before sending. Empty = leave alone |
 | `providers[].authStyle` | `bearer` or `x-api-key` |

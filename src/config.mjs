@@ -60,6 +60,12 @@ export function defaultConfig() {
   return {
     proxyPort: 8787,
     adminPort: 8788,
+    /**
+     * HTTPS proxy 模式（src/connect.mjs）。關著的時候 router 跟沒有這個功能時一模一樣：不收 CONNECT、
+     * 不產生 CA。預設關閉，因為它多出一把本機 CA，而且讓 Claude Code 的所有連線都依賴 router 活著。
+     * 跟埠一樣是啟動時決定的，改了要重啟。
+     */
+    httpsProxy: false,
     providers: [kimi],
     /**
      * 預設那條規則**是關的**。首次啟動時 provider 還沒有 API key，開著就等於把每一個
@@ -187,6 +193,8 @@ export function normalizeConfig(raw) {
   return {
     proxyPort: asPort(cfg.proxyPort, base.proxyPort),
     adminPort: asPort(cfg.adminPort, base.adminPort),
+    // 只認 true：手改成 "yes"、1 之類的值一律當成沒開，不讓一個打錯的值悄悄打開 MITM
+    httpsProxy: cfg.httpsProxy === true,
     providers,
     rules,
   }

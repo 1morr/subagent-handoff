@@ -4,8 +4,11 @@ import http from 'node:http'
 import net from 'node:net'
 import tls from 'node:tls'
 import { once } from 'node:events'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { createCa, issueLeaf } from '../src/ca.mjs'
-import { attachConnect, INTERCEPT_HOST } from '../src/connect.mjs'
+import { attachConnect, setupHttpsProxy, INTERCEPT_HOST } from '../src/connect.mjs'
 import { createHarness, listen, rawRequest, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
 
 const ca = createCa({ permittedHost: INTERCEPT_HOST })
@@ -13,7 +16,7 @@ const warnings = []
 let harness
 
 before(async () => {
-  harness = await createHarness()
+  harness = await createHarness({}, { runtime: { httpsProxy: true } })
   attachConnect(harness.proxy, issueLeaf(ca, INTERCEPT_HOST), {
     upstreamBaseUrl: harness.upstreamUrl,
     warn: (m) => warnings.push(m),
@@ -22,8 +25,8 @@ before(async () => {
 after(() => harness.close())
 
 /** 對 proxy 送 CONNECT，回傳 proxy 的狀態碼與那條 socket（2xx 時就是隧道） */
-function connect(authority) {
-  const { hostname, port } = new URL(harness.proxyUrl)
+function connect(authority, proxyUrl = harness.proxyUrl) {
+  const { hostname, port } = new URL(proxyUrl)
   return new Promise((resolve, reject) => {
     const req = http.request({ hostname, port, method: 'CONNECT', path: authority })
     req.on('connect', (res, socket) => resolve({ status: res.statusCode, socket }))
@@ -33,8 +36,8 @@ function connect(authority) {
 }
 
 /** 照 Claude Code 的做法：CONNECT api.anthropic.com:443，信任 router 的 CA，在隧道裡講 HTTPS */
-async function viaProxy(path, { method = 'GET', headers = {}, body, trust = ca } = {}) {
-  const { socket } = await connect(`${INTERCEPT_HOST}:443`)
+async function viaProxy(path, { method = 'GET', headers = {}, body, trust = ca, proxyUrl = harness.proxyUrl } = {}) {
+  const { socket } = await connect(`${INTERCEPT_HOST}:443`, proxyUrl)
   const secure = tls.connect({ socket, servername: INTERCEPT_HOST, ca: trust.certPem })
   await once(secure, 'secureConnect')
   return new Promise((resolve, reject) => {
@@ -157,7 +160,7 @@ test('WebSocket upgrade 原樣接到上游（voice mode 用的就是這條）', 
     socket.pipe(socket)
   })
   const wsUrl = await listen(ws)
-  const local = await createHarness()
+  const local = await createHarness({}, { runtime: { httpsProxy: true } })
   attachConnect(local.proxy, issueLeaf(ca, INTERCEPT_HOST), { upstreamBaseUrl: wsUrl, warn: () => {} })
   try {
     const { hostname, port } = new URL(local.proxyUrl)
@@ -191,5 +194,57 @@ test('WebSocket upgrade 原樣接到上游（voice mode 用的就是這條）', 
   } finally {
     ws.close()
     await local.close()
+  }
+})
+
+// ── 模式關閉時跟沒有這個功能一樣 ───────────────────────────────────
+
+test('setupHttpsProxy：關閉時不掛 CONNECT、不產生 CA，CONNECT 直接被斷線', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'https-proxy-off-'))
+  const off = await createHarness()
+  try {
+    assert.equal(await setupHttpsProxy(off.proxy, { enabled: false, dir }), null)
+    assert.equal(off.proxy.listenerCount('connect'), 0)
+    assert.deepEqual(await readdir(dir), [], '沒開就不該有任何 CA 檔案')
+    // 沒有 connect 監聽者時 Node 直接關掉連線 —— 跟 master 一樣，不回任何狀態碼
+    await assert.rejects(connect(`${INTERCEPT_HOST}:443`, off.proxyUrl))
+  } finally {
+    await off.close()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('setupHttpsProxy：開啟時產生 CA 並掛上 CONNECT —— 上一個測試的對照組', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'https-proxy-on-'))
+  const on = await createHarness({}, { runtime: { httpsProxy: true } })
+  try {
+    const result = await setupHttpsProxy(on.proxy, { enabled: true, dir, warn: () => {} })
+    assert.equal(on.proxy.listenerCount('connect'), 1)
+    assert.equal(result.certPath, path.join(dir, 'https-proxy-ca.pem'))
+    assert.equal((await readdir(dir)).length, 2)
+    const { status, socket } = await connect('127.0.0.1:1', on.proxyUrl)
+    socket.destroy()
+    assert.equal(status, 502, 'CONNECT 有人處理了，只是這個目的地連不上')
+  } finally {
+    await on.close()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('guard 的例外只在啟動時開了 HTTPS proxy 模式才存在', async () => {
+  // 刻意在 runtime 回報「沒開」的 router 上掛 CONNECT：解開的請求 Host 是 api.anthropic.com，
+  // 例外不存在就該被 guard 擋下。開著時同樣的請求會過（本檔第一個測試）
+  const off = await createHarness()
+  attachConnect(off.proxy, issueLeaf(ca, INTERCEPT_HOST), { upstreamBaseUrl: off.upstreamUrl, warn: () => {} })
+  try {
+    const res = await viaProxy('/v1/messages?beta=true', {
+      method: 'POST',
+      headers: { ...SUBSCRIPTION_HEADERS, 'anthropic-version': '2023-06-01' },
+      body: BASE_BODY,
+      proxyUrl: off.proxyUrl,
+    })
+    assert.equal(res.status, 403)
+  } finally {
+    await off.close()
   }
 })

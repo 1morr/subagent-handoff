@@ -11,14 +11,25 @@
 
 ---
 
-## 2026-09-25（`feat/https-proxy` 分支）
+## 2026-09-25
+
+### 變更
+
+- **HTTPS proxy 模式改成預設關閉的開關，並合併進 master。** 原本打算長期留在分支上，
+  讓 master 只有一種接法；改成開關之後，關著的 router 跟沒有這個功能時一模一樣（不收
+  `CONNECT`、不產生 CA、guard 沒有例外、接入分頁是原本的文字），只用 CLI 的人感覺不到它，
+  也就沒有理由再維護一條要不斷 rebase 的分支。開關是 `config.json` 的 `httpsProxy`，
+  跟埠一樣重啟才生效 —— 關閉必須是「根本沒掛上」，而不是「掛著但拒絕」，才能保證跟原本一樣。
+  前三項由 `test/connect.test.mjs` 守著，並用變異驗證過會紅。
+- 同時補上設定教學：全域與單一 repo 的放法，以及兩者對各功能的差別
+  （[docs/https-proxy.md](docs/https-proxy.md#設定-claude-code)）。
 
 ### 新增
 
 - **HTTPS proxy 模式，讓 Claude Desktop 也能接。** Desktop 的 Code 分頁不理
   `ANTHROPIC_BASE_URL`，但照讀 `HTTPS_PROXY` 與 `NODE_EXTRA_CA_CERTS`（issue #2）。
   proxy 埠多收 `CONNECT`：`api.anthropic.com:443` 用本機 CA 解開，其餘主機純隧道。
-  只放在分支上，master 維持一種接法 —— 多一把 CA 與一條 MITM 路徑，換來的只是 Desktop。
+  一開始只放在 `feat/https-proxy` 分支上（後來改成開關並合併，見上）。
 - 解開之後只有 `/v1/messages*` 交給分流與流量記錄，其餘路徑原樣轉發。實測一個
   `claude -p` 就多出 14 筆 OAuth、feature flag、遙測，全記下來會淹掉流量記錄；
   `ANTHROPIC_BASE_URL` 模式下 router 本來就只看得到 `/v1/messages*`（master 的 traffic.log

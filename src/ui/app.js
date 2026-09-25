@@ -828,23 +828,44 @@ function renderLogs() {
 // ── 接入說明 ───────────────────────────────────────────────────────
 function renderSetup() {
   const port = S.runtime.boundProxyPort
+  // 片段與說明跟著 router 實際在跑的模式走（啟動時決定），不是設定裡還沒重啟生效的那個值。
+  // 模式關著的時候，這一頁除了最上面的開關，跟沒有這個功能時一字不差
+  const proxyMode = S.runtime.httpsProxy === true
+  const st = (key, vars) => t(proxyMode ? `setup.proxy.${key}` : `setup.${key}`, vars)
   // JSON.stringify 才會把 Windows 路徑的反斜線跳脫好，貼進 settings.json 才是合法的 JSON
-  const caPath = JSON.stringify(S.runtime.caCertPath)
+  const snippet = proxyMode
+    ? `{
+  "env": {
+    "HTTPS_PROXY": "http://127.0.0.1:${port}",
+    "NODE_EXTRA_CA_CERTS": ${esc(JSON.stringify(S.runtime.caCertPath))}
+  }
+}`
+    : `{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:${port}"
+  }
+}`
   return `
+    <section class="panel">
+      <div class="panel-head"><span class="lbl">${t('setup.modeTitle')}</span></div>
+      <div class="panel-body" style="display:flex;flex-direction:column;gap:8px">
+        <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+          <input type="checkbox" data-f="httpsProxy" ${S.config.httpsProxy ? 'checked' : ''}> ${t('setup.modeLabel')}
+        </label>
+        <span class="hint">${t('setup.modeHint')}</span>
+        ${(S.config.httpsProxy === true) === proxyMode ? '' : `<div class="marginal alarm"><i></i><div>${t('setup.modeRestart')}</div></div>`}
+      </div>
+    </section>
+
     <section class="panel">
       <div class="panel-head"><span class="lbl">${t('setup.step1Title')}</span></div>
       <div class="panel-body" style="display:flex;flex-direction:column;gap:12px">
-        <p style="margin:0">${t('setup.step1Body')}</p>
-        <pre id="snippet">{
-  "env": {
-    "HTTPS_PROXY": "http://127.0.0.1:${port}",
-    "NODE_EXTRA_CA_CERTS": ${esc(caPath)}
-  }
-}</pre>
+        <p style="margin:0">${st('step1Body')}</p>
+        <pre id="snippet">${snippet}</pre>
         <div><button class="btn" data-act="copy">${t('common.copy')}</button></div>
-        <span class="hint">${t('setup.proxyInherit')}</span>
+        ${proxyMode ? `<span class="hint">${t('setup.proxy.inherit')}</span>` : ''}
         <div class="marginal alarm"><i></i><div>
-          ${t('setup.warnCreds')}
+          ${st('warnCreds')}
         </div></div>
         <span class="hint">
           ${t('setup.attributionWarn')}
@@ -857,7 +878,7 @@ function renderSetup() {
       <div class="panel-body">
         <p style="margin:0 0 8px">${t('setup.step2Body')}</p>
         <ul style="margin:0 0 8px;padding-left:20px;line-height:1.8">
-          <li>${t('setup.step2Item1', { port })}</li>
+          <li>${st('step2Item1', { port })}</li>
           <li>${t('setup.step2Item2')}</li>
         </ul>
         <p style="margin:0">${t('setup.step2Note')}</p>
@@ -876,8 +897,8 @@ function renderSetup() {
       <div class="panel-body">
         <ul style="margin:0;padding-left:20px;line-height:1.8">
           <li>${t('setup.limit1')}</li>
-          <li>${t('setup.limit2')}</li>
-          <li>${t('setup.limit3')}</li>
+          <li>${st('limit2')}</li>
+          <li>${st('limit3')}</li>
           <li>${t('setup.limit4')}</li>
           <li>${t('setup.limit5')}</li>
         </ul>
@@ -923,6 +944,14 @@ document.addEventListener('input', (ev) => {
 
   const f = el.dataset.f
   if (!f) return
+
+  // 接入分頁的模式開關是頂層設定，不屬於任何 provider 卡片或規則列
+  if (f === 'httpsProxy') {
+    S.config.httpsProxy = el.checked
+    markDirty()
+    render()
+    return
+  }
 
   const card = el.closest('[data-pid]')
   const row = el.closest('[data-rid]')

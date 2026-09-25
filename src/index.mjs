@@ -3,8 +3,7 @@ import { loadConfig, saveConfig, CONFIG_PATH } from './config.mjs'
 import { createProxyServer, TrafficLog } from './proxy.mjs'
 import { createAdminServer } from './admin.mjs'
 import { createFileSink } from './logfile.mjs'
-import { loadOrCreateCa, issueLeaf } from './ca.mjs'
-import { attachConnect, INTERCEPT_HOST } from './connect.mjs'
+import { setupHttpsProxy } from './connect.mjs'
 
 const HOST = '127.0.0.1'
 
@@ -21,11 +20,13 @@ let config = await loadConfig()
 const trafficLogPath = path.join(path.dirname(CONFIG_PATH), 'traffic.log')
 const log = new TrafficLog(300, createFileSink({ file: trafficLogPath }))
 
-// 跟 config.json 放在一起：私鑰的保護等級與它相同，換機器時也是一起帶走
-const ca = await loadOrCreateCa(path.dirname(CONFIG_PATH), INTERCEPT_HOST)
-
-// 埠是綁定當下決定的；其餘設定每筆請求現查，改完即時生效
-const bound = { boundProxyPort: config.proxyPort, boundAdminPort: config.adminPort, caCertPath: ca.certPath }
+// 埠與 HTTPS proxy 模式是啟動當下決定的；其餘設定每筆請求現查，改完即時生效
+const bound = {
+  boundProxyPort: config.proxyPort,
+  boundAdminPort: config.adminPort,
+  httpsProxy: config.httpsProxy,
+  caCertPath: null,
+}
 
 const getConfig = () => config
 const getRuntime = () => bound
@@ -36,7 +37,9 @@ async function setConfig(next) {
 }
 
 const proxy = createProxyServer(getConfig, log, { getRuntime })
-const decrypted = attachConnect(proxy, issueLeaf(ca, INTERCEPT_HOST))
+// 沒開就是 null，下面每一處跟它有關的都跳過 —— 關著的 router 跟沒有這個功能時一樣
+const httpsProxy = await setupHttpsProxy(proxy, { enabled: config.httpsProxy, dir: path.dirname(CONFIG_PATH) })
+if (httpsProxy) bound.caCertPath = httpsProxy.certPath
 const admin = createAdminServer({ getConfig, setConfig, log, getRuntime })
 
 function listen(server, port, label) {
@@ -52,8 +55,8 @@ function listen(server, port, label) {
   })
 }
 
-// 兩台都要：CONNECT 解開的請求由 decrypted 那台解析 HTTP，逾時看的是它的設定
-for (const server of [proxy, decrypted]) {
+// HTTPS proxy 模式下，CONNECT 解開的請求由另一台 server 解析 HTTP，逾時看的是它的設定
+for (const server of [proxy, httpsProxy?.decrypted].filter(Boolean)) {
   // Claude Code 會等串流等很久，別讓 Node 提前砍掉連線
   server.headersTimeout = 0
   server.requestTimeout = 0
@@ -71,6 +74,15 @@ try {
   process.exit(1)
 }
 
+const connectHint = httpsProxy
+  ? `  HTTPS proxy mode is on. CA  ${httpsProxy.certPath}${httpsProxy.created ? '  (new)' : ''}
+
+  In Claude Code settings.json set HTTPS_PROXY to the proxy above and
+  NODE_EXTRA_CA_CERTS to the CA, remove ANTHROPIC_BASE_URL, and leave
+  ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY unset to keep the subscription.`
+  : `  Point ANTHROPIC_BASE_URL at the proxy above in Claude Code settings.json, and
+  leave ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY unset to keep the subscription.`
+
 console.log(`
   subagent-handoff is running
 
@@ -78,12 +90,8 @@ console.log(`
   GUI     http://${HOST}:${config.adminPort}
   Config   ${CONFIG_PATH}
   Traffic  ${trafficLogPath}
-  CA       ${ca.certPath}${ca.created ? '  (new — restart Claude Code after pointing NODE_EXTRA_CA_CERTS at it)' : ''}
 
-  In ~/.claude/settings.json set env HTTPS_PROXY=http://${HOST}:${config.proxyPort} and
-  NODE_EXTRA_CA_CERTS to the CA above (works in the CLI and in Claude Desktop), or
-  ANTHROPIC_BASE_URL=http://${HOST}:${config.proxyPort} (CLI only). Leave
-  ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY unset to keep the subscription.
+${connectHint}
 `)
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

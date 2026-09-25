@@ -404,8 +404,8 @@ function baseEntry(req, ctx, over) {
  * @param {() => object} getConfig 每次請求都重新取，所以 GUI 改完設定即時生效（改 port 除外）
  * @param {import('./proxy.mjs').TrafficLog} log
  * @param {object} [options]
- * @param {() => { boundProxyPort: number }} [options.getRuntime] 回報**實際綁定**的埠；
- *   不給的話退回讀 `config.proxyPort`，但那在使用者改埠又還沒重啟時會跟真正綁定的埠不一致。
+ * @param {() => { boundProxyPort: number, httpsProxy?: boolean }} [options.getRuntime] 回報**實際綁定**的埠，
+ *   以及啟動時有沒有開 HTTPS proxy 模式；不給的話退回讀 `config.proxyPort`，但那在使用者改埠又還沒重啟時會跟真正綁定的埠不一致。
  * @param {string} [options.passthroughBaseUrl] 測試用：把訂閱線指到假上游
  * @param {number} [options.maxRequestBytes] 測試用：不必真的送 64MB 才看得到 413
  */
@@ -426,10 +426,13 @@ export function createProxyServer(getConfig, log, options = {}) {
       // 用的是實際綁定的埠，不是 config.proxyPort —— 使用者在 GUI 改埠但還沒重啟時，
       // 兩者會不一樣，這裡要信的是真正在監聽的那個。
       //
-      // 例外是 CONNECT 解開的請求（src/connect.mjs）：它們的 Host 是 api.anthropic.com，必然過不了
-      // 主機名檢查。這條路不必防：網頁的 fetch 送不出 CONNECT，瀏覽器也不信任 router 的 CA。
-      // 這台 server 本身只收明文，socket 是加密的就只可能是那條路進來的。
-      if (!req.socket.encrypted && !isLocalRequest(req, getRuntime().boundProxyPort)) {
+      // 例外是 HTTPS proxy 模式下 CONNECT 解開的請求（src/connect.mjs）：它們的 Host 是
+      // api.anthropic.com，必然過不了主機名檢查。這條路不必防：網頁的 fetch 送不出 CONNECT，
+      // 瀏覽器也不信任 router 的 CA。這台 server 本身只收明文，socket 是加密的就只可能是那條路。
+      // 看的是啟動時綁定的狀態：模式沒開，這個例外就不存在，跟沒有這個功能時一樣。
+      const runtime = getRuntime()
+      const tunneled = runtime.httpsProxy === true && req.socket.encrypted === true
+      if (!tunneled && !isLocalRequest(req, runtime.boundProxyPort)) {
         rejectForeignOrigin(res)
         return
       }

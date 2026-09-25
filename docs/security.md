@@ -52,7 +52,7 @@ guard 之外、跟資料安全直接相關的幾點：
   （`src/config.mjs` 的 `providerProblem`），都會以 400 擋下「送 `__keep__` 遮罩值但
   把 baseUrl 換成別的網域」這種輸入 —— 換 baseUrl 就必須明著帶新的 API Key，不能沿用
   已存的遮罩值把舊 key 綁到新目的地，也不會悄悄存成空 key。
-- **HTTPS proxy 模式（`feat/https-proxy` 分支）多了一把本機 CA 與一個例外。** CA 被
+- **選用的 HTTPS proxy 模式（預設關閉）打開後，多了一把本機 CA 與一個例外。** CA 被
   nameConstraints 限定只能簽 `api.anthropic.com`，私鑰 0600，不裝進系統信任庫。
   proxy 的 guard 對 CONNECT 解開的請求放行（它們的 Host 必然是 `api.anthropic.com`），
   理由與守著它的測試見 [https-proxy.md](https-proxy.md#代價與地雷)。
