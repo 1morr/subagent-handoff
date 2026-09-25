@@ -1,5 +1,6 @@
 import { generateKeyPairSync, createHash, randomBytes, sign, X509Certificate } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { isIPv4 } from 'node:net'
 import path from 'node:path'
 
 /**
@@ -150,6 +151,10 @@ const DAY = 24 * 60 * 60 * 1000
  *
  * nameConstraints 是這把私鑰外洩時的保險：拿它簽別的網域，驗證端會直接拒絕，
  * 所以就算誤裝進系統信任庫，它也冒充不了 api.anthropic.com 以外的任何網站。
+ *
+ * permittedSubtrees 只管它列出的名稱種類（RFC 5280 4.2.1.10）：只列 dNSName 的話，
+ * 帶 iPAddress SAN 的證書不受限制，連 IP 的 client 會照樣接受。所以另外把 IPv4 與 IPv6
+ * 的全部位址（0.0.0.0/0、::/0）列進 excludedSubtrees。
  */
 export function createCa({ permittedHost, now = new Date() }) {
   const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
@@ -166,7 +171,11 @@ export function createCa({ permittedHost, now = new Date() }) {
       extension(OID.basicConstraints, true, seq(bool(true), smallInt(0))),
       // keyCertSign（bit 5）＋ cRLSign（bit 6）＝ 0b0000_0110，尾端 1 個位元沒用到
       extension(OID.keyUsage, true, bits(Buffer.from([0x06]), 1)),
-      extension(OID.nameConstraints, true, seq(explicit(0, seq(implicit(2, Buffer.from(permittedHost)))))),
+      extension(OID.nameConstraints, true, seq(
+        explicit(0, seq(implicit(2, Buffer.from(permittedHost)))),
+        // iPAddress 的限制寫成「位址＋遮罩」：IPv4 8 個位元組、IPv6 32 個，全 0 就是全部位址
+        explicit(1, seq(implicit(7, Buffer.alloc(8))), seq(implicit(7, Buffer.alloc(32)))),
+      )),
       extension(OID.subjectKeyIdentifier, false, octets(keyIdOf(publicKey))),
     ],
   })
@@ -174,12 +183,16 @@ export function createCa({ permittedHost, now = new Date() }) {
 }
 
 /**
- * 用 CA 替 `host` 簽一張伺服器證書。每次啟動重簽一張放在記憶體裡，不落檔 ——
+ * 用 CA 替 `host` 簽一張伺服器證書。每次打開 HTTPS proxy 模式時重簽一張放在記憶體裡，不落檔 ——
  * 需要持久保存的只有 CA，那才是 Claude Code 透過 NODE_EXTRA_CA_CERTS 信任的東西。
+ *
+ * `host` 是 IPv4 位址時 SAN 寫成 iPAddress。router 自己用不到，是給測試驗證
+ * excludedSubtrees 用的：外洩的 CA 私鑰簽得出的就是這種證書。
  *
  * @param {{ certPem: string, keyPem: string }} ca
  */
 export function issueLeaf(ca, host, now = new Date()) {
+  const san = isIPv4(host) ? implicit(7, Buffer.from(host.split('.').map(Number))) : implicit(2, Buffer.from(host))
   const caCert = new X509Certificate(ca.certPem)
   const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
   const certPem = buildCertificate({
@@ -195,7 +208,7 @@ export function issueLeaf(ca, host, now = new Date()) {
       // digitalSignature（bit 0）＝ 0b1000_0000，尾端 7 個位元沒用到
       extension(OID.keyUsage, true, bits(Buffer.from([0x80]), 7)),
       extension(OID.extKeyUsage, false, seq(oid(OID.serverAuth))),
-      extension(OID.subjectAltName, false, seq(implicit(2, Buffer.from(host)))),
+      extension(OID.subjectAltName, false, seq(san)),
       extension(OID.authorityKeyIdentifier, false, seq(implicit(0, keyIdOf(caCert.publicKey)))),
     ],
   })

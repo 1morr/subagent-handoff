@@ -13,6 +13,15 @@
 
 ## 2026-09-25
 
+### 修正
+
+- **本機 CA 的 nameConstraints 補上 IP 位址的排除。** 原本只列允許 `api.anthropic.com`，但
+  RFC 5280 的 permittedSubtrees 只管它列出的名稱種類：拿外洩的 CA 私鑰簽一張 iPAddress SAN
+  的證書，連 IP 的 client 照樣接受（審查時實測重現）。現在把 `0.0.0.0/0` 與 `::/0` 列進
+  excludedSubtrees，測試確認這種證書以 `excluded subtree violation` 被拒；Claude Code 2.1.282
+  用新的 CA 實測照常握手。已經產生的 CA
+  不會自動換掉（換了 Claude Code 要重開才讀得到），想要這段保險就刪掉兩個 CA 檔案重新產生。
+
 ### 變更
 
 - **HTTPS proxy 模式存檔當場切換，不用重啟 router。** 之前要求重啟，是為了保證「關閉＝根本沒掛上

@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import tls from 'node:tls'
+import net from 'node:net'
 import { once } from 'node:events'
 import { X509Certificate } from 'node:crypto'
 import { mkdtemp, readFile, stat, rm } from 'node:fs/promises'
@@ -20,7 +21,9 @@ async function handshake(ca, leaf, servername) {
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   try {
-    const client = tls.connect({ port: server.address().port, host: '127.0.0.1', servername, ca: ca.certPem })
+    // 連 IP 時不送 SNI（Node 也不准拿 IP 當 servername），驗證端改比對證書的 iPAddress SAN
+    const sni = net.isIP(servername) ? {} : { servername }
+    const client = tls.connect({ port: server.address().port, host: '127.0.0.1', ...sni, ca: ca.certPem })
     const outcome = await new Promise((resolve) => {
       client.once('secureConnect', () => resolve({ ok: true }))
       client.once('error', (err) => resolve({ ok: false, message: err.message }))
@@ -44,6 +47,14 @@ test('nameConstraints 生效：同一把 CA 替別的網域簽的證書，驗證
   assert.equal(outcome.ok, false)
   // Node 給這個錯誤的 code 是 UNSPECIFIED，只有訊息認得出原因
   assert.match(outcome.message, /permitted subtree violation/)
+})
+
+test('nameConstraints 也擋 IP：同一把 CA 簽的 iPAddress 證書，連 IP 的 client 會拒絕', async () => {
+  // permittedSubtrees 只列 dNSName 時 IP 不受限制，要靠 excludedSubtrees 擋；拿掉那一段這裡會握手成功
+  const ca = createCa({ permittedHost: HOST })
+  const outcome = await handshake(ca, issueLeaf(ca, '127.0.0.1'), '127.0.0.1')
+  assert.equal(outcome.ok, false)
+  assert.match(outcome.message, /excluded subtree violation/)
 })
 
 test('不信任這把 CA 的 client 握手失敗 —— 系統信任庫裡沒有它', async () => {

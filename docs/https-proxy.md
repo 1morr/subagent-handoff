@@ -225,7 +225,11 @@ Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之�
   `https-proxy-ca-key.pem`（私鑰，0600）。兩個都在 `.gitignore` 裡。
 - ECDSA P-256，效期十年。伺服器證書每次啟動重簽一張，只放在記憶體裡。
 - **nameConstraints 限定只能簽 `api.anthropic.com`。** 私鑰外洩的話，拿它簽別的網域，
-  驗證端會以 `permitted subtree violation` 拒絕，`test/ca.test.mjs` 用真的 TLS 握手驗這件事。
+  驗證端會以 `permitted subtree violation` 拒絕；簽 IP 位址（iPAddress SAN）則以
+  `excluded subtree violation` 拒絕。`test/ca.test.mjs` 用真的 TLS 握手驗這兩件事。
+  只列允許的網域擋不住 IP —— RFC 5280 的 permittedSubtrees 只管它列出的名稱種類 ——
+  所以另外把全部 IPv4／IPv6 位址列為排除。2026-09-25 之前產生的 CA 沒有這段排除，
+  刪掉兩個檔案讓它重新產生即可。
 - **不要裝進系統信任庫。** 只透過 `NODE_EXTRA_CA_CERTS` 給 Claude Code 用。瀏覽器不信任它，
   所以就算瀏覽器的流量經過 router，也解不開。
 - 證書是 `src/ca.mjs` 手工用 DER 拼出來的：Node 只會解析 X.509、不會產生，而這個專案零依賴。
@@ -283,7 +287,7 @@ Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之�
 
 | 測試 | 驗的是 |
 |---|---|
-| `test/ca.test.mjs` | 用真的 TLS 握手：CA 簽的證書驗得過；同一把 CA 替別的網域簽的會被 nameConstraints 拒絕；不信任這把 CA 的 client 握手失敗；2050 年後的到期日編碼；CA 落檔後原樣讀回 |
+| `test/ca.test.mjs` | 用真的 TLS 握手：CA 簽的證書驗得過；同一把 CA 替別的網域、或替 IP 位址簽的會被 nameConstraints 拒絕；不信任這把 CA 的 client 握手失敗；2050 年後的到期日編碼；CA 落檔後原樣讀回 |
 | `test/connect.test.mjs`（開啟） | 經 CONNECT 解開的子 agent 請求分到 provider、訂閱 token 不會跟過去；主對話原樣走訂閱；其他路徑原樣轉發且不進流量記錄；其他主機走隧道；目的地連不上回 502；解析不出目的地回 400；client 不信任 CA 時提示去查 `NODE_EXTRA_CA_CERTS`；WebSocket upgrade 原樣接到上游 |
 | `test/connect.test.mjs`（關閉） | 不掛 CONNECT、不產生 CA、CONNECT 直接被斷；guard 的例外只在開啟時存在；明文送來、Host 寫 `api.anthropic.com` 的請求照樣 403 |
 | `test/config.test.mjs` | `httpsProxy` 預設關閉，只有布林 `true` 才打開 |

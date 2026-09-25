@@ -207,7 +207,7 @@ under **Rewritten before sending** in the traffic log. Details:
   test asserts this.
 - HTTPS proxy mode's CA can only sign `api.anthropic.com` (`nameConstraints`), its
   key is written `0600`, and it is never installed system-wide. A test proves a
-  certificate it signs for another host is rejected.
+  certificate it signs for another host, or for an IP address, is rejected.
 
 Details and the threat model: [docs/security.md](docs/security.md).
 

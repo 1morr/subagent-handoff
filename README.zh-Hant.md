@@ -150,7 +150,7 @@ flowchart LR
 - 流量記錄只存 metadata：不含請求內容、不含 header，也不含憑證。
 - 供應商請求一律從一組空的 header 開始組建，只從 client 帶過去 `anthropic-version`、`anthropic-beta` 與 `accept`，所以不會不小心把 client 端的憑證帶出去。有一個測試會斷言這件事。
 - 送去供應商的請求一律拿掉 `metadata`：Claude Code 在裡面放了你 claude.ai 帳號的 `account_uuid` 與 `device_id`。訂閱那條線不受影響。有一個測試會斷言這件事。
-- HTTPS proxy 模式的 CA 只能簽 `api.anthropic.com`（`nameConstraints`），私鑰以 `0600` 寫入，而且不裝進系統信任庫。有一個測試證明它替別的主機簽的證書會被拒絕。
+- HTTPS proxy 模式的 CA 只能簽 `api.anthropic.com`（`nameConstraints`），私鑰以 `0600` 寫入，而且不裝進系統信任庫。有測試證明它替別的主機、或替 IP 位址簽的證書會被拒絕。
 
 詳細內容與威脅模型：[docs/security.md](docs/security.md)。
 
