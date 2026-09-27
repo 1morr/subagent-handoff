@@ -11,6 +11,18 @@
 
 ---
 
+## 2026-09-27
+
+### 新增
+
+- **機架分頁的席位限速。** 額度快見底、又不想讓 agent 中斷（中斷的子 agent 要主對話手動
+  resume）時，每個席位（訂閱、每一家 provider）可以各自設「每分鐘最多放行幾筆請求」，
+  超過的在 router 排隊。限的是請求數而不是回覆的輸出速度：token 在上游生成時就計費，
+  慢慢吐回覆不會少花，額度又大多花在每輪重送的 input 上。一筆最多排 4 分鐘就放行，
+  因為 Claude Code 的 `API_TIMEOUT_MS` 與子 agent 的 stall timeout 預設都是 600 秒。
+  只存在記憶體、重啟就清掉；只限 `/v1/messages`。流量記錄新增 `waitMs` 欄位。
+  細節見 [docs/routing.md](docs/routing.md#配額快用完又不想讓-agent-中斷時席位限速)。
+
 ## 2026-09-25
 
 ### 修正

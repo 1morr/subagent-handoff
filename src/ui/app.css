@@ -219,6 +219,9 @@
   .sector.s-sub > .edge { background: var(--sub); }
   .sector.s-prv > .edge { background: var(--prv); }
   .sector > .in { padding: 14px 17px 15px; display: flex; flex-direction: column; gap: 13px; }
+  .throttle { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .throttle input[type=text] { width: 5em; padding: 4px 7px; text-align: right; }
+  .throttle .hint.on { color: var(--prv); }
   .load { display: flex; align-items: flex-end; gap: 3px; height: 46px; }
   /* 不加 transition：每 3 秒輪詢會整段重繪，過場永遠播不到，留著只是一個會動版面的宣告 */
   .load > i { width: 9px; min-height: 2px; background: #2c333d; }

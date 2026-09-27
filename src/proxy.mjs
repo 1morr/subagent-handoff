@@ -2,6 +2,7 @@ import http from 'node:http'
 import { once } from 'node:events'
 import { describeRequest, resolveModel, resolveRoute, PASSTHROUGH_LABEL } from './routing.mjs'
 import { isLocalRequest, rejectForeignOrigin } from './guard.mjs'
+import { createThrottles } from './throttle.mjs'
 
 /** fetch 會自動解壓，所以 content-encoding 一定要拿掉，否則 client 會二次解壓。 */
 const HOP_BY_HOP = new Set([
@@ -395,6 +396,8 @@ function baseEntry(req, ctx, over) {
     requestId: null,
     // token 用量，只有串流回應才有；非串流的回應 router 不緩衝，讀不到
     usage: null,
+    // 席位限速排了多久（毫秒）；null ＝ 沒排隊。排隊中另有暫時的 queued: true，排完就拿掉
+    waitMs: null,
     detail: null,
     ...over,
   }
@@ -420,12 +423,14 @@ export function describeFetchError(err) {
  *   不給的話退回讀 `config.proxyPort`，但存進設定的埠要重啟才生效，重啟前兩者可能不一致。
  * @param {string} [options.passthroughBaseUrl] 測試用：把訂閱線指到假上游
  * @param {number} [options.maxRequestBytes] 測試用：不必真的送 64MB 才看得到 413
+ * @param {ReturnType<typeof createThrottles>} [options.throttles] 席位限速，跟 admin 共用同一份才調得到
  */
 export function createProxyServer(getConfig, log, options = {}) {
   const {
     getRuntime = () => ({ boundProxyPort: getConfig().proxyPort }),
     passthroughBaseUrl = PASSTHROUGH_BASE_URL,
     maxRequestBytes = MAX_REQUEST_BYTES,
+    throttles = createThrottles(),
   } = options
   const sessionCwd = new SessionCwd()
 
@@ -571,6 +576,17 @@ export function createProxyServer(getConfig, log, options = {}) {
       let usageTap = null
 
       try {
+        // 只限生成請求：count_tokens、/v1/models 不花額度，讓它們排隊只是拖慢 Claude Code
+        if (routable && req.url.split('?')[0] === '/v1/messages') {
+          entry.queued = true
+          try {
+            const waited = await throttles.acquire(entry.providerId ?? 'passthrough', ac.signal)
+            if (waited > 0) entry.waitMs = waited
+          } finally {
+            delete entry.queued
+          }
+        }
+
         // 不自己重送：Claude Code 對 408 / 409 / 5xx / 529 / 連線錯誤本來就會退避重試最多 10 次，
         // 這裡再扛一層只會把打上游的次數乘上去（實測紀錄見 docs/measurements.md）
         const upstream = await fetch(target, {

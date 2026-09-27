@@ -106,6 +106,7 @@ test('PUT /api/config 一次只存一份：同時送兩個，第二個等第一�
     },
     log: harness.logStore,
     getRuntime: () => ({ boundProxyPort: 8787, boundAdminPort: 8788 }),
+    throttles: harness.throttles,
   })
   const api = makeAdminApi(await listen(admin))
   try {
@@ -177,6 +178,39 @@ test('流量記錄的讀取與清空', async () => {
 
   assert.equal((await adminApi('POST', '/api/logs/clear')).status, 200)
   assert.deepEqual((await adminApi('GET', '/api/logs')).json.entries, [])
+})
+
+test('PUT /api/throttle 設定與解除席位限速，/api/logs 與 /api/state 都照實回報', async () => {
+  try {
+    let r = await adminApi('PUT', '/api/throttle', { seat: 'kimi', rpm: 6 })
+    assert.equal(r.status, 200)
+    assert.deepEqual(r.json.throttle, { kimi: { rpm: 6, queued: 0 } })
+
+    r = await adminApi('PUT', '/api/throttle', { seat: 'passthrough', rpm: 2 })
+    assert.deepEqual(r.json.throttle, { kimi: { rpm: 6, queued: 0 }, passthrough: { rpm: 2, queued: 0 } })
+    assert.deepEqual((await adminApi('GET', '/api/logs')).json.throttle, r.json.throttle)
+    assert.deepEqual((await adminApi('GET', '/api/state')).json.runtime.throttle, r.json.throttle)
+
+    r = await adminApi('PUT', '/api/throttle', { seat: 'kimi', rpm: null })
+    assert.deepEqual(r.json.throttle, { passthrough: { rpm: 2, queued: 0 } })
+  } finally {
+    harness.throttles.set('kimi', null)
+    harness.throttles.set('passthrough', null)
+  }
+})
+
+test('PUT /api/throttle 拒絕不存在的席位與不合法的速度，且不留下任何限速', async () => {
+  for (const body of [
+    { seat: 'nope', rpm: 6 },
+    { rpm: 6 },
+    { seat: 'kimi', rpm: 0 },
+    { seat: 'kimi', rpm: 2.5 },
+    { seat: 'kimi', rpm: '6' },
+  ]) {
+    const r = await adminApi('PUT', '/api/throttle', body)
+    assert.equal(r.status, 400, JSON.stringify(body))
+  }
+  assert.deepEqual(harness.throttles.snapshot(), {})
 })
 
 test('不認得的路徑回 404 而不是掛掉', async () => {

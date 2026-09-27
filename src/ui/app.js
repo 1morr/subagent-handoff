@@ -51,6 +51,10 @@ const S = {
   // 配額見底時按下去，補回來往往是幾小時後的事，重新整理頁面不該讓「改回去」消失
   flipBackup: readFlipBackup(),
   flipping: false,
+  // 席位限速（seat → { rpm, queued }）。只在 router 的記憶體裡，跟著流量輪詢一起更新
+  throttle: {},
+  // 限速欄位打到一半的值：每 3 秒重繪會換掉輸入框，沒記下來就會被蓋回去
+  rpmDraft: {},
 }
 
 function readFlipBackup() {
@@ -118,6 +122,7 @@ function applyState(payload) {
   S.saved = structuredClone(payload.config)
   S.preview = null
   S.runtime = payload.runtime
+  S.throttle = payload.runtime.throttle ?? {}
   S.dirty = false
   $('#save').disabled = true
   updateDirtyNote()
@@ -171,6 +176,8 @@ function marginNote(e) {
     return t('rack.note.blocked')
   }
   if (e.detail) return t('rack.note.streamError')
+  if (e.queued) return t('rack.note.queued')
+  if (e.waitMs) return t('rack.note.waited', { secs: Math.round(e.waitMs / 1000) })
   if (!e.cwd && e.status != null) return e.sessionId ? t('rack.note.cwdUnknown') : t('rack.note.noSession')
   return ''
 }
@@ -199,6 +206,7 @@ function annotation(e) {
       prompt, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite, input: u.input, output: u.output,
     }) + (prompt ? t('rack.ann.usageHitRate', { pct: Math.round(u.cacheRead / prompt * 100) }) : '')])
   }
+  if (e.waitMs) rows.push([t('rack.ann.waited'), `${(e.waitMs / 1000).toFixed(1)}s`])
   if ((e.changes || []).length) rows.push([t('rack.ann.rewritten'), e.changes.join(' · ')])
   if (e.shape) {
     const s = e.shape
@@ -417,6 +425,29 @@ async function saveOnly(change) {
 }
 
 /**
+ * 席位限速欄，印在每張席位卡的底列。seat 是限速的 key：訂閱席位是 'passthrough'，
+ * 第三方是 providerId（跟規則指向席位用的是同一組值）。已刪掉的 provider 沒有欄位 ——
+ * 規則指不到它，不會再有流量。
+ */
+function throttleCell(seat) {
+  const cur = S.throttle[seat]
+  const value = S.rpmDraft[seat] ?? (cur ? String(cur.rpm) : '')
+  const id = `rpm-${seat}`
+  return `
+          <div class="throttle" title="${esc(t('bay.throttleTitle'))}">
+            <label class="lbl" for="${esc(id)}">${t('bay.throttle')}</label>
+            <input type="text" inputmode="numeric" id="${esc(id)}" data-f="rpm" data-key="${esc(seat)}"
+                   value="${esc(value)}" placeholder="–" size="4" autocomplete="off">
+            <span class="lbl">${t('bay.throttlePerMin')}</span>
+            <button class="btn tiny" data-act="throttle" data-key="${esc(seat)}">${t('bay.throttleApply')}</button>
+            ${cur ? `<button class="btn tiny" data-act="unthrottle" data-key="${esc(seat)}">${t('bay.throttleClear')}</button>` : ''}
+            <span class="hint ${cur ? 'on' : ''}">${cur
+              ? t('bay.throttleOn', { secs: +(60 / cur.rpm).toFixed(1), queued: cur.queued })
+              : t('bay.throttleOff')}</span>
+          </div>`
+}
+
+/**
  * 一張第三方席位卡。model 與 baseUrl 從 seat.provider 這筆 config 查（名字由
  * providerSeats 決定：config 有就用 label，被刪了才退回流量記錄裡的 target）。
  * provider 是 null 時這兩個欄位各自說自己怎麼了 —— 只剩流量記錄的席位，
@@ -450,6 +481,7 @@ function prvCard(s, peak) {
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid var(--rail);padding-top:12px">
           <span class="hint" style="flex:1;min-width:200px">${
             p?.baseUrl ? `<code>${esc(p.baseUrl)}</code>` : t('bay.noBaseUrl')}</span>
+          ${p ? throttleCell(s.providerId) : ''}
         </div>
       </div></div>`
 }
@@ -531,6 +563,7 @@ function renderBay() {
         </div>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid var(--rail);padding-top:12px">
           <span class="hint" style="flex:1;min-width:200px"><code>${esc(S.runtime.passthroughBaseUrl)}</code> · ${t('bay.credentialsPassthrough')}</span>
+          ${throttleCell('passthrough')}
         </div>
       </div></div>
 
@@ -1132,6 +1165,8 @@ document.addEventListener('input', (ev) => {
   const f = el.dataset.f
   if (!f) return
 
+  if (f === 'rpm') { S.rpmDraft[el.dataset.key] = el.value; return }
+
   const card = el.closest('[data-pid]')
   const row = el.closest('[data-rid]')
 
@@ -1169,6 +1204,13 @@ document.addEventListener('input', (ev) => {
 })
 
 // 導向、啟用、比對條件改了要重繪：markDirty 已經把模擬收掉，機架上的標記要跟著清乾淨
+// 限速欄按 Enter ＝ 按旁邊的「套用」
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Enter' || ev.target.dataset?.f !== 'rpm') return
+  ev.preventDefault()
+  ev.target.closest('.throttle')?.querySelector('[data-act="throttle"]')?.click()
+})
+
 document.addEventListener('change', (ev) => {
   const f = ev.target.dataset.f
   if (!f || !ev.target.closest('[data-rid]')) return
@@ -1247,6 +1289,16 @@ document.addEventListener('click', async (ev) => {
       }
       toast([t(act === 'flip' ? 'bay.flipToast' : 'bay.unflipToast'), hadDraft ? t('bay.draftKept') : '']
         .filter(Boolean).join(lang === 'en' ? ' ' : ''))
+    } else if (act === 'throttle' || act === 'unthrottle') {
+      // 不走 saveOnly：限速不在 config 裡，也不該讓畫面變成「未儲存」
+      const seat = btn.dataset.key
+      const raw = (S.rpmDraft[seat] ?? String(S.throttle[seat]?.rpm ?? '')).trim()
+      const rpm = act === 'unthrottle' || raw === '' ? null : Number(raw)
+      const out = await api('PUT', '/api/throttle', { seat, rpm })
+      S.throttle = out.throttle
+      delete S.rpmDraft[seat]
+      render()
+      toast(rpm == null ? t('bay.throttleClearedToast') : t('bay.throttleSetToast', { rpm }))
     } else if (act === 'mode') {
       const on = S.runtime.httpsProxy !== true
       S.modeBusy = true
@@ -1306,7 +1358,9 @@ $('#save').addEventListener('click', async () => {
 function startLogPolling() {
   const tick = async () => {
     try {
-      S.logs = (await api('GET', '/api/logs')).entries
+      const out = await api('GET', '/api/logs')
+      S.logs = out.entries
+      S.throttle = out.throttle ?? {}
       // 正在選字就先不換：下一輪再畫，資料不會少
       if ((S.tab === 'logs' || S.tab === 'bay') && !selectingInView()) render()
       for (const e of S.logs) SEEN.add(e.id)

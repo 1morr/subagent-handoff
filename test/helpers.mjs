@@ -3,6 +3,7 @@ import { createProxyServer, TrafficLog } from '../src/proxy.mjs'
 import { createAdminServer } from '../src/admin.mjs'
 import { normalizeConfig, defaultProvider, defaultRule } from '../src/config.mjs'
 import { createFakeUpstream } from './fixtures/fake-upstream.mjs'
+import { createThrottles } from '../src/throttle.mjs'
 
 /** 起一個 server，回傳它的 URL。埠固定用 0（隨機可用埠），測試之間不會互撞。 */
 export function listen(server) {
@@ -41,7 +42,8 @@ export async function createHarness(overrides = {}, { runtime = {} } = {}) {
   const logStore = new TrafficLog(300, (entry) => finished.push(entry))
   const getRuntime = () => ({ boundProxyPort: 8787, boundAdminPort: 8788, ...runtime })
 
-  const proxy = createProxyServer(() => config, logStore, { getRuntime, passthroughBaseUrl: upstreamUrl })
+  const throttles = createThrottles()
+  const proxy = createProxyServer(() => config, logStore, { getRuntime, passthroughBaseUrl: upstreamUrl, throttles })
   const proxyUrl = await listen(proxy)
 
   const admin = createAdminServer({
@@ -52,11 +54,12 @@ export async function createHarness(overrides = {}, { runtime = {} } = {}) {
     },
     log: logStore,
     getRuntime,
+    throttles,
   })
   const adminUrl = await listen(admin)
 
   return {
-    upstream, upstreamUrl, proxy, proxyUrl, admin, adminUrl, logStore, finished,
+    upstream, upstreamUrl, proxy, proxyUrl, admin, adminUrl, logStore, finished, throttles,
     getConfig: () => config,
     setConfig: (next) => { config = next },
     async close() {

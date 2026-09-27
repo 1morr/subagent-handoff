@@ -4,6 +4,7 @@ import { createProxyServer, TrafficLog } from './proxy.mjs'
 import { createAdminServer } from './admin.mjs'
 import { createFileSink } from './logfile.mjs'
 import { createHttpsProxy } from './connect.mjs'
+import { createThrottles } from './throttle.mjs'
 
 const HOST = '127.0.0.1'
 
@@ -27,7 +28,9 @@ const getConfig = () => config
 // HTTPS proxy 模式存檔即時切換，所以現查：GUI 與 guard 看到的都是 router 此刻實際的狀態
 const getRuntime = () => ({ ...bound, httpsProxy: httpsProxy.enabled, caCertPath: httpsProxy.certPath })
 
-const proxy = createProxyServer(getConfig, log, { getRuntime })
+// 席位限速只在記憶體：proxy 照它排隊、admin 讓 GUI 調它，兩邊必須是同一份
+const throttles = createThrottles()
+const proxy = createProxyServer(getConfig, log, { getRuntime, throttles })
 const httpsProxy = createHttpsProxy(proxy, { dir: path.dirname(CONFIG_PATH) })
 
 function announceHttpsProxy({ changed, created }) {
@@ -58,7 +61,7 @@ try {
   console.error(`✗ ${err.message}`)
   process.exit(1)
 }
-const admin = createAdminServer({ getConfig, setConfig, log, getRuntime })
+const admin = createAdminServer({ getConfig, setConfig, log, getRuntime, throttles })
 
 function listen(server, port, label) {
   return new Promise((resolve, reject) => {

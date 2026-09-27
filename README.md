@@ -205,6 +205,13 @@ the subscription. And `modelOverride` is the only way to give subagents a
 different model from the main conversation, since `agent()` inherits the main
 model when none is specified and you cannot change that from Claude Code's side.
 
+When both quotas are close to the limit but you do not want running agents to
+stop, set a **rate limit** on a seat card in the Rack tab: requests on that seat
+wait in the router so at most N per minute go out. Each seat (the subscription
+and every provider) has its own. A request waits at most 4 minutes, and the
+limit lives in memory only, so a restart clears it. See
+[docs/routing.md](docs/routing.md#配額快用完又不想讓-agent-中斷時席位限速).
+
 ## What the router changes
 
 Every request takes exactly one of two lines. There are no settings for any of

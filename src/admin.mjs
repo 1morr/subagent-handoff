@@ -9,6 +9,7 @@ import { describeRequest, resolveModel, resolveRoute, PASSTHROUGH_LABEL } from '
 import { runProbes } from './probe.mjs'
 import { PASSTHROUGH_BASE_URL } from './proxy.mjs'
 import { isLocalRequest, rejectForeignOrigin } from './guard.mjs'
+import { isValidRpm, RPM_MIN, RPM_MAX } from './throttle.mjs'
 
 const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'ui')
 
@@ -74,9 +75,12 @@ async function readJson(req) {
  * @param {(cfg: object) => Promise<object>} deps.setConfig
  * @param {import('./proxy.mjs').TrafficLog} deps.log
  * @param {() => object} deps.getRuntime
+ * @param {ReturnType<typeof import('./throttle.mjs').createThrottles>} deps.throttles 跟 proxy 共用的那一份
  */
-export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
-  const runtimeState = () => ({ ...getRuntime(), configPath: CONFIG_PATH, passthroughBaseUrl: PASSTHROUGH_BASE_URL })
+export function createAdminServer({ getConfig, setConfig, log, getRuntime, throttles }) {
+  const runtimeState = () => ({
+    ...getRuntime(), configPath: CONFIG_PATH, passthroughBaseUrl: PASSTHROUGH_BASE_URL, throttle: throttles.snapshot(),
+  })
   let saving = Promise.resolve()
 
   return http.createServer(async (req, res) => {
@@ -151,7 +155,21 @@ export function createAdminServer({ getConfig, setConfig, log, getRuntime }) {
       }
 
       if (route === 'GET /api/logs') {
-        send(res, 200, { entries: log.list() })
+        // 限速跟著輪詢一起回：它不在 config 裡，重啟就清掉，只看 /api/state 的話畫面會說謊
+        send(res, 200, { entries: log.list(), throttle: throttles.snapshot() })
+        return
+      }
+
+      if (route === 'PUT /api/throttle') {
+        // 只在記憶體、不寫 config.json（見 src/throttle.mjs），所以不走 PUT /api/config 的存檔排隊
+        const { seat, rpm = null } = await readJson(req)
+        const known = seat === 'passthrough' || getConfig().providers.some((p) => p.id === seat)
+        if (typeof seat !== 'string' || !known) return send(res, 400, { error: `unknown seat: ${seat}` })
+        if (rpm !== null && !isValidRpm(rpm)) {
+          return send(res, 400, { error: `rpm must be an integer from ${RPM_MIN} to ${RPM_MAX}, or null to clear` })
+        }
+        throttles.set(seat, rpm)
+        send(res, 200, { throttle: throttles.snapshot() })
         return
       }
 
