@@ -61,6 +61,15 @@ export function quotaWindow(rl) {
   }
 }
 
+/**
+ * 秒數拆成 { h, m, s }：額度窗的重置倒數給人讀，「16914s」要唸成「4 小時 41 分」。
+ * 負數（reset 已過期）夾到 0，由呼叫端決定要不要改講成時刻。
+ */
+export function durationParts(secs) {
+  const s = Math.max(0, Math.round(secs))
+  return { h: Math.floor(s / 3600), m: Math.floor((s % 3600) / 60), s: s % 60 }
+}
+
 /** 種類標籤的固定順序：先主對話再子 agent，跟畫面上其他並列的地方一致。 */
 const KIND_ORDER = ['main', 'subagent']
 

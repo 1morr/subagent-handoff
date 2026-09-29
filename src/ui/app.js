@@ -14,7 +14,7 @@
  */
 import en from './i18n/en.js'
 import zhHant from './i18n/zh-Hant.js'
-import { isAborted, isStreamCut, stateOf, quotaWindow, providerSeats } from './readout.mjs'
+import { isAborted, isStreamCut, stateOf, quotaWindow, providerSeats, durationParts } from './readout.mjs'
 
 const CATALOGS = { en, 'zh-Hant': zhHant }
 const LANG_KEY = 'subagent-handoff:lang'
@@ -160,8 +160,13 @@ function displayTarget(e) {
 function resetLabel(raw) {
   const at = /^\d+$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw)
   if (!Number.isFinite(at)) return String(raw)
+  const time = new Date(at).toTimeString().slice(0, 5)
   const secs = Math.round((at - Date.now()) / 1000)
-  return secs > 0 ? t('rack.resetsIn', { secs }) : t('rack.resetsAt', { time: new Date(at).toTimeString().slice(0, 8) })
+  if (secs <= 0) return t('rack.resetsAt', { time })
+  // 倒數換算成人讀的單位，旁邊順帶標出幾點幾分重置
+  const { h, m, s } = durationParts(secs)
+  const dur = h > 0 ? t('rack.durHm', { h, m }) : m > 0 ? t('rack.durMs', { m, s }) : t('rack.durS', { s })
+  return t('rack.resetsIn', { dur, time })
 }
 
 /** 常駐在批註欄的一行摘要。航管的進條右側就是控制員寫字的地方。 */

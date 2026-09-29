@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isAborted, isStreamCut, stateOf, quotaWindow, providerSeats } from '../src/ui/readout.mjs'
+import { isAborted, isStreamCut, stateOf, quotaWindow, providerSeats, durationParts } from '../src/ui/readout.mjs'
 
 // ── 進條的狀態 ────────────────────────────────────────────────────
 
@@ -115,6 +115,15 @@ test('讀不到用量比例時回 null，讓畫面說「沒回報」而不是猜
   assert.equal(quotaWindow({ 'unified-5h-utilization': '0.005' }).used, 1, '四捨五入')
   assert.equal(quotaWindow({ 'unified-reset': 'x' }).reset, 'x')
   assert.equal(quotaWindow({}).reset, null)
+})
+
+test('durationParts 把重置倒數的秒數拆成時分秒', () => {
+  assert.deepEqual(durationParts(16914), { h: 4, m: 41, s: 54 })
+  assert.deepEqual(durationParts(3600), { h: 1, m: 0, s: 0 })
+  assert.deepEqual(durationParts(59), { h: 0, m: 0, s: 59 })
+  assert.deepEqual(durationParts(0), { h: 0, m: 0, s: 0 })
+  assert.deepEqual(durationParts(-12), { h: 0, m: 0, s: 0 }, '已過期的 reset 夾到 0，不該出現負數')
+  assert.deepEqual(durationParts(90.4), { h: 0, m: 1, s: 30 }, '先四捨五入再拆')
 })
 
 // ── 機架上的第三方席位 ────────────────────────────────────────────
