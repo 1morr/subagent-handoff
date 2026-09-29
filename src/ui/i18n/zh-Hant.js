@@ -192,6 +192,8 @@ export default {
   'rules.wordModel': '・model',
   'rules.wordSentAs': '・送出',
   'rules.modelGlobTitle': 'model 名比對，支援 *',
+  'rules.wordEffort': '・思考',
+  'rules.effortTitle': '改寫 output_config.effort。請求本來沒帶 effort 就不動',
   'rules.noRewritePlaceholder': '不改寫',
   'rules.deleteRule': '刪除規則',
   'rules.hitExplain': '這一筆由這條吃下。下面的規則這次用不到。',

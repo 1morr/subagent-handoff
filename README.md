@@ -187,6 +187,7 @@ editable there. Rules are evaluated top to bottom and the first match wins.
 | `rules[].match` | `main` or `subagent`, optionally narrowed by `modelGlob` |
 | `rules[].providerId` | Which provider, or the reserved value `passthrough` to send it back to the subscription |
 | `rules[].modelOverride` | Rewrites `model`, beating `providers[].model`. Works on `passthrough` too |
+| `rules[].effortOverride` | Rewrites `output_config.effort` (the thinking level), e.g. `max` for opus subagents and `high` for sonnet. Requests without an effort are left alone. Works on `passthrough` too |
 
 Unmatched requests go to `https://api.anthropic.com` with their credentials
 unchanged; that target is fixed.
@@ -222,7 +223,7 @@ this.
 | Which requests | The main conversation, anything no rule matches, rules pointing at `passthrough`, and anything that is not a JSON `/v1/messages*` request | Requests matched by a rule that points at a provider |
 | Sent to | `https://api.anthropic.com` + the original path and query | `{baseUrl}` + the original path and query |
 | Headers | Forwarded as-is, minus `host`, hop-by-hop headers and `accept-encoding` | Rebuilt from scratch: `content-type`, the provider's own key, and `anthropic-version`, `anthropic-beta`, `accept` copied from Claude Code. Your OAuth token, cookies and `x-claude-code-*` headers are never sent |
-| Body | The original bytes. Only a rule's `modelOverride` rewrites `model` | `model` rewritten (rule `modelOverride`, then provider `model`), `metadata` removed, and `\0` inside a tool schema's `pattern` swapped for the equivalent `\x00` (DeepSeek cannot compile the former). Everything else is untouched: `thinking`, `output_config`, `context_management`, `cache_control`, mid-conversation `system` messages |
+| Body | The original bytes. Only a rule's `modelOverride` / `effortOverride` rewrite `model` / `output_config.effort` | `model` rewritten (rule `modelOverride`, then provider `model`), `output_config.effort` rewritten if the rule sets `effortOverride`, `metadata` removed, and `\0` inside a tool schema's `pattern` swapped for the equivalent `\x00` (DeepSeek cannot compile the former). Everything else is untouched: `thinking`, the rest of `output_config`, `context_management`, `cache_control`, mid-conversation `system` messages |
 | Response | Passed through as it streams | Passed through as it streams, except one error: a context overflow in OpenAI wording is reworded to `prompt is too long: <requested> tokens > <limit> maximum`, numbers kept, so Claude Code compacts instead of failing |
 
 On both lines the router never retries — Claude Code already does. If the

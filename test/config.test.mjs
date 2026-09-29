@@ -40,6 +40,12 @@ test('normalizeConfig 修掉壞資料而不是拋錯', () => {
   assert.equal(cfg.rules[0].enabled, false, '認不得的 match 要關掉，不能變成一條生效的 subagent 規則')
 })
 
+test('normalizeConfig：規則的 effortOverride 修掉前後空白，舊設定檔沒有這欄就是不改寫', () => {
+  const cfg = normalizeConfig({ rules: [{ match: 'subagent', effortOverride: ' max ' }, { match: 'subagent' }] })
+  assert.equal(cfg.rules[0].effortOverride, 'max')
+  assert.equal(cfg.rules[1].effortOverride, '')
+})
+
 // ── SSRF 表面：baseUrl scheme 檢查 ─────────────────────────────────
 test('validateBaseUrl：空字串合法（尚未設定），http/https 合法，其餘 scheme 不合法', () => {
   assert.deepEqual(validateBaseUrl(''), { ok: true, value: '' })

@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { once } from 'node:events'
-import { describeRequest, resolveModel, resolveRoute, PASSTHROUGH_LABEL } from './routing.mjs'
+import { describeRequest, resolveEffort, resolveModel, resolveRoute, PASSTHROUGH_LABEL } from './routing.mjs'
 import { isLocalRequest, rejectForeignOrigin } from './guard.mjs'
 import { createThrottles } from './throttle.mjs'
 
@@ -110,12 +110,25 @@ export function buildProviderHeaders(incoming, provider) {
 }
 
 /**
- * 只換 model、其餘一個字不動。走訂閱那條線時就只用得到這一步 ——
- * 換掉整包 body 的風險太高，主對話的 effort、context_management 都靠原樣轉發活著。
+ * 只換 model、其餘一個字不動。走訂閱那條線時只用得到它和 rewriteEffort ——
+ * 換掉整包 body 的風險太高，主對話的 context_management 等欄位都靠原樣轉發活著。
  */
 export function rewriteModel(payload, model) {
   if (!payload || !model || payload.model === model) return { body: payload, changes: [] }
   return { body: { ...payload, model }, changes: [`model ${payload.model} → ${model}`] }
+}
+
+/**
+ * 只換 `output_config.effort`，同一個物件裡的其他欄位（例如 format）不動。
+ * 請求本來沒帶 effort 就不補，決定在 resolveEffort；這裡再擋一次，免得呼叫端傳錯時憑空長出欄位。
+ */
+export function rewriteEffort(payload, effort) {
+  const current = payload?.output_config?.effort
+  if (!effort || typeof current !== 'string' || current === effort) return { body: payload, changes: [] }
+  return {
+    body: { ...payload, output_config: { ...payload.output_config, effort } },
+    changes: [`effort ${current} → ${effort}`],
+  }
 }
 
 /**
@@ -178,13 +191,15 @@ export function rewriteToolPatterns(payload) {
 }
 
 /**
- * provider 線的 body：換 model、拿掉 metadata、修掉上游編不動的 pattern，其餘一個字不動。
+ * provider 線的 body：換 model 與 effort、拿掉 metadata、修掉上游編不動的 pattern，其餘一個字不動。
  * @param {string} [model] resolveModel 算出來的最終 model 名
+ * @param {string} [effort] resolveEffort 算出來的最終 effort
  */
-export function rewriteBodyForProvider(payload, model) {
+export function rewriteBodyForProvider(payload, model, effort) {
   const renamed = rewriteModel(payload, model)
-  const changes = [...renamed.changes]
-  let body = renamed.body
+  const tuned = rewriteEffort(renamed.body, effort)
+  const changes = [...renamed.changes, ...tuned.changes]
+  let body = tuned.body
 
   if (body?.metadata !== undefined) {
     // Claude Code 把 claude.ai 的 account_uuid 與 device_id 塞在 metadata.user_id（實測 v2.1.274）。
@@ -385,6 +400,8 @@ function baseEntry(req, ctx, over) {
     ruleId: null,
     sentModel: null,
     effort: ctx.effort,
+    // 規則改寫過 effort 時才跟 effort 不同；null ＝ 沒送出去，或請求本來就沒帶
+    sentEffort: null,
     thinking: ctx.thinking,
     changes: [],
     shape: ctx.shape,
@@ -533,6 +550,7 @@ export function createProxyServer(getConfig, log, options = {}) {
       const routable = req.url.startsWith('/v1/messages') && payload !== null
       const route = routable ? resolveRoute(config, ctx) : { kind: 'passthrough', rule: null }
       const sentModel = routable ? resolveModel(route, ctx.model) : ctx.model
+      const sentEffort = routable ? resolveEffort(route, ctx.effort) : ctx.effort
 
       let target
       let headers
@@ -540,16 +558,17 @@ export function createProxyServer(getConfig, log, options = {}) {
       let changes = []
 
       if (route.kind === 'provider') {
-        const rewritten = rewriteBodyForProvider(payload, sentModel)
+        const rewritten = rewriteBodyForProvider(payload, sentModel, sentEffort)
         changes = rewritten.changes
         outBody = Buffer.from(JSON.stringify(rewritten.body))
         headers = buildProviderHeaders(req.headers, route.provider)
         target = route.provider.baseUrl + req.url
       } else {
-        // 訂閱這條線預設連 JSON 都不重新序列化，只有規則指名要換 model 時才動 body
-        const rewritten = rewriteModel(payload, sentModel)
-        changes = rewritten.changes
-        if (changes.length) outBody = Buffer.from(JSON.stringify(rewritten.body))
+        // 訂閱這條線預設連 JSON 都不重新序列化，只有規則指名要換 model 或 effort 時才動 body
+        const renamed = rewriteModel(payload, sentModel)
+        const tuned = rewriteEffort(renamed.body, sentEffort)
+        changes = [...renamed.changes, ...tuned.changes]
+        if (changes.length) outBody = Buffer.from(JSON.stringify(tuned.body))
         headers = buildPassthroughHeaders(req.headers)
         target = passthroughBaseUrl + req.url
       }
@@ -562,6 +581,7 @@ export function createProxyServer(getConfig, log, options = {}) {
         providerId: route.kind === 'provider' ? route.provider.id : null,
         ruleId: route.rule?.id ?? null,
         sentModel,
+        sentEffort,
         changes,
       }))
 

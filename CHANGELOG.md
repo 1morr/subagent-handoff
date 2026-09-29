@@ -11,6 +11,18 @@
 
 ---
 
+## 2026-09-29
+
+### 新增
+
+- **規則的 `effortOverride`：改寫思考檔位。** Claude Code 呼叫子 agent 時用它自己挑的
+  檔位，第三方模型適合的不一定一樣；現在每條規則可以把 `output_config.effort` 換成固定
+  值，跟 `modelOverride` 並排，所以 opus 與 sonnet 能靠 `modelGlob` 各配一檔。請求本來沒
+  帶 effort 就不補（session 標題那類 `thinking: disabled` 的背景請求）；值不驗證，因此
+  送得出 Claude Code 枚舉以外的 DeepSeek `ultra`；指向訂閱時也生效。流量記錄新增
+  `sentEffort` 欄位，「思考」欄改顯示實際送出的檔位。
+  細節見 [docs/routing.md](docs/routing.md#改寫思考檔位)。
+
 ## 2026-09-27
 
 ### 新增

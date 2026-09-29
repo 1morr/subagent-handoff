@@ -132,3 +132,12 @@ export function resolveRoute(config, ctx) {
 export function resolveModel(route, requestedModel) {
   return route.rule?.modelOverride || route.provider?.model || requestedModel || null
 }
+
+/**
+ * 實際要送出的 effort。請求沒帶就維持沒帶：session 標題那類背景請求送 `thinking: disabled`、
+ * 不帶 effort，替它補上等於改掉它的行為。
+ */
+export function resolveEffort(route, requestedEffort) {
+  if (!requestedEffort) return null
+  return route.rule?.effortOverride || requestedEffort
+}

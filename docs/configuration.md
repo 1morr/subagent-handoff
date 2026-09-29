@@ -45,6 +45,7 @@ GUI 是它的完整前端 —— 下表每一項都改得到，埠號除外。�
 | `rules[].modelGlob` | 比對請求的 model 名，支援 `*`，**不分大小寫**。`*` = 不篩 |
 | `rules[].providerId` | 導向哪個 provider。填保留值 `passthrough` = 明確導回訂閱 |
 | `rules[].modelOverride` | 送出前把 `model` 改寫成這個值，蓋過 `providers[].model`。留空 = 不改寫。指向 `passthrough` 時一樣生效 |
+| `rules[].effortOverride` | 送出前把 `output_config.effort` 改寫成這個值。留空 = 不改寫。請求本來沒帶 effort 就不補；值不驗證。指向 `passthrough` 時一樣生效。見 [routing.md](routing.md#改寫思考檔位) |
 
 **`passthrough` 是保留字。** 如果某個 provider 的 `id` 被設成 `"passthrough"`，
 載入設定檔時會被當成沒填、直接換發一個新 id（`src/config.mjs` 的

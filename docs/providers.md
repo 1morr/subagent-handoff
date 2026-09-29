@@ -66,7 +66,8 @@ Anthropic 收得下同一份 schema，所以主對話沒事；工具清單是 `*
 
 ## 思考檔位（effort）會不會跟著過去
 
-會，router 不動這幾個欄位。
+會。router 預設不動這幾個欄位；規則設了 `effortOverride` 才換掉 `output_config.effort`
+（[routing.md](routing.md#改寫思考檔位)）。
 
 `/effort` 與 `--effort` 在 wire 上走的是 **`output_config.effort`**，不是
 `thinking`。實測 v2.1.227 送出的 body：
@@ -93,7 +94,8 @@ Anthropic 收得下同一份 schema，所以主對話沒事；工具清單是 `*
 單次波動不小（LLM 本來就隨機），但 `low` 與 `xhigh` 差 4～5 倍是穩定訊號。
 cliproxyapi 官方另外支援 model 名後綴語法（`kimi-k3(low)` / `kimi-k3(high)`），
 實測也有效，可以填在 `providers[].model` 當固定檔位用 —— 但那會蓋掉
-`/effort`，一般不需要。
+`/effort`。要固定檔位的話，規則的 `effortOverride` 不綁 provider 的 model 語法，
+而且能依 `modelGlob` 分開設。
 
 流量記錄的**思考**欄會顯示每一筆的 effort。
 
@@ -117,7 +119,8 @@ unknown variant `banana`, expected one of `low`, `medium`, `high`, `xhigh`, `ult
 ```
 
 比官方文檔多了 `medium` 和 `ultra`。但 Claude Code 的枚舉只有 `low` / `medium`
-/ `high` / `xhigh` / `max`（v2.1.231 確認），所以 `ultra` 送不出去。
+/ `high` / `xhigh` / `max`（v2.1.231 確認），所以 Claude Code 自己送不出 `ultra`；
+要送就用規則的 `effortOverride`。
 
 **檔位實際只有兩檔堪用。** 同一道組合題各採樣 5 次的 thinking 長度（全部
 `end_turn`，無一撞 `max_tokens`）：

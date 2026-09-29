@@ -194,6 +194,8 @@ export default {
   'rules.wordModel': ' · model',
   'rules.wordSentAs': ' · sent as',
   'rules.modelGlobTitle': 'matches against the model name, supports *',
+  'rules.wordEffort': ' · effort',
+  'rules.effortTitle': 'Rewrites output_config.effort. Requests that carry no effort are left alone',
   'rules.noRewritePlaceholder': "don't rewrite",
   'rules.deleteRule': 'Delete rule',
   'rules.hitExplain': "This request is caught by this rule. The rules below it aren't used this time.",

@@ -1,8 +1,8 @@
 import test, { before, after, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { rewriteBodyForProvider, rewriteModel, rewriteToolPatterns, SessionCwd } from '../src/proxy.mjs'
+import { rewriteBodyForProvider, rewriteEffort, rewriteModel, rewriteToolPatterns, SessionCwd } from '../src/proxy.mjs'
 import {
-  globMatch, describeRequest, resolveRoute, resolveModel, extractCwd, PASSTHROUGH_ID,
+  globMatch, describeRequest, resolveRoute, resolveModel, resolveEffort, extractCwd, PASSTHROUGH_ID,
 } from '../src/routing.mjs'
 import { normalizeConfig, defaultConfig, defaultProvider, defaultRule } from '../src/config.mjs'
 import { createHarness, makePost, BASE_BODY, SUBSCRIPTION_HEADERS } from './helpers.mjs'
@@ -226,6 +226,43 @@ test('規則的 modelOverride 蓋過 provider 自己的 model', async () => {
   assert.equal(harness.upstream.state.received[0].headers.authorization, 'Bearer sk-moonshot', 'provider 的其他設定照舊')
 })
 
+test('規則的 effortOverride 在 provider 線換掉 output_config.effort，流量記錄看得出改過', async () => {
+  // opus 子 agent 送去 provider 時固定用 max，不管 Claude Code 要的是哪一檔
+  harness.getConfig().rules = [defaultRule({ match: 'subagent', providerId: 'kimi', effortOverride: 'max' })]
+  await (await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY)).text()
+
+  const [hit] = harness.upstream.state.received
+  assert.deepEqual(hit.body.output_config, { effort: 'max' })
+  assert.deepEqual(hit.body.thinking, BASE_BODY.thinking, 'thinking 只帶型態，不該被一起改')
+
+  const entry = harness.logStore.list()[0]
+  assert.equal(entry.effort, 'high', '記錄裡的 effort 仍是 Claude Code 要求的那個')
+  assert.equal(entry.sentEffort, 'max')
+  assert.ok(entry.changes.includes('effort high → max'))
+})
+
+test('passthrough + effortOverride 只換 effort，其餘 body 欄位原封不動', async () => {
+  harness.getConfig().rules = [defaultRule({ match: 'subagent', providerId: PASSTHROUGH_ID, effortOverride: 'low' })]
+  await (await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY)).text()
+
+  const [hit] = harness.upstream.state.received
+  assert.deepEqual(hit.body, { ...BASE_BODY, output_config: { effort: 'low' } }, 'metadata 等欄位在訂閱線要保留')
+  assert.equal(hit.headers.authorization, 'Bearer sk-ant-oat-fake')
+  assert.deepEqual(harness.logStore.list()[0].changes, ['effort high → low'])
+})
+
+test('請求本來沒帶 effort 時 effortOverride 不補上', async () => {
+  // session 標題那類背景請求：thinking disabled、output_config 只有 format
+  harness.getConfig().rules = [defaultRule({ match: 'subagent', providerId: PASSTHROUGH_ID, effortOverride: 'max' })]
+  const body = { ...BASE_BODY, thinking: { type: 'disabled' }, output_config: { format: { type: 'json_schema' } } }
+  await (await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, body)).text()
+
+  assert.deepEqual(harness.upstream.state.received[0].body, body)
+  const entry = harness.logStore.list()[0]
+  assert.equal(entry.sentEffort, null)
+  assert.deepEqual(entry.changes, [])
+})
+
 test('指向不存在的 provider 時退回訂閱，而不是讓請求失敗', async () => {
   harness.getConfig().rules = [defaultRule({ match: 'subagent', providerId: 'gone' })]
   const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'a' }, BASE_BODY)
@@ -387,6 +424,23 @@ test('resolveModel 的優先序：規則 > provider > 原樣', () => {
     'claude-opus-5',
   )
   assert.equal(resolveModel({ kind: 'passthrough', rule: null }, null), null)
+})
+
+test('resolveEffort：規則有值就蓋過，請求沒帶就維持沒帶', () => {
+  assert.equal(resolveEffort({ kind: 'passthrough', rule: null }, 'high'), 'high')
+  assert.equal(resolveEffort({ kind: 'provider', rule: defaultRule() }, 'high'), 'high', '空字串 = 不改寫')
+  assert.equal(resolveEffort({ kind: 'provider', rule: defaultRule({ effortOverride: 'max' }) }, 'high'), 'max')
+  assert.equal(resolveEffort({ kind: 'provider', rule: defaultRule({ effortOverride: 'max' }) }, null), null)
+})
+
+test('rewriteEffort 只換 effort，output_config 的其他欄位留著', () => {
+  const payload = { model: 'm', output_config: { effort: 'high', format: { type: 'json_schema' } } }
+  const out = rewriteEffort(payload, 'ultra')
+  assert.deepEqual(out.body.output_config, { effort: 'ultra', format: { type: 'json_schema' } }, '不驗證值：ultra 這類 Claude Code 送不出的檔位也要能送')
+  assert.deepEqual(out.changes, ['effort high → ultra'])
+  assert.equal(payload.output_config.effort, 'high', '不能改到原物件')
+  assert.equal(rewriteEffort(payload, 'high').body, payload, '值一樣就不重建')
+  assert.equal(rewriteEffort({ model: 'm' }, 'max').body.output_config, undefined, '沒帶 effort 就不憑空長出來')
 })
 
 test('provider 不能佔用 passthrough 這個保留 id', () => {

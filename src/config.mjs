@@ -46,6 +46,11 @@ export function defaultRule(over = {}) {
     providerId: '',
     /** 空字串 = 不改寫。有值時蓋過 provider 自己的 model；指向 passthrough 時也照樣生效。 */
     modelOverride: '',
+    /**
+     * 空字串 = 不改寫。有值時換掉 `output_config.effort`；請求本來沒帶 effort 就不補。
+     * 不驗證值：上游不收會回看得見的 400，而且這裡正好送得出 Claude Code 枚舉以外的檔位。
+     */
+    effortOverride: '',
     ...over,
   }
 }
@@ -186,6 +191,7 @@ export function normalizeConfig(raw) {
           modelGlob: String(r.modelGlob ?? '*').trim() || '*',
           providerId: String(r.providerId ?? '').trim(),
           modelOverride: String(r.modelOverride ?? '').trim(),
+          effortOverride: String(r.effortOverride ?? '').trim(),
         }
       })
     : base.rules

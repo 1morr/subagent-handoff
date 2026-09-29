@@ -119,6 +119,38 @@ model 名要填**上游看得懂的完整字串**，不是 `opus` / `sonnet` 這
 - `max_tokens` 是 Claude Code 依原模型算的。改寫成上限較低的模型時可能被上游退
   件，這種情況只能調 `modelOverride` 或改回去。
 
+## 改寫思考檔位
+
+規則的 `effortOverride` 會把送出去的 `output_config.effort` 換掉，指向訂閱時也生效。
+
+Claude Code 呼叫子 agent 時用它自己挑的檔位，但第三方模型適合的檔位不一定一樣。
+規則本來就能用 `modelGlob` 分開 opus 與 sonnet，所以兩者可以各配一個檔位，就算打到
+同一個 provider 也一樣：
+
+```jsonc
+[
+  { "match": "subagent", "modelGlob": "*opus*",   "providerId": "p-deepseek",
+    "modelOverride": "deepseek-flash", "effortOverride": "max" },
+  { "match": "subagent", "modelGlob": "*sonnet*", "providerId": "p-deepseek",
+    "modelOverride": "deepseek-flash", "effortOverride": "high" }
+]
+```
+
+三條界線（`src/routing.mjs` 的 `resolveEffort`、`src/proxy.mjs` 的 `rewriteEffort`）：
+
+- **請求本來沒帶 effort 就不補。** session 標題那類背景請求送 `thinking: disabled`、
+  `output_config` 裡只有 `format`，補上檔位等於改掉它的行為。
+- **值不驗證。** 上游不收會回看得見的 400。改寫發生在 router，所以送得出 Claude Code
+  枚舉以外的檔位，例如 DeepSeek 的 `ultra`（[providers.md](providers.md#deepseek-實測2026-08deepseek-v4-pro)）。
+  GUI 的輸入框只建議 Claude Code 自己的五檔。
+- **只換 `effort`**，`output_config` 的其他欄位與 `thinking` 不動。
+
+流量記錄的「思考」欄顯示實際送出的檔位，改寫過的不會壓暗；原本要求的檔位看進條的
+「送出前改寫」（`effort high → max`）或記錄裡的 `effort` 欄位（`sentEffort` 才是送出的）。
+
+檔位高不代表答得好：DeepSeek 的實測是 `medium` 以上幾檔的思考長度分不開，見
+[providers.md](providers.md#deepseek-實測2026-08deepseek-v4-pro)。
+
 ## 規則預覽
 
 路由分頁下方的預覽選一個來源、填一個 model 名，不必真的去 spawn 一個 agent。預覽

@@ -259,7 +259,8 @@ function stripRow(e, withRequested) {
     `<span class="cell ${e.sentModel && e.sentModel !== e.requestedModel ? '' : 'dimink'}">${esc(e.sentModel ?? '–')}</span>`,
     `<span class="cell ${statusCls}">${statusHtml(e)}</span>`,
     `<span class="cell">${e.ms != null ? e.ms + 'ms' : '…'}</span>`,
-    `<span class="cell dimink">${e.effort ? esc(e.effort) : '–'}</span>`,
+    // 舊的記錄沒有 sentEffort，退回 Claude Code 要求的那個
+    `<span class="cell ${e.sentEffort && e.sentEffort !== e.effort ? '' : 'dimink'}">${esc(e.sentEffort ?? e.effort ?? '–')}</span>`,
     `<span class="cell han ${st === 'hold' ? 'bad' : 'dimink'}">${esc(note)}</span>`,
   ].join('')
 
@@ -791,6 +792,9 @@ function renderRules() {
           <span class="word">${t('rules.wordSentAs')}</span>
           <input type="text" class="w-md" data-f="modelOverride" list="model-hints" aria-label="${t('rack.col.sentModel')}"
                  value="${esc(r.modelOverride ?? '')}" placeholder="${t('rules.noRewritePlaceholder')}">
+          <span class="word">${t('rules.wordEffort')}</span>
+          <input type="text" class="w-sm" data-f="effortOverride" list="effort-hints" title="${t('rules.effortTitle')}"
+                 aria-label="${t('rules.effortTitle')}" value="${esc(r.effortOverride ?? '')}" placeholder="${t('rules.noRewritePlaceholder')}">
           <span class="spacer"></span>
           <button class="btn tiny" data-act="up" ${i === 0 ? 'disabled' : ''} aria-label="${t('common.moveUp')}">${ICON.up}</button>
           <button class="btn tiny" data-act="down" ${i === S.config.rules.length - 1 ? 'disabled' : ''} aria-label="${t('common.moveDown')}">${ICON.down}</button>
@@ -1256,7 +1260,7 @@ document.addEventListener('click', async (ev) => {
       S.config.rules.push({
         id: 'r-' + Math.random().toString(36).slice(2, 10),
         enabled: true, match: 'subagent', modelGlob: '*',
-        providerId: S.config.providers[0]?.id ?? 'passthrough', modelOverride: '',
+        providerId: S.config.providers[0]?.id ?? 'passthrough', modelOverride: '', effortOverride: '',
       })
       markDirty(); render()
     } else if (act === 'del-rule') {
