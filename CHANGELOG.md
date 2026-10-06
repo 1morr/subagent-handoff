@@ -27,6 +27,13 @@
   HTTPS proxy 模式在容器裡實測可用，但 GUI 顯示的 CA 路徑是容器內的，要用
   `docker compose cp` 複製出來。細節見 [docs/security.md](docs/security.md#docker-部署擋別台機器的是埠發布)。
 
+- **映像發布到 GHCR，不必 clone。** 推到 `master` 且容器冒煙通過後，CI 的 `publish` job 建
+  amd64 + arm64（NAS 與 Apple Silicon）映像推到 `ghcr.io/1morr/subagent-handoff`，tag 只有
+  `latest` 與 `sha-<commit>`（沒有版本號）。`compose.yaml` 的 `image` 指向它，使用者下載這一個
+  檔案就能 `docker compose up -d`；`build: .` 只在 repo 裡加 `--build` 時用到，實測沒有建置
+  context 時只要拉得到映像就照常啟動。`publish` 只等 `docker` job、不等 `smoke`：`smoke` 的
+  限速測試從 05fdfac 起在 Node 20/22 上一直是紅的，映像用的 Node 24 那兩格是綠的。
+
 ## 2026-09-29
 
 ### 新增

@@ -1,7 +1,9 @@
 services:
   router:
+    # 不 clone 的話只需要這一個檔案：image 指向 CI 發布的映像，直接拉下來用。
+    # 在 repo 裡加 --build 才會從原始碼建（CI 的 docker job 就是這樣驗的）。
+    image: ghcr.io/1morr/subagent-handoff:latest
     build: .
-    image: subagent-handoff
     restart: unless-stopped
     ports:
       # 只發布在宿主的 127.0.0.1，別拿掉前綴：容器裡 router 綁的是 0.0.0.0，

@@ -35,6 +35,9 @@ Anthropic-compatible provider you pay for; everything else passes through to
   guard's Host check does not stop LAN clients, and a different host port breaks
   the GUI's Origin check. `.dockerignore` is an allowlist so `config.json` and the
   CA key never land in the image. `test/docker.test.mjs` pins both.
+  `compose.yaml` is also the no-clone entry point (users download just that
+  file), so it must not depend on anything else in the repo except `build: .`,
+  which is only used with `--build`.
 - Config lives in `config.json` (gitignored, written 0600). It holds real API keys —
   never commit it, never print it in logs.
 

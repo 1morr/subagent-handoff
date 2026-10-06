@@ -71,13 +71,23 @@ Claude Code 在跑的時候 router 也要一直開著：router 沒在跑，Claud
 
 ### 或者用 Docker 跑
 
-取代 `npm start` —— 宿主不必裝 Node，重開機後也會自己起來（`restart: unless-stopped`）：
+取代 `npm start` —— 不必裝 Node、也不必 clone，重開機後也會自己起來（`restart: unless-stopped`）。只需要 `compose.yaml` 這一個檔案，它會拉 CI 發布到 `ghcr.io/1morr/subagent-handoff` 的映像（amd64 與 arm64）：
 
 ```bash
-git clone https://github.com/1morr/subagent-handoff.git
-cd subagent-handoff
+mkdir subagent-handoff && cd subagent-handoff
+curl -fsSLO https://raw.githubusercontent.com/1morr/subagent-handoff/master/compose.yaml
 docker compose up -d
 ```
+
+不用 Compose 的話，下面這行是一樣的效果：
+
+```bash
+docker run -d --name subagent-handoff --restart unless-stopped \
+  -p 127.0.0.1:8787:8787 -p 127.0.0.1:8788:8788 \
+  -v subagent-handoff-data:/data ghcr.io/1morr/subagent-handoff:latest
+```
+
+在 clone 下來的 repo 裡，`docker compose up -d --build` 會改從原始碼建映像。
 
 接著照上面的第 1–5 步做，Claude Code 那一側完全一樣。不同的地方：
 
@@ -85,7 +95,7 @@ docker compose up -d
 - **埠只發布在宿主的 `127.0.0.1`，這個前綴不要拿掉。** 容器裡的 router 綁的是全部介面（`ROUTER_HOST=0.0.0.0`），擋住區網其他機器的就只剩這個發布位址。
 - **宿主的埠必須跟容器裡的埠相同**，否則 GUI 存檔會被拒絕（它的來源檢查比對的是 router 實際綁定的埠）。要換埠就兩邊一起改：`docker compose stop && docker compose run --rm router vi /data/config.json`，把 `compose.yaml` 的 `ports:` 改成一樣的埠，再 `docker compose up -d`。
 - **HTTPS proxy 模式：** GUI 顯示的 CA 路徑是容器裡的。用 `docker compose cp router:/data/https-proxy-ca.pem .` 把證書複製出來，`NODE_EXTRA_CA_CERTS` 指向這份複本。
-- 更新用 `git pull && docker compose up -d --build`，看 log 用 `docker compose logs -f`。映像是官方的 `node:24-alpine` 加上 `src/` —— 基底映像是 Docker 唯一多帶進供應鏈的東西。
+- 更新用 `docker compose pull && docker compose up -d`（clone 的話是 `git pull && docker compose up -d --build`），看 log 用 `docker compose logs -f`。`latest` 跟著 `master`；每個 commit 也有 `sha-<commit>` tag，想固定版本可以用它。映像是官方的 `node:24-alpine` 加上 `src/` —— 基底映像是 Docker 唯一多帶進供應鏈的東西。
 
 ## HTTPS proxy 模式（選用，給 Claude Desktop）
 

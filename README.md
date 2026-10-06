@@ -94,14 +94,25 @@ Code's settings and restart Claude Code. Using Claude Desktop? It ignores
 
 ### Or run it with Docker
 
-Instead of `npm start` — no Node needed on the host, and it comes back after
-a reboot (`restart: unless-stopped`):
+Instead of `npm start` — no Node and no clone needed, and it comes back after
+a reboot (`restart: unless-stopped`). All you need is `compose.yaml`; it pulls
+the image CI publishes to `ghcr.io/1morr/subagent-handoff` (amd64 and arm64):
 
 ```bash
-git clone https://github.com/1morr/subagent-handoff.git
-cd subagent-handoff
+mkdir subagent-handoff && cd subagent-handoff
+curl -fsSLO https://raw.githubusercontent.com/1morr/subagent-handoff/master/compose.yaml
 docker compose up -d
 ```
+
+Without Compose, this is the same thing:
+
+```bash
+docker run -d --name subagent-handoff --restart unless-stopped \
+  -p 127.0.0.1:8787:8787 -p 127.0.0.1:8788:8788 \
+  -v subagent-handoff-data:/data ghcr.io/1morr/subagent-handoff:latest
+```
+
+Inside a clone, `docker compose up -d --build` builds the image from source instead.
 
 Then follow steps 1–5 above; Claude Code's side is identical. What differs:
 
@@ -121,9 +132,12 @@ Then follow steps 1–5 above; Claude Code's side is identical. What differs:
   the certificate out with
   `docker compose cp router:/data/https-proxy-ca.pem .` and point
   `NODE_EXTRA_CA_CERTS` at the copy.
-- Update with `git pull && docker compose up -d --build`; logs with
-  `docker compose logs -f`. The image is the official `node:24-alpine` plus
-  `src/` — the base image is the one thing Docker adds to the supply chain.
+- Update with `docker compose pull && docker compose up -d` (in a clone:
+  `git pull && docker compose up -d --build`); logs with
+  `docker compose logs -f`. `latest` follows `master`; every commit is also
+  tagged `sha-<commit>` if you want to pin one. The image is the official
+  `node:24-alpine` plus `src/` — the base image is the one thing Docker adds
+  to the supply chain.
 
 ## HTTPS proxy mode (optional, for Claude Desktop)
 

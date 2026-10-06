@@ -44,3 +44,38 @@ jobs:
           exit 1
       - if: always()
         run: docker compose down -v
+
+  # 推到 master 且容器冒煙通過才發布，讓使用者不必 clone 就能 `docker compose up`。
+  # 沒有版本號（見 CHANGELOG.md 開頭），所以只有 latest 與 sha-<commit> 兩種 tag。
+  # arm64 是給 NAS 與 Apple Silicon：映像沒有編譯步驟，QEMU 跨架構建置只多幾秒。
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
