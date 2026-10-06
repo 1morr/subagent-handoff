@@ -15,6 +15,12 @@ ROUTER_CONFIG=/path/to/my-config.json npm start
 $env:ROUTER_CONFIG = 'C:\path\to\my-config.json'; npm start
 ```
 
+`ROUTER_HOST` 是兩台 server 綁的位址，預設 `127.0.0.1`。它只給容器用：Docker 映像設成 `0.0.0.0`，
+因為容器裡綁 loopback 的話埠發布進來的連線收不到。設成非 loopback 位址時啟動訊息會多一行 `Listen`，
+而擋住別台機器就全靠外層 —— 見 [security.md](security.md#docker-部署擋別台機器的是埠發布)。
+不在容器裡就別設：guard 只收主機名是本機的 `Host`，瀏覽器從別台機器打開 GUI 一樣是 403，
+綁出去只多了風險。
+
 **跟著設定檔搬家的不只設定。** `traffic.log`（與輪替出來的 `traffic.log.1`）和 HTTPS proxy 模式的
 CA（`https-proxy-ca.pem`、`https-proxy-ca-key.pem`）都放在設定檔旁邊（`src/index.mjs`）。換了
 `ROUTER_CONFIG`，流量記錄從新的位置重新開始；模式開著的話，新位置沒有 CA 就產生一把新的，

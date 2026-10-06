@@ -6,7 +6,11 @@ import { createFileSink } from './logfile.mjs'
 import { createHttpsProxy } from './connect.mjs'
 import { createThrottles } from './throttle.mjs'
 
-const HOST = '127.0.0.1'
+// 預設只綁 loopback。容器裡綁 loopback 等於誰都連不到（埠轉發進來的不是 127.0.0.1），
+// 所以 Dockerfile 設 ROUTER_HOST=0.0.0.0，再由 compose 只在宿主的 127.0.0.1 上發布埠。
+const HOST = process.env.ROUTER_HOST || '127.0.0.1'
+// 給人複製的網址一律寫 loopback：guard 只收主機名是本機的 Host，貼 0.0.0.0 之類的位址過去也是被擋
+const LOCAL = '127.0.0.1'
 
 // package.json 的 engines 只有 npm 在 engine-strict 下才會擋，直接 `node src/index.mjs` 不會。
 // 舊 Node 的失敗點在第一次呼叫 fetch（連通性測試或轉發時）才炸，訊息完全指不回版本。
@@ -101,12 +105,15 @@ const connectHint = httpsProxy.enabled
   : `  Point ANTHROPIC_BASE_URL at the proxy above in Claude Code settings.json, and
   leave ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY unset to keep the subscription.`
 
+// 綁的不是 loopback 時講出來：這時擋住別台機器的是外層（容器的埠發布、防火牆），不是 router
+const bindNote = proxy.address().address === LOCAL ? '' : `  Listen   ${proxy.address().address}  (ROUTER_HOST)\n`
+
 console.log(`
   subagent-handoff is running
 
-  Proxy   http://${HOST}:${config.proxyPort}
-  GUI     http://${HOST}:${config.adminPort}
-  Config   ${CONFIG_PATH}
+  Proxy   http://${LOCAL}:${config.proxyPort}
+  GUI     http://${LOCAL}:${config.adminPort}
+${bindNote}  Config   ${CONFIG_PATH}
   Traffic  ${trafficLogPath}
 
 ${connectHint}

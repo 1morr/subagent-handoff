@@ -11,6 +11,22 @@
 
 ---
 
+## 2026-10-07
+
+### 新增
+
+- **Docker 部署。** `docker compose up -d` 取代 `npm start`：宿主不必裝 Node、重開機自己起來，
+  Claude Code 那一側的接法不變。設定、`traffic.log` 與 CA 放在具名 volume 的 `/data`
+  （`ROUTER_CONFIG`），映像以非 root 的 `node` 使用者跑。容器裡綁 loopback 的話埠發布進來的
+  連線收不到，所以新增 `ROUTER_HOST` 環境變數（預設仍是 `127.0.0.1`），映像設成 `0.0.0.0`，
+  只在宿主的 `127.0.0.1` 發布；guard 的 Host 檢查擋不住自己填 Host 的區網 client，這個前綴
+  是唯一擋別台機器的東西。宿主與容器必須同埠：實測換埠後 GUI 存檔帶的 Origin 對不上綁定的埠，
+  一律 403。`.dockerignore` 用白名單，repo 根目錄的 `config.json` 與 CA 私鑰進不了映像。
+  `test/docker.test.mjs` 守白名單與埠發布，`test/startup.test.mjs` 起子行程驗 `ROUTER_HOST`
+  （這也是 `src/index.mjs` 第一次有測試跑到），CI 新增 `docker` job 實際建映像、起容器。
+  HTTPS proxy 模式在容器裡實測可用，但 GUI 顯示的 CA 路徑是容器內的，要用
+  `docker compose cp` 複製出來。細節見 [docs/security.md](docs/security.md#docker-部署擋別台機器的是埠發布)。
+
 ## 2026-09-29
 
 ### 新增

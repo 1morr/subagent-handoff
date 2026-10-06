@@ -24,9 +24,17 @@ Anthropic-compatible provider you pay for; everything else passes through to
   point is that a proxy in front of your API traffic has the smallest possible supply
   chain. Tests use built-in `node --test`; syntax gating uses built-in `node --check`.
   Node >= 20, ESM (`"type": "module"`).
-- `npm test` is the only gate. `test/syntax.test.mjs` walks `src/` and `test/` and
-  runs `node --check` on every file, so new files are gated automatically — do not
-  go back to enumerating test files by hand.
+- `npm test` is the only gate for the code (CI's `docker` job additionally builds
+  the image and checks both ports answer on the host's 127.0.0.1).
+  `test/syntax.test.mjs` walks `src/` and `test/` and runs `node --check` on every
+  file, so new files are gated automatically — do not go back to enumerating test
+  files by hand.
+- **Docker (`Dockerfile`, `compose.yaml`) is a second way to run the same code,
+  not a fork of it.** Inside the container the router binds 0.0.0.0
+  (`ROUTER_HOST`), so `compose.yaml` must publish ports as `127.0.0.1:N:N` — the
+  guard's Host check does not stop LAN clients, and a different host port breaks
+  the GUI's Origin check. `.dockerignore` is an allowlist so `config.json` and the
+  CA key never land in the image. `test/docker.test.mjs` pins both.
 - Config lives in `config.json` (gitignored, written 0600). It holds real API keys —
   never commit it, never print it in logs.
 

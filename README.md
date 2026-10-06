@@ -92,6 +92,39 @@ API requests fail. To stop using it, remove `ANTHROPIC_BASE_URL` from Claude
 Code's settings and restart Claude Code. Using Claude Desktop? It ignores
 `ANTHROPIC_BASE_URL`; read [HTTPS proxy mode](#https-proxy-mode-optional-for-claude-desktop).
 
+### Or run it with Docker
+
+Instead of `npm start` — no Node needed on the host, and it comes back after
+a reboot (`restart: unless-stopped`):
+
+```bash
+git clone https://github.com/1morr/subagent-handoff.git
+cd subagent-handoff
+docker compose up -d
+```
+
+Then follow steps 1–5 above; Claude Code's side is identical. What differs:
+
+- **Config lives in the `data` volume** (`/data` in the container), together
+  with `traffic.log` and the HTTPS proxy mode CA. `docker compose down` keeps it;
+  `docker compose down -v` deletes it, API keys included.
+- **Ports are published on the host's `127.0.0.1` only — keep that prefix.**
+  Inside the container the router listens on every interface
+  (`ROUTER_HOST=0.0.0.0`), so the published address is what keeps the proxy and
+  the GUI off your network.
+- **The host port must equal the container port**, or the GUI's saves are
+  rejected (its origin check uses the port the router actually bound). To move
+  them, change both in one go:
+  `docker compose stop && docker compose run --rm router vi /data/config.json`,
+  edit `ports:` in `compose.yaml` to match, then `docker compose up -d`.
+- **HTTPS proxy mode:** the CA path the GUI shows is inside the container. Copy
+  the certificate out with
+  `docker compose cp router:/data/https-proxy-ca.pem .` and point
+  `NODE_EXTRA_CA_CERTS` at the copy.
+- Update with `git pull && docker compose up -d --build`; logs with
+  `docker compose logs -f`. The image is the official `node:24-alpine` plus
+  `src/` — the base image is the one thing Docker adds to the supply chain.
+
 ## HTTPS proxy mode (optional, for Claude Desktop)
 
 **Off by default**, and while it is off the router behaves exactly as described
@@ -237,7 +270,9 @@ under **Rewritten before sending** in the traffic log. Details:
 
 ## Security model
 
-- Both servers bind to `127.0.0.1` only.
+- Both servers bind to `127.0.0.1` only. In Docker they bind every interface
+  inside the container, and `compose.yaml` publishes them on the host's
+  `127.0.0.1` only (a test fails if that prefix is dropped).
 - The admin API validates `Origin` and `Host`, so a web page cannot drive it and
   DNS rebinding does not work.
 - Stored API keys are never returned to the browser — the GUI receives a masked

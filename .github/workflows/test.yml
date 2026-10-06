@@ -23,3 +23,24 @@ jobs:
           node-version: ${{ matrix.node }}
       # 沒有任何 npm 依賴，所以不裝東西也不需要 lockfile 快取
       - run: npm test
+
+  # 映像建得起來、容器裡的 router 從宿主的 127.0.0.1 連得到：ROUTER_HOST、/data volume 的權限
+  # 與 compose 的埠發布要三者都對才會過，npm test 驗不到這一段
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --build
+      - name: router answers on the published ports
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8788/ && curl -fsS -o /dev/null -I http://127.0.0.1:8787/api/hello; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose logs
+          exit 1
+      - if: always()
+        run: docker compose down -v

@@ -1,0 +1,7 @@
+# 白名單：先全部排除，只放回映像需要的東西。
+# repo 根目錄有 config.json（API key）、https-proxy-ca-key.pem（CA 私鑰）、traffic.log，
+# 黑名單漏一個就會被打包進映像。test/docker.test.mjs 守著這份清單。
+*
+!package.json
+!LICENSE
+!src

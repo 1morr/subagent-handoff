@@ -1,0 +1,16 @@
+services:
+  router:
+    build: .
+    image: subagent-handoff
+    restart: unless-stopped
+    ports:
+      # 只發布在宿主的 127.0.0.1，別拿掉前綴：容器裡 router 綁的是 0.0.0.0，
+      # 少了它等於把 proxy（握有第三方 API key）與 GUI 開給整個區網。
+      # 兩邊的埠必須相同：GUI 的 Origin 檢查比對的是容器裡實際綁定的埠。
+      - "127.0.0.1:8787:8787"
+      - "127.0.0.1:8788:8788"
+    volumes:
+      - data:/data
+
+volumes:
+  data:

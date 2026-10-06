@@ -69,6 +69,24 @@ npm start
 
 Claude Code 在跑的時候 router 也要一直開著：router 沒在跑，Claude Code 的 API 請求就會失敗。不想用了，把 Claude Code 設定裡的 `ANTHROPIC_BASE_URL` 拿掉、重開 Claude Code 即可。用的是 Claude Desktop？它不理 `ANTHROPIC_BASE_URL`，請看 [HTTPS proxy 模式](#https-proxy-模式選用給-claude-desktop)。
 
+### 或者用 Docker 跑
+
+取代 `npm start` —— 宿主不必裝 Node，重開機後也會自己起來（`restart: unless-stopped`）：
+
+```bash
+git clone https://github.com/1morr/subagent-handoff.git
+cd subagent-handoff
+docker compose up -d
+```
+
+接著照上面的第 1–5 步做，Claude Code 那一側完全一樣。不同的地方：
+
+- **設定放在 `data` volume 裡**（容器內的 `/data`），`traffic.log` 與 HTTPS proxy 模式的 CA 也在那裡。`docker compose down` 會留著它；`docker compose down -v` 會連同 API key 一起刪掉。
+- **埠只發布在宿主的 `127.0.0.1`，這個前綴不要拿掉。** 容器裡的 router 綁的是全部介面（`ROUTER_HOST=0.0.0.0`），擋住區網其他機器的就只剩這個發布位址。
+- **宿主的埠必須跟容器裡的埠相同**，否則 GUI 存檔會被拒絕（它的來源檢查比對的是 router 實際綁定的埠）。要換埠就兩邊一起改：`docker compose stop && docker compose run --rm router vi /data/config.json`，把 `compose.yaml` 的 `ports:` 改成一樣的埠，再 `docker compose up -d`。
+- **HTTPS proxy 模式：** GUI 顯示的 CA 路徑是容器裡的。用 `docker compose cp router:/data/https-proxy-ca.pem .` 把證書複製出來，`NODE_EXTRA_CA_CERTS` 指向這份複本。
+- 更新用 `git pull && docker compose up -d --build`，看 log 用 `docker compose logs -f`。映像是官方的 `node:24-alpine` 加上 `src/` —— 基底映像是 Docker 唯一多帶進供應鏈的東西。
+
 ## HTTPS proxy 模式（選用，給 Claude Desktop）
 
 **預設關閉**，關著的時候 router 的行為跟上面描述的完全一樣。只有想讓 Claude Desktop 也被分流時才需要打開。
@@ -162,7 +180,7 @@ router 只在啟動時讀一次 `config.json`。執行中手改不會生效，�
 
 ## 安全模型
 
-- 兩個伺服器都只綁定在 `127.0.0.1`。
+- 兩個伺服器都只綁定在 `127.0.0.1`。用 Docker 跑時，它們在容器裡綁全部介面，由 `compose.yaml` 只發布在宿主的 `127.0.0.1`（拿掉這個前綴測試會紅）。
 - admin API 會驗證 `Origin` 與 `Host`，所以網頁沒辦法操控它，DNS rebinding 也不管用。
 - 儲存的 API key 永遠不會回傳給瀏覽器 —— GUI 拿到的只是遮蔽過的提示字串和一個 `__keep__` 標記值。
 - `config.json` 與 `traffic.log` 都是以 `0600` 權限寫入。
