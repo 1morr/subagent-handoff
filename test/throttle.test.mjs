@@ -28,6 +28,14 @@ test('限速時照 FIFO、每個間隔放行一筆', async () => {
   assert.ok(order[2].ms >= 190, `第三筆要等兩個間隔，實際 ${order[2].ms}ms`)
 })
 
+test('不用排的請求記 0ms，就算兩次讀時鐘之間跨過一毫秒', async (t) => {
+  let clock = 1_000_000
+  t.mock.method(Date, 'now', () => clock++)
+  const th = createThrottles()
+  th.set('kimi', 600)
+  assert.equal(await th.acquire('kimi'), 0)
+})
+
 test('席位之間互不影響', async () => {
   const th = createThrottles()
   th.set('kimi', 1)

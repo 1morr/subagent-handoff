@@ -86,6 +86,12 @@ export function createThrottles({ maxWaitMs = MAX_WAIT_MS } = {}) {
       const s = seats.get(seat)
       if (!s || s.rpm == null) return Promise.resolve(0)
       if (signal?.aborted) return Promise.reject(signal.reason)
+      // 不用等的直接放行、不進佇列：進佇列與放行各讀一次時鐘，跨過一毫秒就會被記成排了 1ms
+      const now = Date.now()
+      if (!s.queue.length && now >= s.last + 60_000 / s.rpm) {
+        s.last = now
+        return Promise.resolve(0)
+      }
       return new Promise((resolve, reject) => {
         const item = { at: Date.now(), resolve, reject, signal, onAbort: null }
         item.onAbort = () => {
