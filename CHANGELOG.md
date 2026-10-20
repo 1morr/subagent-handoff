@@ -11,6 +11,15 @@
 
 ---
 
+## 2026-10-21
+
+### 修正
+
+- **CI 在 Node 20 / 22 上從 `05fdfac` 起一直是紅的。** 席位限速的放行計時器被 `unref()`，
+  `test/throttle.test.mjs` 等排隊放行時，event loop 裡只剩這個不算數的計時器，Node 20 / 22 的
+  test runner 就判定跑完、取消剩下 7 個測試（Node 24 不會，本機一直沒看到）。拿掉 `unref()`：
+  正式跑時 HTTP server 本來就撐著 process，Ctrl+C 也不受計時器影響，它原本要防的事不存在。
+
 ## 2026-10-07
 
 ### 新增

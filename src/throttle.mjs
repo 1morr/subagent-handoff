@@ -60,8 +60,6 @@ export function createThrottles({ maxWaitMs = MAX_WAIT_MS } = {}) {
       const due = Math.min(s.last + interval, head.at + maxWaitMs)
       if (now < due) {
         s.timer = setTimeout(() => pump(s), due - now)
-        // 計時器不該撐住 process：Ctrl+C 或測試結束時排著的請求本來就沒人等了
-        s.timer.unref?.()
         return
       }
       s.queue.shift()
