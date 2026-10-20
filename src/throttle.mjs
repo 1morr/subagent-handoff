@@ -60,8 +60,6 @@ export function createThrottles({ maxWaitMs = MAX_WAIT_MS } = {}) {
       const due = Math.min(s.last + interval, head.at + maxWaitMs)
       if (now < due) {
         s.timer = setTimeout(() => pump(s), due - now)
-        // 計時器不該撐住 process：Ctrl+C 或測試結束時排著的請求本來就沒人等了
-        s.timer.unref?.()
         return
       }
       s.queue.shift()
@@ -88,6 +86,12 @@ export function createThrottles({ maxWaitMs = MAX_WAIT_MS } = {}) {
       const s = seats.get(seat)
       if (!s || s.rpm == null) return Promise.resolve(0)
       if (signal?.aborted) return Promise.reject(signal.reason)
+      // 不用等的直接放行、不進佇列：進佇列與放行各讀一次時鐘，跨過一毫秒就會被記成排了 1ms
+      const now = Date.now()
+      if (!s.queue.length && now >= s.last + 60_000 / s.rpm) {
+        s.last = now
+        return Promise.resolve(0)
+      }
       return new Promise((resolve, reject) => {
         const item = { at: Date.now(), resolve, reject, signal, onAbort: null }
         item.onAbort = () => {
