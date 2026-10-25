@@ -29,11 +29,14 @@ async function errorDetail(response) {
   return trimmed || `HTTP ${response.status} ${response.statusText}`
 }
 
-/** header 與 body 用 proxy 轉發子 agent 請求的同一套函式組，測到的就是真的會送出去的樣子。 */
-function call(provider, model, payload) {
+/**
+ * header 與 body 用 proxy 轉發子 agent 請求的同一套函式組，測到的就是真的會送出去的樣子。
+ * incoming 扮演 Claude Code 送進 router 的 header —— 照 SUBAGENT_SHAPE 打的項目要帶 SUBAGENT_HEADERS。
+ */
+function call(provider, model, payload, incoming = {}) {
   return fetch(`${provider.baseUrl}/v1/messages`, {
     method: 'POST',
-    headers: buildProviderHeaders({}, provider),
+    headers: buildProviderHeaders(incoming, provider),
     body: JSON.stringify(rewriteBodyForProvider(payload, model).body),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   })
@@ -261,6 +264,25 @@ const SUBAGENT_SHAPE = {
 }
 
 /**
+ * 與 SUBAGENT_SHAPE 成對：sonnet 子 agent 實際帶的 beta 清單（v2.1.274，docs/claude-code-request-shapes.md）。
+ * 第三方多半忽略這個 header，官方 API 則照它驗 body —— 沒帶時 context_management 直接 400
+ * 「Extra inputs are not permitted」，測到的是測試自己的錯，不是 provider 的。
+ */
+const SUBAGENT_HEADERS = {
+  'anthropic-beta': [
+    'claude-code-20250219',
+    'oauth-2025-04-20',
+    'interleaved-thinking-2025-05-14',
+    'thinking-token-count-2026-05-13',
+    'context-management-2025-06-27',
+    'prompt-caching-scope-2026-01-05',
+    'mid-conversation-system-2026-04-07',
+    'advisor-tool-2026-03-01',
+    'effort-2025-11-24',
+  ].join(','),
+}
+
+/**
  * 子 agent 每一輪的真實形狀：串流吐出 tool_use，Claude Code 把整則 assistant 訊息
  * （包括 thinking 與它的 signature）原樣送回去，再附上 tool_result。
  *
@@ -290,7 +312,7 @@ async function testToolLoop(provider, model) {
     content: 'Use the get_order_status tool to look up order A-1042, then reply with the tracking code it returns and nothing else.',
   }
 
-  const first = await call(provider, model, { ...request, messages: [ask] })
+  const first = await call(provider, model, { ...request, messages: [ask] }, SUBAGENT_HEADERS)
   if (!first.ok) return { ok: false, ms: Date.now() - started, error: await errorDetail(first) }
   const turn1 = await readStream(first, started)
   const toolUse = turn1.blocks.find((b) => b.type === 'tool_use')
@@ -320,7 +342,7 @@ async function testToolLoop(provider, model) {
         content: [{ type: 'tool_result', tool_use_id: toolUse.id, content: `Order A-1042: shipped. Tracking code: ${trackingCode}` }],
       },
     ],
-  })
+  }, SUBAGENT_HEADERS)
   if (!second.ok) {
     return {
       ok: false,
@@ -368,7 +390,7 @@ async function testSystemMessages(provider, model) {
         content: [{ type: 'text', text: `Reminder code: ${late}`, cache_control: { type: 'ephemeral', ttl: '1h' } }],
       },
     ],
-  })
+  }, SUBAGENT_HEADERS)
   return judgeReply(response, started, (text) => {
     const missing = [
       [early, 'mid-conversation'],
@@ -474,7 +496,7 @@ async function readFileTurns(provider, model, started, { instruction, resultCont
   const request = { ...SUBAGENT_SHAPE, tools: [READ_TOOL] }
   const ask = { role: 'user', content: instruction }
 
-  const first = await call(provider, model, { ...request, messages: [ask] })
+  const first = await call(provider, model, { ...request, messages: [ask] }, SUBAGENT_HEADERS)
   if (!first.ok) return { ok: false, ms: Date.now() - started, error: await errorDetail(first) }
   const turn1 = await first.json()
   const toolUse = (turn1.content ?? []).find((b) => b.type === 'tool_use')
@@ -489,7 +511,7 @@ async function readFileTurns(provider, model, started, { instruction, resultCont
       { role: 'assistant', content: turn1.content },
       { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUse.id, content: resultContent }] },
     ],
-  })
+  }, SUBAGENT_HEADERS)
   return judgeReply(second, started, judge)
 }
 

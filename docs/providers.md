@@ -258,7 +258,13 @@ GUI 上每一列都標著它是必要還是能力。必要項目沒過的那列�
 的只推出機架，不發告警色（視覺規則見 [ui-notes.md](ui-notes.md)）。
 
 測試的 header 與 body 用 proxy 轉發子 agent 請求的同一套函式組（`buildProviderHeaders`、
-`rewriteBodyForProvider`），測到的就是真的會送出去的樣子。「執行測試」總共打 10 個
+`rewriteBodyForProvider`），測到的就是真的會送出去的樣子。照子 agent 形狀打的項目也帶
+sonnet 子 agent 的 `anthropic-beta` 清單（[claude-code-request-shapes.md](claude-code-request-shapes.md#每一筆推論請求都有的)），
+前三項不帶。第三方多半忽略這個 header，官方 API 卻照它驗 body：2026-10 拿
+`api.anthropic.com` 的 API key 測，不帶時 `context_management` 一律 400 `Extra inputs
+are not permitted`。同一把 key 只要帶了 `claude-code-20250219` 就回 400 `Your credit
+balance is too low`，其他 beta 逐一帶都是 200；拿掉它以後，串流工具迴圈、中途 system
+訊息、看圖都過。「執行測試」總共打 10 個
 小請求（串流工具迴圈、看圖、讀 PDF 各 2 個），串流工具迴圈與能力項目一律用子 agent
 的思考形狀、檔位壓到 `low`。未儲存的設定也能直接測，測完滿意再按儲存。
 

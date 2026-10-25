@@ -6,19 +6,21 @@ import { runProbes } from '../src/probe.mjs'
 import { defaultProvider } from '../src/config.mjs'
 import { listen } from './helpers.mjs'
 
-/** 起一個只服務這一項測試的假上游，handler 決定每一筆怎麼回，並記下收到的 body。 */
+/** 起一個只服務這一項測試的假上游，handler 決定每一筆怎麼回，並記下收到的 body 與 header。 */
 async function withUpstream(handler, fn) {
   const seen = []
+  const seenHeaders = []
   const server = http.createServer(async (req, res) => {
     const chunks = []
     for await (const c of req) chunks.push(c)
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
     seen.push(body)
+    seenHeaders.push(req.headers)
     handler(body, res)
   })
   const url = await listen(server)
   try {
-    return await fn(url, seen)
+    return await fn(url, seen, seenHeaders)
   } finally {
     server.close()
   }
@@ -133,6 +135,21 @@ test('結果都帶著分級：必要項目與能力項目分得開', async () =>
     async (url) => {
       const { results } = await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['connectivity', 'systemMessages'] })
       assert.deepEqual(results.map((r) => r.tier), ['required', 'capability'])
+    },
+  )
+})
+
+test('照子 agent 形狀打的請求帶著成對的 anthropic-beta，簡化的單發請求不帶', async () => {
+  await withUpstream(
+    (_body, res) => replyText(res, 'OK'),
+    async (url, seen, seenHeaders) => {
+      await runProbes(defaultProvider({ baseUrl: url, model: 'm' }), { tests: ['connectivity', 'systemMessages'] })
+      assert.equal(seenHeaders[0]['anthropic-beta'], undefined, '基本推論只問通不通，不讓 beta 拖下水')
+      assert.ok(seen[1].context_management, '前提：這一筆帶著要 beta 才收的欄位')
+      const betas = seenHeaders[1]['anthropic-beta']?.split(',') ?? []
+      // 官方 API 沒這兩個就 400：前者擋 context_management，後者擋對話中間的 role: "system"
+      assert.ok(betas.includes('context-management-2025-06-27'), betas.join(','))
+      assert.ok(betas.includes('mid-conversation-system-2026-04-07'), betas.join(','))
     },
   )
 })

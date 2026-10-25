@@ -11,6 +11,18 @@
 
 ---
 
+## 2026-10-25
+
+### 修正
+
+- **內建測試照子 agent 形狀打的項目補上 `anthropic-beta`。** 之前測試組 header 時沒有 client
+  header 可帶，body 裡有 `context_management` 卻沒有成對的 beta。第三方會忽略，
+  `api.anthropic.com` 直接 400 `Extra inputs are not permitted`，四項一起誤報失敗。現在帶
+  sonnet 子 agent 實際送的那份清單，前三項單發請求仍然不帶。補上之後用官方 API key 實測：
+  帶了 `claude-code-20250219` 回 400 `Your credit balance is too low`（逐一帶其他 beta 都是
+  200）。真實的子 agent 流量也帶這個 beta，所以測試現在報的失敗是真的，細節見
+  [docs/providers.md](docs/providers.md#內建的測試)。
+
 ## 2026-10-21
 
 ### 修正
