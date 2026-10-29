@@ -105,20 +105,9 @@ export function buildProviderHeaders(incoming, provider) {
   }
   // gateway protocol 要求原樣轉發，body 裡對應的欄位（context_management、effort⋯⋯）才有成對的 header。
   // 實測 DeepSeek 收下 Claude Code 完整的 beta 清單照常回 200，快取命中跟不帶時一樣（2026-09）
-  const betas = (incoming['anthropic-beta'] ?? '')
-    .split(',')
-    .map((b) => b.trim())
-    .filter((b) => b && !PROVIDER_DROPPED_BETAS.has(b))
-  if (betas.length) headers['anthropic-beta'] = betas.join(',')
+  if (incoming['anthropic-beta']) headers['anthropic-beta'] = incoming['anthropic-beta']
   return headers
 }
-
-/**
- * 只在 provider 線上拿掉、訂閱線照帶的 beta。
- * claude-code-20250219：官方 API 把帶它的請求當成 Claude Code 流量計費，Max 方案附送的每月 API
- * credit 不涵蓋這種用量，同一把 key 帶了就 400「Your credit balance is too low」、不帶就 200（實測 2026-10）。
- */
-const PROVIDER_DROPPED_BETAS = new Set(['claude-code-20250219'])
 
 /**
  * 只換 model、其餘一個字不動。走訂閱那條線時只用得到它和 rewriteEffort ——

@@ -129,6 +129,6 @@ export const BASE_BODY = {
 
 export const SUBSCRIPTION_HEADERS = {
   authorization: 'Bearer sk-ant-oat-fake',
-  'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20,context-management-2025-06-27',
+  'anthropic-beta': 'oauth-2025-04-20,context-management-2025-06-27',
   'x-claude-code-session-id': 'sess-1',
 }

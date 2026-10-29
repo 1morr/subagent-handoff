@@ -13,13 +13,16 @@
 
 ## 2026-10-30
 
-### 修正
+### 還原
 
-- **provider 線上的 `anthropic-beta` 拿掉 `claude-code-20250219`，其餘照轉。** 用 Max 方案
-  附送的每月 API credit 打官方 API 時，帶了它的請求一律 400 `Your credit balance is too low`
-  —— 官方把它當成 Claude Code 流量，那筆 credit 不涵蓋。子 agent 分到這種 provider 時每一筆都
-  失敗。拿掉後同一把 key 的內建測試，必要項目與中途 system 訊息、看圖都過；第三方本來就用不到
-  它。訂閱線照原樣轉發。細節見 [docs/providers.md](docs/providers.md#router-對請求改了什麼)。
+- **provider 線上的 `anthropic-beta` 恢復原樣轉發，不再拿掉 `claude-code-20250219`。** 當天稍早
+  為了讓 Max 方案附送的每月 API credit 能接子 agent 而拿掉它，內建測試因此全過，真實流量卻照樣
+  400 `Your credit balance is too low`：system prompt 裡的計費標頭與身分行一樣會被認出來。官方
+  明文規定這筆 credit 不涵蓋互動式 Claude Code，這個 400 是計費政策，不是 router 的問題；剝掉
+  這些標記等於繞過限制，所以整個還原，也不往 system prompt 下手。還原後這種 key 的測試如實失敗。
+  細節見 [docs/providers.md](docs/providers.md#max-方案附送的-api-credit-不能接)。
+
+### 修正
 
 - **讀 PDF 測試的檔案路徑改成 `/home/user/report.pdf`。** 原本的 `/tmp/probe.pdf` 加上「回報
   裡面的 code」，在官方 API 上第一輪 3/3 被 cyber 分類器以 refusal 擋下，這項每次都是 N/A。

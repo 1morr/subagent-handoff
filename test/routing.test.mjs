@@ -34,7 +34,7 @@ test('主對話原樣轉發，訂閱憑證與 anthropic-beta 完整保留', asyn
   assert.deepEqual(hit.body, BASE_BODY, '主對話的 body 一個字都不能動')
 })
 
-test('子 agent 改導向 provider 並改寫 model，其餘 body 欄位與 anthropic-beta 送過去', async () => {
+test('子 agent 改導向 provider 並改寫 model，其餘 body 欄位與 anthropic-beta 原樣送過去', async () => {
   const res = await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'agent-1' }, BASE_BODY)
   assert.equal(res.status, 200)
   await res.text()
@@ -42,11 +42,7 @@ test('子 agent 改導向 provider 並改寫 model，其餘 body 欄位與 anthr
   const [hit] = harness.upstream.state.received
   assert.equal(hit.body.model, 'kimi-k3')
   assert.equal(hit.headers.authorization, 'Bearer sk-moonshot', '要換成 provider 自己的 key')
-  assert.equal(
-    hit.headers['anthropic-beta'],
-    'oauth-2025-04-20,context-management-2025-06-27',
-    'body 裡的欄位要有成對的 beta header；claude-code-20250219 拿掉，官方 API key 帶了會被當成 Claude Code 流量拒收',
-  )
+  assert.equal(hit.headers['anthropic-beta'], SUBSCRIPTION_HEADERS['anthropic-beta'], 'body 裡的欄位要有成對的 beta header')
   // 剝掉 output_config 會讓 /effort 靜默失效，請求照樣 200
   assert.deepEqual(hit.body.output_config, { effort: 'high' }, 'effort 必須原封不動送到 provider')
   assert.deepEqual(hit.body.thinking, { type: 'adaptive' })

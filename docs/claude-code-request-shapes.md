@@ -12,7 +12,7 @@
 
 | 項目 | 形狀 |
 | --- | --- |
-| `anthropic-beta` | router 在訂閱線上原樣轉發，provider 線上只拿掉 `claude-code-20250219`（[providers.md](providers.md#router-對請求改了什麼)）。主對話（`opus[1m]`）：`claude-code-20250219, oauth-2025-04-20, context-1m-2025-08-07, interleaved-thinking-2025-05-14, thinking-token-count-2026-05-13, context-management-2025-06-27, prompt-caching-scope-2026-01-05, mid-conversation-system-2026-04-07, mid-conversation-tool-changes-2026-07-01, advisor-tool-2026-03-01, effort-2025-11-24`，主迴圈另加 `fallback-credit-2026-06-01, extended-cache-ttl-2025-04-11`。sonnet 子 agent 少了 `context-1m`、`mid-conversation-tool-changes`、`fallback-credit`、`extended-cache-ttl` |
+| `anthropic-beta` | router 在兩條線上都原樣轉發。主對話（`opus[1m]`）：`claude-code-20250219, oauth-2025-04-20, context-1m-2025-08-07, interleaved-thinking-2025-05-14, thinking-token-count-2026-05-13, context-management-2025-06-27, prompt-caching-scope-2026-01-05, mid-conversation-system-2026-04-07, mid-conversation-tool-changes-2026-07-01, advisor-tool-2026-03-01, effort-2025-11-24`，主迴圈另加 `fallback-credit-2026-06-01, extended-cache-ttl-2025-04-11`。sonnet 子 agent 少了 `context-1m`、`mid-conversation-tool-changes`、`fallback-credit`、`extended-cache-ttl` |
 | `metadata.user_id` | 一段 JSON 字串，含 `device_id`、claude.ai 的 `account_uuid`、`session_id`。**router 在 provider 線上會拿掉整個 `metadata`** |
 | 思考 | `thinking: {type: "adaptive"}`（Workflow agent 多了 `display: "omitted"`）、`context_management.edits: [clear_thinking_20251015, keep: all]`、`output_config: {effort}` |
 | `max_tokens` | opus 128000、sonnet 64000 |

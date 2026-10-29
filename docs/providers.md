@@ -12,22 +12,33 @@ provider 線的改寫是固定的，沒有開關（`src/proxy.mjs` 的 `buildPro
 
 | | 做了什麼 |
 | --- | --- |
-| header | 從零組起：`content-type`、provider 自己的 key、從 client 帶過去的 `anthropic-version`、`anthropic-beta`（拿掉 `claude-code-20250219`）與 `accept`（client 沒帶時 `anthropic-version` 補 `2023-06-01`、`accept` 補 `application/json`）。client 的 `authorization`、`cookie`、`x-claude-code-*` 一律不帶 |
+| header | 從零組起：`content-type`、provider 自己的 key、從 client 帶過去的 `anthropic-version`、`anthropic-beta` 與 `accept`（client 沒帶時 `anthropic-version` 補 `2023-06-01`、`accept` 補 `application/json`）。client 的 `authorization`、`cookie`、`x-claude-code-*` 一律不帶 |
 | `model` | 換成規則的 `modelOverride`，其次 provider 的 `model`，都沒有就照原樣 |
 | `metadata` | 整個拿掉，理由見 [security.md](security.md#送去-provider-的請求一律拿掉-metadata) |
 | `tools[].input_schema` 裡的 `pattern` | 正規表達式的 `\0` 換成等價的 `\x00`，見下一節。schema 的其他部分一個字不動 |
 | 其餘 body | 一個字不動，包括 `thinking`、`output_config`、`context_management`、`cache_control` 與對話中間的 `role: "system"` 訊息。整包重新序列化，但鍵的順序不變 |
 
-`anthropic-beta` 照官方 gateway protocol 轉發，body 裡的 `context_management`、
+`anthropic-beta` 照官方 gateway protocol 原樣轉發，body 裡的 `context_management`、
 `effort` 這些欄位才有成對的 header。2026-09 對 DeepSeek 實測：帶 Claude Code 完整的
 beta 清單（13 個，含 `oauth-2025-04-20`、`extended-cache-ttl-2025-04-11`）與完全不
 帶，串流與非串流都是 200，快取命中的 token 數也一樣。Kimi 在這個改動之後還沒驗過。
 
-唯一拿掉的是 `claude-code-20250219`。官方 API 把帶它的請求當成 Claude Code 流量計費，
-Max 方案附送的每月 API credit 不涵蓋這種用量：2026-10 拿這種 credit 的 API key 打
-`api.anthropic.com`，帶了它回 400 `Your credit balance is too low`，其餘 8 個子 agent
-beta 逐一帶都是 200（同樣的現象見 [decolua/9router#4739](https://github.com/decolua/9router/issues/4739)）。
-第三方用不到它：DeepSeek 帶不帶整份清單結果都一樣。訂閱線照帶，那裡要靠它計費。
+### Max 方案附送的 API credit 不能接
+
+官方規定 Max / Team 方案每月附送的 API credit 不涵蓋互動式 Claude Code（[Help
+Center](https://support.claude.com/en/articles/17154008-monthly-api-credits-for-max-and-team-plans)）。
+只有這筆 credit 的 Console 組織，它的 API key 填成 provider 時，Claude Code 的請求一律
+400 `Your credit balance is too low`。2026-10 逐一實測，下面任何一樣出現在請求裡就會被擋，
+沒有的話同一把 key 是 200：
+
+- `anthropic-beta` 裡的 `claude-code-20250219`
+- `system` 裡的計費標頭 `x-anthropic-billing-header: cc_version=…`
+- `system` 裡的身分行 `You are Claude Code, Anthropic's official CLI for Claude.`
+
+Claude Code 的每一筆推論請求（主對話與子 agent）都帶 system prompt，所以這是計費政策，
+不是相容性問題。router 不剝這些標記：剝掉等於把 Claude Code 流量偽裝成別的用量來花這筆
+credit，繞過官方的限制。曾經在 provider 線上拿掉 `claude-code-20250219`，已經還原
+（見 CHANGELOG 2026-10-30）。要讓子 agent 走官方 API，用自己購買的 API credit。
 
 Claude Code 升級後新增的 body 欄位或 beta，provider 不收時會回 400，流量記錄裡看得
 到 provider 自己的錯誤訊息。router 不提供剝欄位的開關：剝掉 `output_config` 這類欄位
@@ -274,8 +285,9 @@ GUI 上每一列都標著它是必要還是能力。必要項目沒過的那列�
 sonnet 子 agent 的 `anthropic-beta` 清單（[claude-code-request-shapes.md](claude-code-request-shapes.md#每一筆推論請求都有的)），
 前三項不帶。第三方多半忽略這個 header，官方 API 卻照它驗 body：2026-10 拿
 `api.anthropic.com` 的 API key 測，不帶時 `context_management` 一律 400 `Extra inputs
-are not permitted`。清單裡的 `claude-code-20250219` 跟真實流量一樣由 `buildProviderHeaders`
-拿掉（見「router 對請求改了什麼」）。「執行測試」總共打 10 個
+are not permitted`。測試請求沒有 Claude Code 的 system prompt，所以測得過不代表真實流量
+過得了，Max 方案附送的 API credit 就是一例，見上面「Max 方案附送的 API credit 不能接」。
+「執行測試」總共打 10 個
 小請求（串流工具迴圈、看圖、讀 PDF 各 2 個），串流工具迴圈與能力項目一律用子 agent
 的思考形狀、檔位壓到 `low`。未儲存的設定也能直接測，測完滿意再按儲存。
 
