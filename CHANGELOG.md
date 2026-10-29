@@ -11,6 +11,16 @@
 
 ---
 
+## 2026-10-30
+
+### 修正
+
+- **provider 線上的 `anthropic-beta` 拿掉 `claude-code-20250219`，其餘照轉。** 用 Max 方案
+  附送的每月 API credit 打官方 API 時，帶了它的請求一律 400 `Your credit balance is too low`
+  —— 官方把它當成 Claude Code 流量，那筆 credit 不涵蓋。子 agent 分到這種 provider 時每一筆都
+  失敗。拿掉後同一把 key 的內建測試，必要項目與中途 system 訊息、看圖都過；第三方本來就用不到
+  它。訂閱線照原樣轉發。細節見 [docs/providers.md](docs/providers.md#router-對請求改了什麼)。
+
 ## 2026-10-25
 
 ### 修正

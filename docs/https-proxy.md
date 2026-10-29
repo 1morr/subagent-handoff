@@ -122,7 +122,7 @@ sequenceDiagram
 | 請求 | 送去哪 | body | header 跟 Claude Code 送的相比 | 誰發起 TLS |
 |---|---|---|---|---|
 | 主對話 `/v1/messages` | Anthropic | 原樣（規則指定換 model 時只改 `model`） | 多 `accept-language: *`、`sec-fetch-mode: cors`；`accept-encoding` 換成 `gzip, deflate`；client 沒帶 `accept` 時補 `*/*`。這些是 Node `fetch` 自己加的 | router（Node） |
-| subagent `/v1/messages` | provider | 換 `model`、拿掉 `metadata`、修上游編不動的 `pattern` | 從零組起：只帶 `anthropic-version`、`anthropic-beta`、`accept`、`content-type` 與 provider 的 key。`user-agent` 變成 `node`；訂閱的 OAuth token、`x-app`、session id 都不會送出 | router（Node） |
+| subagent `/v1/messages` | provider | 換 `model`、拿掉 `metadata`、修上游編不動的 `pattern` | 從零組起：只帶 `anthropic-version`、`anthropic-beta`（拿掉 `claude-code-20250219`）、`accept`、`content-type` 與 provider 的 key。`user-agent` 變成 `node`；訂閱的 OAuth token、`x-app`、session id 都不會送出 | router（Node） |
 | 其他 `api.anthropic.com` 路徑（只有開啟時才經過 router） | Anthropic | 原樣 | 原樣（只有逐跳的 `connection`） | router（Node） |
 | WebSocket（voice mode） | Anthropic | 原樣 | 請求頭原樣 | router（Node） |
 | 其他主機（github、npm…） | 原目的地 | router 看不到 | router 看不到 | Claude Code 自己 |
