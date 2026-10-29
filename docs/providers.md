@@ -260,6 +260,12 @@ PDF 換成佔位字之後照樣回 200。思考把 `max_tokens` 吃光、或模�
 個 400 會被誤判成看不到圖。測試用的圖片與 PDF 是每次隨機產生的（四格純色 PNG、一行
 字的 PDF），零依賴自己編碼。
 
+讀 PDF 的指令寫的路徑是 `/home/user/report.pdf`，不是 `/tmp/probe.pdf`。2026-10 在官方
+API（`claude-opus-5-5`）上，「讀 `/tmp/probe.pdf`、回報裡面的 code」第一輪 3/3 被 cyber
+分類器擋下（`stop_reason: "refusal"`、`stop_details.category: "cyber"`），這項因此永遠是
+N/A。只換路徑或只把 code 換成 number 都是 3/3 正常呼叫 Read；換路徑後完整的測試 4/4 過。
+改指令措辭時記得在官方 API 上重跑。
+
 GUI 上每一列都標著它是必要還是能力。必要項目沒過的那列用告警框框住；能力項目沒過
 的只推出機架，不發告警色（視覺規則見 [ui-notes.md](ui-notes.md)）。
 

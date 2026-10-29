@@ -21,6 +21,12 @@
   失敗。拿掉後同一把 key 的內建測試，必要項目與中途 system 訊息、看圖都過；第三方本來就用不到
   它。訂閱線照原樣轉發。細節見 [docs/providers.md](docs/providers.md#router-對請求改了什麼)。
 
+- **讀 PDF 測試的檔案路徑改成 `/home/user/report.pdf`。** 原本的 `/tmp/probe.pdf` 加上「回報
+  裡面的 code」，在官方 API 上第一輪 3/3 被 cyber 分類器以 refusal 擋下，這項每次都是 N/A。
+  換路徑後完整測試 4/4 過。中途 system 訊息那項偶爾把結尾的碼答成 NONE（約 8 次 1 次），同一個
+  請求本機重跑 6/6 過、碼是隨機的猜不中，所以判斷是模型偶發、不是上游丟訊息，沒有改。細節見
+  [docs/providers.md](docs/providers.md#內建的測試)。
+
 ## 2026-10-25
 
 ### 修正
