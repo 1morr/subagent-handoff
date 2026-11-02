@@ -18,7 +18,7 @@
 | `max_tokens` | opus 128000、sonnet 64000 |
 | `system` | 三個 text block，後兩個帶 `cache_control`（主對話 `ttl: "1h"`，子 agent 預設 5 分鐘） |
 | `messages` | 第一則 user 由好幾個 text block 組成，**緊接著一則 `role: "system"`**（主對話約 8.6K 字元，子 agent 也有）；結尾常再有一則帶 `cache_control` 的 `role: "system"`。`tool_use`、`tool_result` 也帶 `cache_control` |
-| `tools` | 沒有 `strict`、沒有 `defer_loading` —— 自訂 base URL 下 tool search 預設關閉，實測吻合 |
+| `tools` | 沒有 `strict`、沒有 `defer_loading` —— 自訂 base URL 下 tool search 預設關閉，實測吻合。**v2.1.316（2026-11-02 用同樣的做法重抓）不再成立**：自訂 base URL 下 tool search 是開的，`tools` 裡有 `ToolSearch` 與一個帶 `defer_loading` 的 `DeferredToolPlaceholder`；session 中途連上的工具以 `tool_addition` block 放進第二則 `role: "system"` 訊息，DeepSeek 不收，見 [providers.md](providers.md#中途連上的工具tool_addition) |
 
 `role: "system"` 不是標準 Messages API 的角色。上游收下卻丟掉時，子 agent 會少掉 Claude Code 放在那裡的指示而且不報錯，所以「中途 system 訊息」是一個獨立的測試項。
 

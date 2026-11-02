@@ -190,8 +190,39 @@ export function rewriteToolPatterns(payload) {
     : { body: payload, changes: [] }
 }
 
+const isInlineToolDefinition = (block) => block?.type === 'tool_addition' && block.tool?.type === 'tool_definition'
+
 /**
- * provider 線的 body：換 model 與 effort、拿掉 metadata、修掉上游編不動的 pattern，其餘一個字不動。
+ * Claude Code（v2.1.316 起實測）把 session 中途才連上的工具（例如 claude.ai connector）放在 messages 裡：
+ * `{type: "tool_addition", tool: {type: "tool_definition", definition: {name, description, input_schema}}}`。
+ * DeepSeek 的 `tool_addition` 只認 `tool_reference`，整筆請求 422 在進推論前（實測 2026-11-02）。
+ *
+ * 把 definition 搬進頂層 `tools`、從 messages 拿掉那些 block，是實測會過、而且模型一定看得到工具的做法 ——
+ * 改成 `tool_reference` 也會過，但 input tokens 少了一截，確認不了工具有沒有真的載入。見 docs/providers.md。
+ * 只碰 `tool_definition` 那一種；`tool_reference` 是 DeepSeek 認得的，照原樣送。
+ */
+export function hoistToolAdditions(payload) {
+  if (!Array.isArray(payload?.messages)) return { body: payload, changes: [] }
+
+  const hoisted = []
+  const messages = payload.messages.map((message) => {
+    if (!Array.isArray(message?.content) || !message.content.some(isInlineToolDefinition)) return message
+    const content = message.content.filter((block) => {
+      if (!isInlineToolDefinition(block)) return true
+      hoisted.push(block.tool.definition)
+      return false
+    })
+    return { ...message, content }
+  })
+  if (!hoisted.length) return { body: payload, changes: [] }
+
+  const tools = [...(Array.isArray(payload.tools) ? payload.tools : []), ...hoisted]
+  return { body: { ...payload, messages, tools }, changes: [`tool_addition → tools (${hoisted.length})`] }
+}
+
+/**
+ * provider 線的 body：換 model 與 effort、拿掉 metadata、把 messages 裡的工具定義搬回 tools、
+ * 修掉上游編不動的 pattern，其餘一個字不動。
  * @param {string} [model] resolveModel 算出來的最終 model 名
  * @param {string} [effort] resolveEffort 算出來的最終 effort
  */
@@ -210,8 +241,10 @@ export function rewriteBodyForProvider(payload, model, effort) {
     changes.push('-metadata')
   }
 
-  const patched = rewriteToolPatterns(body)
-  return { body: patched.body, changes: [...changes, ...patched.changes] }
+  // 先搬再修 pattern：搬進來的工具 schema 一樣可能帶 `\0`
+  const lifted = hoistToolAdditions(body)
+  const patched = rewriteToolPatterns(lifted.body)
+  return { body: patched.body, changes: [...changes, ...lifted.changes, ...patched.changes] }
 }
 
 /** 錯誤摘要留這麼長就夠認出是哪一種錯，再長只是把流量記錄撐爛。 */

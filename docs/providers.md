@@ -15,6 +15,7 @@ provider 線的改寫是固定的，沒有開關（`src/proxy.mjs` 的 `buildPro
 | header | 從零組起：`content-type`、provider 自己的 key、從 client 帶過去的 `anthropic-version`、`anthropic-beta` 與 `accept`（client 沒帶時 `anthropic-version` 補 `2023-06-01`、`accept` 補 `application/json`）。client 的 `authorization`、`cookie`、`x-claude-code-*` 一律不帶 |
 | `model` | 換成規則的 `modelOverride`，其次 provider 的 `model`，都沒有就照原樣 |
 | `metadata` | 整個拿掉，理由見 [security.md](security.md#送去-provider-的請求一律拿掉-metadata) |
+| `messages` 裡的 `tool_addition`（`tool_definition`） | definition 搬進頂層 `tools`，block 從訊息拿掉，見[中途連上的工具](#中途連上的工具tool_addition) |
 | `tools[].input_schema` 裡的 `pattern` | 正規表達式的 `\0` 換成等價的 `\x00`，見下一節。schema 的其他部分一個字不動 |
 | 其餘 body | 一個字不動，包括 `thinking`、`output_config`、`context_management`、`cache_control` 與對話中間的 `role: "system"` 訊息。整包重新序列化，但鍵的順序不變 |
 
@@ -80,6 +81,47 @@ Anthropic 收得下同一份 schema，所以主對話沒事；工具清單是 `*
 
 這是唯一一條為了特定 provider 而做的 schema 改寫。要再加就先照上表打一次端點，
 確認「換寫法能過、原樣過不了」，不要憑猜測剝東西。
+
+## 中途連上的工具（`tool_addition`）
+
+Claude Code v2.1.316 會把 session 開始後才連上的工具（實測是 claude.ai 的 Claude Docs
+connector 那 3 個）放在第二則 `role: "system"` 訊息裡，不放頂層 `tools`：
+
+```json
+{"type": "tool_addition", "tool": {"type": "tool_definition", "definition": {"name": "…", "description": "…", "input_schema": {…}}}}
+```
+
+主對話與子 agent 都有，搭配的 beta 是 `mid-conversation-tool-changes-2026-07-01`、
+`inline-tools-2026-09-15`。DeepSeek 的 `tool_addition` 只認 `tool_reference`，整筆請求
+在進推論前被擋（2026-11-02 實測，`deepseek-flash`；當天分到 DeepSeek 的 32 筆子 agent
+請求全是這個錯）：
+
+```text
+HTTP 422  invalid_request_error: Failed to deserialize the JSON body into the target type:
+messages[1].content: unknown variant `tool_definition`, expected `tool_reference`
+```
+
+拿抓到的真實子 agent 請求（`max_tokens: 64`）打端點：
+
+| 送過去的形狀 | 結果 |
+| --- | --- |
+| 原樣 | **422**，同上 |
+| definition 搬進頂層 `tools`，block 從訊息拿掉 | 200，input 18,061 tokens |
+| block 換成 `{type: "tool_addition", tool: {type: "tool_reference", name}}`，definition 加進 `tools` 並帶 `defer_loading: true` | 200，input 10,387 tokens |
+| 同上但欄位寫 `tool_name` | **422** `missing field name` |
+
+router 選第二列（`hoistToolAdditions`），流量記錄多一筆 `tool_addition → tools (N)`。
+第三列也過，但少掉的那 7.7K tokens 說不清楚，確認不了 DeepSeek 有沒有真的把工具交給
+模型；搬進 `tools` 則一定看得到。代價是「中途才加入」的語義沒了 —— 對 DeepSeek 而言那些
+工具從第一筆就在，某個 session 中途才多出工具時，那一筆的快取前綴會從 `tools` 斷開。只搬
+`tool_definition`，`tool_reference` 照原樣送。訂閱線不動：Anthropic 認得這個 block。
+
+從 Claude Code 那一側關掉不划算（假上游實測）：`ENABLE_TOOL_SEARCH=false` 會讓主對話的
+工具全部攤進 `tools`（當時 90 個）；`ENABLE_CLAUDEAI_MCP_SERVERS=false` 會讓 claude.ai
+connector 整組失效，而且別的工具中途連上時照樣會出現這種 block。兩個都是全域設定，主對話
+會一起受影響。
+
+還沒驗的：對應的「中途拿掉工具」block 這次沒抓到，形狀未知，DeepSeek 很可能一樣不收。
 
 ## 思考檔位（effort）會不會跟著過去
 

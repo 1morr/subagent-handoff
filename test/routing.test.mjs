@@ -1,6 +1,6 @@
 import test, { before, after, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { rewriteBodyForProvider, rewriteEffort, rewriteModel, rewriteToolPatterns, SessionCwd } from '../src/proxy.mjs'
+import { hoistToolAdditions, rewriteBodyForProvider, rewriteEffort, rewriteModel, rewriteToolPatterns, SessionCwd } from '../src/proxy.mjs'
 import {
   globMatch, describeRequest, resolveRoute, resolveModel, resolveEffort, extractCwd, PASSTHROUGH_ID,
 } from '../src/routing.mjs'
@@ -559,6 +559,77 @@ test('rewriteBodyForProvider 三項改寫都記進 changes', () => {
   assert.equal(body.metadata, undefined)
   assert.equal(body.tools[0].input_schema.properties.file_paths.items.pattern, String.raw`^[^\x00]*$`)
   assert.deepEqual(changes, ['model claude-sonnet-5 → deepseek-flash', '-metadata', 'tools \\0 → \\x00'])
+})
+
+// ── provider 線：messages 裡的工具定義 ─────────────────────────────────
+// DeepSeek 的 tool_addition 只認 tool_reference，收到 tool_definition 整筆 422（見 docs/providers.md）。
+
+/** Claude Code v2.1.316 中途連上的工具，就是這樣夾在第二則 role: "system" 訊息裡。 */
+const TOOL_ADDITION = (name, schema = { type: 'object', properties: {} }) => ({
+  type: 'tool_addition',
+  tool: { type: 'tool_definition', definition: { name, description: `${name} tool`, input_schema: schema } },
+})
+
+const WITH_ADDITIONS = () => ({
+  model: 'claude-opus-5-5',
+  tools: [{ name: 'Read', input_schema: { type: 'object', properties: {} } }],
+  messages: [
+    { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+    { role: 'system', content: [{ type: 'text', text: 'tools changed' }, TOOL_ADDITION('Docs_batch'), TOOL_ADDITION('Docs_guide')] },
+  ],
+})
+
+test('hoistToolAdditions 把 tool_definition 搬進 tools，messages 裡的其他 block 留在原位', () => {
+  const original = WITH_ADDITIONS()
+  const snapshot = structuredClone(original)
+  const { body, changes } = hoistToolAdditions(original)
+
+  assert.deepEqual(original, snapshot, '輸入必須維持不變')
+  assert.deepEqual(body.tools.map((t) => t.name), ['Read', 'Docs_batch', 'Docs_guide'])
+  assert.deepEqual(body.tools[1], snapshot.messages[1].content[1].tool.definition, 'definition 原封不動搬過去')
+  assert.deepEqual(body.messages[1], { role: 'system', content: [{ type: 'text', text: 'tools changed' }] })
+  assert.equal(body.messages[0], original.messages[0], '沒碰到的訊息不重建')
+  assert.deepEqual(changes, ['tool_addition → tools (2)'])
+})
+
+test('請求本來沒有 tools 時，搬過去的工具自成一份清單', () => {
+  const { tools: _, ...noTools } = WITH_ADDITIONS()
+  assert.deepEqual(hoistToolAdditions(noTools).body.tools.map((t) => t.name), ['Docs_batch', 'Docs_guide'])
+})
+
+test('tool_reference 與一般 block 不動，沒有 tool_definition 就回傳原物件', () => {
+  const original = {
+    tools: [],
+    messages: [
+      { role: 'user', content: 'hi' },
+      { role: 'system', content: [{ type: 'tool_addition', tool: { type: 'tool_reference', name: 'Read' } }] },
+    ],
+  }
+  assert.deepEqual(hoistToolAdditions(original), { body: original, changes: [] })
+  assert.deepEqual(hoistToolAdditions(null), { body: null, changes: [] })
+})
+
+test('搬進 tools 的工具一樣會修 pattern', () => {
+  const body = WITH_ADDITIONS()
+  body.messages[1].content.push(TOOL_ADDITION('Artifact', ARTIFACT_TOOL().input_schema))
+  const { body: out, changes } = rewriteBodyForProvider(body, 'deepseek-flash')
+
+  assert.equal(out.tools.at(-1).input_schema.properties.file_paths.items.pattern, String.raw`^[^\x00]*$`)
+  assert.deepEqual(changes, ['model claude-opus-5-5 → deepseek-flash', 'tool_addition → tools (3)', 'tools \\0 → \\x00'])
+})
+
+test('provider 收到搬好的 tools，訂閱線照舊原樣送', async () => {
+  const body = { ...BASE_BODY, ...WITH_ADDITIONS() }
+
+  await (await post({ ...SUBSCRIPTION_HEADERS, 'x-claude-code-agent-id': 'agent-1' }, body)).text()
+  const sent = harness.upstream.state.received[0].body
+  assert.deepEqual(sent.tools.map((t) => t.name), ['Read', 'Docs_batch', 'Docs_guide'])
+  assert.ok(!JSON.stringify(sent.messages).includes('tool_definition'))
+  assert.ok(harness.logStore.list()[0].changes.includes('tool_addition → tools (2)'))
+
+  // Anthropic 認得 tool_addition，訂閱線改了反而會丟掉「中途加工具」的語義
+  await (await post(SUBSCRIPTION_HEADERS, body)).text()
+  assert.deepEqual(harness.upstream.state.received[0].body.messages, body.messages)
 })
 
 test('provider 收到改寫後的 pattern，訂閱線照舊原樣送', async () => {

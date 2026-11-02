@@ -11,6 +11,19 @@
 
 ---
 
+## 2026-11-02
+
+### 修正
+
+- **provider 線把 `messages` 裡的 `tool_addition` 工具定義搬進頂層 `tools`。** Claude Code
+  v2.1.316 把 session 中途連上的工具（claude.ai connector）以 `tool_addition` →
+  `tool_definition` 放在第二則 `role: "system"` 訊息裡，DeepSeek 只認 `tool_reference`，
+  子 agent 每一筆都 422 在進推論前（當天 32 筆全滅）。拿真實請求打端點，搬進 `tools` 是 200；
+  改成 `tool_reference` 也過，但 input tokens 少一截、確認不了工具有沒有載入，沒選。從
+  Claude Code 關掉（`ENABLE_TOOL_SEARCH=false` / `ENABLE_CLAUDEAI_MCP_SERVERS=false`）都是
+  全域設定、會拖累主對話，也沒選。訂閱線不動。細節見
+  [docs/providers.md](docs/providers.md#中途連上的工具tool_addition)。
+
 ## 2026-10-30
 
 ### 還原
