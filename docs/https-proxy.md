@@ -113,7 +113,7 @@ sequenceDiagram
 | 本機 CA | 沒有 | 有，只能簽 `api.anthropic.com` |
 | Remote Control | CLI 停用（base URL 指向非 Anthropic 主機） | Desktop 可用；CLI 要全域改用這個模式才行 |
 | voice mode（CLI） | 直連 Anthropic | 經 router 原樣轉發 |
-| 只給直連 Anthropic 的功能 | 停用：例如內建 mod `cc-plugin-you-should-know` 在 `/plugin` 裡整列消失 | 照常；但也會在 `tools` 帶 advisor 工具，主對話分到 provider 時會 422（見「代價與地雷」） |
+| 只給直連 Anthropic 的功能 | 停用：例如內建 mod `cc-plugin-you-should-know` 在 `/plugin` 裡整列消失 | 照常；也會在 `tools` 帶 advisor 工具，送去 provider 前由 router 拿掉（[providers.md](providers.md#advisor-工具advisor_20260301)） |
 
 ## 送出了什麼
 
@@ -243,16 +243,14 @@ Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之�
 但 `NODE_EXTRA_CA_CERTS` 只在啟動時讀：請求開始送進 router、卻不信任它的證書，之後每一筆都握手失敗，
 router 的 console 只看得到一行「還沒握完手就關了」（2026-11-07，CLI 2.1.319 實測）。
 
-另外建議一起設 `NO_PROXY` 與（主對話會分到 provider 的話）`CLAUDE_CODE_DISABLE_ADVISOR_TOOL`，
-原因見「代價與地雷」：
+另外建議一起設 `NO_PROXY`，原因見「代價與地雷」：
 
 ```json
 {
   "env": {
     "HTTPS_PROXY": "http://127.0.0.1:8787",
     "NODE_EXTRA_CA_CERTS": "<CA 路徑>",
-    "NO_PROXY": "localhost,127.0.0.1,::1",
-    "CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1"
+    "NO_PROXY": "localhost,127.0.0.1,::1"
   }
 }
 ```
@@ -337,8 +335,9 @@ router 的 console 只看得到一行「還沒握完手就關了」（2026-11-07
   改成這個模式、開新 session 後 mod 出現在 `/plugin`，也實際彈出過提示。
 - **開著的 session 熱載入 `HTTPS_PROXY` 會斷線**（見「設定 Claude Code」）。
 - **Orca agent-view 的本機連線被送進 router**，加 `NO_PROXY` 後不再出現（見「代價與地雷」）。
-- **advisor 工具：** 同一個 repo、`main` 規則暫時指向 DeepSeek，`claude -p` 不設
-  `CLAUDE_CODE_DISABLE_ADVISOR_TOOL` 時 422 `tools[12]: unknown variant advisor_20260301`，設了是 200。
+- **advisor 工具：** 同一個 repo、`main` 規則暫時指向 DeepSeek，`claude -p` 回 422
+  `tools[12]: unknown variant advisor_20260301`；設 `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1` 是 200。之後改成由
+  router 拿掉，見 [providers.md](providers.md#advisor-工具advisor_20260301)。
 - 「You should know」的檢查怎麼分類，見 [request-map.md](request-map.md#推論請求v1messages會經過分流)。
 
 ## 怎麼驗的
@@ -415,10 +414,9 @@ runtime，證明的是「runtime 說沒開時沒有例外」，不是「GUI 關�
   http://127.0.0.1:<port>/claude/agent-view`。router 不轉發明文代理請求，每一筆都回 400，流量記錄被灌滿
   （2026-11-07 一小時內 207 筆，記成 `main`）。錯誤訊息說是 `ANTHROPIC_BASE_URL` 打架，**在這個情況下是錯的**：
   那句話只對目的地是 router 自己的請求成立。
-- **主對話分到 provider 時，關掉 advisor 工具。** 這個模式下 Claude Code 以為自己直連 Anthropic，
-  會在 `tools` 帶 `advisor_20260301` 這種 server tool；`ANTHROPIC_BASE_URL` 模式不會帶。router 原樣轉給
-  provider，DeepSeek 回 422（[providers.md](providers.md#advisor-工具advisor_20260301)）。設
-  `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1` 就不帶；代價是走訂閱時也用不到 advisor。
+- **這個模式下 Claude Code 會帶 advisor 工具**（`ANTHROPIC_BASE_URL` 模式不會）。走訂閱照常可用；
+  分到 provider 的請求由 router 拿掉 advisor，否則 DeepSeek 回 422
+  （[providers.md](providers.md#advisor-工具advisor_20260301)）。不需要設 `CLAUDE_CODE_DISABLE_ADVISOR_TOOL`。
 - **模式開著時，guard 對解開的請求放行。** 它們的 Host 是 `api.anthropic.com`，必然過不了主機名檢查。
   這條路不必防 DNS rebinding 與 CSRF：網頁的 `fetch` 送不出 `CONNECT`，瀏覽器也不信任這把 CA。
   proxy 那台 server 只收明文，所以「socket 是加密的」就代表是這條路進來的

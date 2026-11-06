@@ -15,6 +15,7 @@ provider 線的改寫是固定的，沒有開關（`src/proxy.mjs` 的 `buildPro
 | header | 從零組起：`content-type`、provider 自己的 key、從 client 帶過去的 `anthropic-version`、`anthropic-beta` 與 `accept`（client 沒帶時 `anthropic-version` 補 `2023-06-01`、`accept` 補 `application/json`）。client 的 `authorization`、`cookie`、`x-claude-code-*` 一律不帶 |
 | `model` | 換成規則的 `modelOverride`，其次 provider 的 `model`，都沒有就照原樣 |
 | `metadata` | 整個拿掉，理由見 [security.md](security.md#送去-provider-的請求一律拿掉-metadata) |
+| advisor 工具 | `tools` 裡的 `advisor_*` 與歷史訊息裡的 `server_tool_use`（name `advisor`）、`advisor_tool_result` 拿掉，明文建議改成 text，見 [advisor 工具](#advisor-工具advisor_20260301) |
 | `messages` 裡的 `tool_addition`（`tool_definition`） | definition 搬進頂層 `tools`，block 從訊息拿掉，見[中途連上的工具](#中途連上的工具tool_addition) |
 | `tools[].input_schema` 裡的 `pattern` | 正規表達式的 `\0` 換成等價的 `\x00`，見下一節。schema 的其他部分一個字不動 |
 | 其餘 body | 一個字不動，包括 `thinking`、`output_config`、`context_management`、`cache_control` 與對話中間的 `role: "system"` 訊息。整包重新序列化，但鍵的順序不變 |
@@ -134,9 +135,25 @@ expected `web_search_20250305` or `web_search_20260209`
 ```
 
 `ANTHROPIC_BASE_URL` 模式下 Claude Code 不會帶它，所以以前沒遇過；子 agent 的請求目前也沒看到它。
-router 還沒在 provider 線上拿掉它，現在的解法是在 Claude Code 設 `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1`
-（2026-11-07，CLI 2.1.319、`deepseek-flash` 實測：不設 422、設了 200）。代價是走訂閱時也沒有 advisor。
-要在 router 拿掉，還得處理歷史訊息裡對應的 `server_tool_use` / 結果 block，這次沒有抓到它們的形狀。
+
+用過 advisor 的對話，歷史訊息裡還會留著它的呼叫與結果（形狀照
+[官方文檔](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool)，也對過
+CLI 2.1.319 的程式碼）：assistant 訊息裡一個 `server_tool_use`（`name: "advisor"`），接著一個
+`advisor_tool_result`，`content` 是明文的 `advisor_result`（`text`）、加密的 `advisor_redacted_result`
+（Opus 5.5 當 advisor 時就是這種）或 `advisor_tool_result_error`。DeepSeek 對 `advisor_tool_result`
+一樣 422（`unknown variant advisor_tool_result`），`server_tool_use` 本身它認得。
+
+**router 在 provider 線上全部拿掉**（`stripAdvisor`）：
+
+- `tools` 裡 `type` 是 `advisor_<日期>` 的定義。
+- 歷史裡 `name: "advisor"` 的 `server_tool_use` 與所有 `advisor_tool_result`。明文的建議改成
+  `[advisor] <建議>` 的 text 留在原位，provider 的模型還看得到；加密的只有 Anthropic 解得開、錯誤沒有內容，
+  直接丟掉。訊息只剩 advisor block 時留一個 `[advisor]` 佔位，不送出空的 `content`。
+- 其他 `server_tool_use`（例如 `web_search`）不動。流量記錄的「送出前改寫」會出現 `-advisor tool` 與
+  `-advisor blocks (N)`。
+
+2026-11-07 用 `deepseek-flash` 實測五種請求（`tools` 帶 advisor、歷史帶加密結果、歷史帶明文結果、
+兩者都有、都沒有）：改寫前前四種 422、最後一種 200；改寫後五種都 200。訂閱線不動，advisor 照常可用。
 
 ## 思考檔位（effort）會不會跟著過去
 

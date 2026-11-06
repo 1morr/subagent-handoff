@@ -220,8 +220,47 @@ export function hoistToolAdditions(payload) {
   return { body: { ...payload, messages, tools }, changes: [`tool_addition → tools (${hoisted.length})`] }
 }
 
+const isAdvisorTool = (tool) => typeof tool?.type === 'string' && /^advisor_\d+$/.test(tool.type)
+const isAdvisorUse = (block) => block?.type === 'server_tool_use' && block.name === 'advisor'
+
 /**
- * provider 線的 body：換 model 與 effort、拿掉 metadata、把 messages 裡的工具定義搬回 tools、
+ * Claude Code 以為自己直連 Anthropic 時（HTTPS proxy 模式）會帶 advisor server tool：`tools` 裡的
+ * `{type: "advisor_20260301", …}`，以及歷史訊息裡的 `server_tool_use`（name `advisor`）+ `advisor_tool_result`。
+ * DeepSeek 兩種都 422 在進推論前（實測 2026-11-07）。provider 叫不到 advisor，所以全部拿掉：
+ * 明文的 `advisor_result` 改成 text 留住建議；加密的 `advisor_redacted_result` 只有 Anthropic 解得開，
+ * 錯誤結果沒有內容，都直接丟掉。訊息只剩 advisor block 時留一個佔位 text，不送出空的 content。
+ */
+export function stripAdvisor(payload) {
+  const tools = Array.isArray(payload?.tools) ? payload.tools : null
+  const keptTools = tools?.filter((tool) => !isAdvisorTool(tool))
+  const toolsChanged = tools !== null && keptTools.length !== tools.length
+
+  let removed = 0
+  const messages = Array.isArray(payload?.messages)
+    ? payload.messages.map((message) => {
+      const content = message?.content
+      if (!Array.isArray(content) || !content.some((b) => isAdvisorUse(b) || b?.type === 'advisor_tool_result')) return message
+      const next = content.flatMap((block) => {
+        if (isAdvisorUse(block)) { removed++; return [] }
+        if (block?.type !== 'advisor_tool_result') return [block]
+        removed++
+        const advice = block.content?.type === 'advisor_result' ? block.content.text : undefined
+        return typeof advice === 'string' && advice ? [{ type: 'text', text: `[advisor] ${advice}` }] : []
+      })
+      return { ...message, content: next.length ? next : [{ type: 'text', text: '[advisor]' }] }
+    })
+    : payload?.messages
+
+  if (!toolsChanged && !removed) return { body: payload, changes: [] }
+  const body = { ...payload }
+  const changes = []
+  if (toolsChanged) { body.tools = keptTools; changes.push('-advisor tool') }
+  if (removed) { body.messages = messages; changes.push(`-advisor blocks (${removed})`) }
+  return { body, changes }
+}
+
+/**
+ * provider 線的 body：換 model 與 effort、拿掉 metadata 與 advisor、把 messages 裡的工具定義搬回 tools、
  * 修掉上游編不動的 pattern，其餘一個字不動。
  * @param {string} [model] resolveModel 算出來的最終 model 名
  * @param {string} [effort] resolveEffort 算出來的最終 effort
@@ -241,10 +280,11 @@ export function rewriteBodyForProvider(payload, model, effort) {
     changes.push('-metadata')
   }
 
+  const stripped = stripAdvisor(body)
   // 先搬再修 pattern：搬進來的工具 schema 一樣可能帶 `\0`
-  const lifted = hoistToolAdditions(body)
+  const lifted = hoistToolAdditions(stripped.body)
   const patched = rewriteToolPatterns(lifted.body)
-  return { body: patched.body, changes: [...changes, ...lifted.changes, ...patched.changes] }
+  return { body: patched.body, changes: [...changes, ...stripped.changes, ...lifted.changes, ...patched.changes] }
 }
 
 /** 錯誤摘要留這麼長就夠認出是哪一種錯，再長只是把流量記錄撐爛。 */

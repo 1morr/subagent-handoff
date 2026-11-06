@@ -13,14 +13,22 @@
 
 ## 2026-11-07
 
+### 修正
+
+- **provider 線拿掉 advisor 工具。** HTTPS proxy 模式下 Claude Code 以為自己直連 Anthropic，會在
+  `tools` 帶 `advisor_20260301`，用過的對話歷史裡還有它的 `server_tool_use` 與 `advisor_tool_result`；
+  DeepSeek 對定義與結果都 422，主對話分到 provider 時每一筆都失敗。現在 provider 線拿掉定義與這兩種 block，
+  明文建議改成 text 留著，加密的與錯誤結果丟掉。用 `deepseek-flash` 打五種請求：改寫前四種 422，改寫後全部
+  200。在 Claude Code 設 `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1` 也能過，但走訂閱時也會失去 advisor，沒選。
+  細節見 [docs/providers.md](docs/providers.md#advisor-工具advisor_20260301)。
+
 ### 文件
 
 - **記下從 `ANTHROPIC_BASE_URL` 改到 HTTPS proxy 模式時踩到的四件事**（macOS、CLI 2.1.319）：
   `ANTHROPIC_BASE_URL` 會讓需要 first-party 的內建 mod（`cc-plugin-you-should-know`）從 `/plugin`
   消失；改設定要開新 session，開著的 session 熱載入 `HTTPS_PROXY` 會握手失敗；本機 `http://` 連線
   （Orca agent-view）也被送進 router、每筆 400，要設 `NO_PROXY`；主對話分到 DeepSeek 時 advisor
-  server tool 會 422，要設 `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1`。也記下「You should know」的檢查不帶
-  agent-id、算 `main`。程式碼沒改。細節見 [docs/https-proxy.md](docs/https-proxy.md#實測2026-11-07macoscli-21319)。
+  server tool 會 422。也記下「You should know」的檢查不帶 agent-id、算 `main`。細節見 [docs/https-proxy.md](docs/https-proxy.md#實測2026-11-07macoscli-21319)。
 
 ## 2026-11-02
 

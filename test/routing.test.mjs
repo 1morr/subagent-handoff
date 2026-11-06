@@ -1,6 +1,6 @@
 import test, { before, after, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { hoistToolAdditions, rewriteBodyForProvider, rewriteEffort, rewriteModel, rewriteToolPatterns, SessionCwd } from '../src/proxy.mjs'
+import { hoistToolAdditions, rewriteBodyForProvider, rewriteEffort, rewriteModel, rewriteToolPatterns, SessionCwd, stripAdvisor } from '../src/proxy.mjs'
 import {
   globMatch, describeRequest, resolveRoute, resolveModel, resolveEffort, extractCwd, PASSTHROUGH_ID,
 } from '../src/routing.mjs'
@@ -646,4 +646,69 @@ test('provider 收到改寫後的 pattern，訂閱線照舊原樣送', async () 
   // 訂閱線送的是 Anthropic 自己收得下的 schema，改寫只會變成在改 Claude Code 的請求
   await (await post(SUBSCRIPTION_HEADERS, body)).text()
   assert.equal(patternOf(harness.upstream.state.received[0]), String.raw`^[^\0]*$`)
+})
+
+// ── provider 線：advisor 工具 ─────────────────────────────────────────
+// Claude Code 以為自己直連 Anthropic 時（HTTPS proxy 模式）會帶 advisor server tool；DeepSeek 對
+// tools 裡的定義與 messages 裡的 advisor_tool_result 都 422（實測 2026-11-07，見 docs/providers.md）。
+
+const ADVISOR_TOOL = () => ({ type: 'advisor_20260301', name: 'advisor', model: 'claude-opus-5-5' })
+const ADVISOR_USE = (id = 'srvtoolu_01a') => ({ type: 'server_tool_use', id, name: 'advisor', input: {} })
+const ADVISOR_REDACTED = (id = 'srvtoolu_01a') => ({
+  type: 'advisor_tool_result', tool_use_id: id,
+  content: { type: 'advisor_redacted_result', encrypted_content: 'ZW5j', stop_reason: 'end_turn' },
+})
+const ADVISOR_PLAIN = (id = 'srvtoolu_01a') => ({
+  type: 'advisor_tool_result', tool_use_id: id,
+  content: { type: 'advisor_result', text: 'Use a buffered channel.', stop_reason: 'end_turn' },
+})
+
+test('stripAdvisor 從 tools 拿掉 advisor，其他工具照原順序留著，輸入不變', () => {
+  const original = { tools: [{ name: 'Read', input_schema: { type: 'object' } }, ADVISOR_TOOL(), { type: 'web_search_20250305', name: 'web_search' }] }
+  const snapshot = structuredClone(original)
+  const { body, changes } = stripAdvisor(original)
+  assert.deepEqual(original, snapshot)
+  assert.deepEqual(body.tools.map((t) => t.name), ['Read', 'web_search'])
+  assert.deepEqual(changes, ['-advisor tool'])
+})
+
+test('stripAdvisor 拿掉歷史裡的 advisor 呼叫與加密結果；明文建議改成 text，其他 server tool 不動', () => {
+  const webSearch = { type: 'server_tool_use', id: 'srvtoolu_02b', name: 'web_search', input: { query: 'go' } }
+  const original = {
+    messages: [
+      { role: 'user', content: 'plan it' },
+      { role: 'assistant', content: [ADVISOR_USE('srvtoolu_01a'), ADVISOR_REDACTED('srvtoolu_01a'), webSearch, { type: 'text', text: 'Plan ready.' }] },
+      { role: 'assistant', content: [ADVISOR_USE('srvtoolu_03c'), ADVISOR_PLAIN('srvtoolu_03c'), { type: 'text', text: 'Done.' }] },
+    ],
+  }
+  const { body, changes } = stripAdvisor(original)
+  assert.equal(body.messages[0], original.messages[0], '沒碰到的訊息不重建')
+  assert.deepEqual(body.messages[1].content, [webSearch, { type: 'text', text: 'Plan ready.' }])
+  assert.deepEqual(body.messages[2].content, [
+    { type: 'text', text: '[advisor] Use a buffered channel.' },
+    { type: 'text', text: 'Done.' },
+  ])
+  assert.deepEqual(changes, ['-advisor blocks (4)'])
+})
+
+test('只剩 advisor block 的訊息留一個佔位 text，不送出空的 content', () => {
+  const { body } = stripAdvisor({ messages: [{ role: 'assistant', content: [ADVISOR_USE(), ADVISOR_REDACTED()] }] })
+  assert.deepEqual(body.messages[0].content, [{ type: 'text', text: '[advisor]' }])
+})
+
+test('沒有 advisor 就回傳原物件', () => {
+  const original = { tools: [{ name: 'Read' }], messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }
+  assert.deepEqual(stripAdvisor(original), { body: original, changes: [] })
+  assert.deepEqual(stripAdvisor(null), { body: null, changes: [] })
+})
+
+test('rewriteBodyForProvider 也拿掉 advisor', () => {
+  const { body, changes } = rewriteBodyForProvider({
+    model: 'claude-opus-5-5',
+    tools: [ADVISOR_TOOL()],
+    messages: [{ role: 'assistant', content: [ADVISOR_USE(), ADVISOR_REDACTED(), { type: 'text', text: 'ok' }] }],
+  }, 'deepseek-flash')
+  assert.deepEqual(body.tools, [])
+  assert.deepEqual(body.messages[0].content, [{ type: 'text', text: 'ok' }])
+  assert.deepEqual(changes, ['model claude-opus-5-5 → deepseek-flash', '-advisor tool', '-advisor blocks (2)'])
 })
