@@ -113,6 +113,7 @@ sequenceDiagram
 | 本機 CA | 沒有 | 有，只能簽 `api.anthropic.com` |
 | Remote Control | CLI 停用（base URL 指向非 Anthropic 主機） | Desktop 可用；CLI 要全域改用這個模式才行 |
 | voice mode（CLI） | 直連 Anthropic | 經 router 原樣轉發 |
+| 只給直連 Anthropic 的功能 | 停用：例如內建 mod `cc-plugin-you-should-know` 在 `/plugin` 裡整列消失 | 照常；但也會在 `tools` 帶 advisor 工具，主對話分到 provider 時會 422（見「代價與地雷」） |
 
 ## 送出了什麼
 
@@ -238,6 +239,24 @@ Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之�
 設好之後重開 Claude Code（Desktop 開新的 session），`/status` 應該看到 `Proxy` 指向 router、
 `Additional CA cert(s)` 是 CA 路徑，`Login method` 仍然是 claude.ai 帳號。
 
+**一定要開新的 session，不要在開著的 session 裡改。** 開著的 session 會即時讀到新的 `HTTPS_PROXY`，
+但 `NODE_EXTRA_CA_CERTS` 只在啟動時讀：請求開始送進 router、卻不信任它的證書，之後每一筆都握手失敗，
+router 的 console 只看得到一行「還沒握完手就關了」（2026-11-07，CLI 2.1.319 實測）。
+
+另外建議一起設 `NO_PROXY` 與（主對話會分到 provider 的話）`CLAUDE_CODE_DISABLE_ADVISOR_TOOL`，
+原因見「代價與地雷」：
+
+```json
+{
+  "env": {
+    "HTTPS_PROXY": "http://127.0.0.1:8787",
+    "NODE_EXTRA_CA_CERTS": "<CA 路徑>",
+    "NO_PROXY": "localhost,127.0.0.1,::1",
+    "CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1"
+  }
+}
+```
+
 ## 本機 CA
 
 - 第一次打開模式時產生（啟動時設定已經是開著的，就在啟動時；在 GUI 打開，就在按下去的時候），
@@ -305,6 +324,22 @@ Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之�
   那是 app 自己連線，不經內嵌的 CLI，也就不吃 `HTTPS_PROXY`。proxy 模式影響不到它。
 
 **還沒實測：** Desktop 的 SSH / WSL session（官方文檔說它們跟本機 session 一樣讀這些變數）。
+
+## 實測（2026-11-07，macOS，CLI 2.1.319）
+
+為了讓 `cc-plugin-you-should-know` 出現而從 `ANTHROPIC_BASE_URL` 改成這個模式，只放在一個 repo 的
+`.claude/settings.local.json`，router 跑在 Docker（OrbStack）。
+
+- **`ANTHROPIC_BASE_URL` 會讓需要 first-party 的內建 mod 消失。** 讀 2.1.319 的程式碼：這個 mod 的
+  `isAvailable` 要求合規判定已經「settled」，而判定的第一個條件就是 base URL 未設或是
+  `api.anthropic.com`；不可用的內建 plugin 不會列在 `/plugin`。`enabledPlugins` 裡的 `true` 還在，
+  只是看不到。`_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL` 影響的是另一條判斷，救不回來。
+  改成這個模式、開新 session 後 mod 出現在 `/plugin`，也實際彈出過提示。
+- **開著的 session 熱載入 `HTTPS_PROXY` 會斷線**（見「設定 Claude Code」）。
+- **Orca agent-view 的本機連線被送進 router**，加 `NO_PROXY` 後不再出現（見「代價與地雷」）。
+- **advisor 工具：** 同一個 repo、`main` 規則暫時指向 DeepSeek，`claude -p` 不設
+  `CLAUDE_CODE_DISABLE_ADVISOR_TOOL` 時 422 `tools[12]: unknown variant advisor_20260301`，設了是 200。
+- 「You should know」的檢查怎麼分類，見 [request-map.md](request-map.md#推論請求v1messages會經過分流)。
 
 ## 怎麼驗的
 
@@ -375,6 +410,15 @@ runtime，證明的是「runtime 說沒開時沒有例外」，不是「GUI 關�
 - **`HTTPS_PROXY` 會被 Claude Code 啟動的每一支程式繼承**，包括 Bash 工具裡跑的 git、npm、
   curl。它們經 router 原樣隧道出去，但 **router 沒在跑的時候全部斷網**，Claude Code 本身也是。
   不想經過 router 的主機列進 `NO_PROXY`。
+- **本機的 `http://` 連線也會被送進 router，要設 `NO_PROXY=localhost,127.0.0.1,::1`。** Claude Code
+  連本機 HTTP 服務時也走 `HTTPS_PROXY`，例如 Orca 的 agent-view mod 每隔幾秒 `POST
+  http://127.0.0.1:<port>/claude/agent-view`。router 不轉發明文代理請求，每一筆都回 400，流量記錄被灌滿
+  （2026-11-07 一小時內 207 筆，記成 `main`）。錯誤訊息說是 `ANTHROPIC_BASE_URL` 打架，**在這個情況下是錯的**：
+  那句話只對目的地是 router 自己的請求成立。
+- **主對話分到 provider 時，關掉 advisor 工具。** 這個模式下 Claude Code 以為自己直連 Anthropic，
+  會在 `tools` 帶 `advisor_20260301` 這種 server tool；`ANTHROPIC_BASE_URL` 模式不會帶。router 原樣轉給
+  provider，DeepSeek 回 422（[providers.md](providers.md#advisor-工具advisor_20260301)）。設
+  `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1` 就不帶；代價是走訂閱時也用不到 advisor。
 - **模式開著時，guard 對解開的請求放行。** 它們的 Host 是 `api.anthropic.com`，必然過不了主機名檢查。
   這條路不必防 DNS rebinding 與 CSRF：網頁的 `fetch` 送不出 `CONNECT`，瀏覽器也不信任這把 CA。
   proxy 那台 server 只收明文，所以「socket 是加密的」就代表是這條路進來的

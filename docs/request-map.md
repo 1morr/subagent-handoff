@@ -25,10 +25,16 @@ Claude Code 升級後可能新增或改掉某些請求，怎麼重新量見文�
 | WebSearch 的內部請求 | `tool_choice` 強制 `web_search`（[形狀](claude-code-request-shapes.md#websearch)） | 跟著發起者 | 發起者的分類 |
 | session 標題等背景請求 | 非串流、`output_config.format: json_schema`、`thinking: disabled` | 無 | `main` |
 | 額度探針 | `max_tokens: 1`、不帶 system | 無 | `main` |
+| 內建 mod「You should know」的檢查（`model.fork`） | 串流；複製主對話的 system、工具與完整訊息，最後加一則以 `This is a side request from the user (via Claude Code's "You should know" feature)` 開頭的 system-reminder；不准用工具、最多 2 輪；主對話每一回合第 6、12、18… 步才發一次 | **無**：分身沿用主對話的 agent context | `main` |
 | Claude in Chrome 的輔助請求 | 自帶 system、沒有身分行 | 無 | `main` |
 | `/v1/messages/count_tokens` | 路徑；Desktop 送得特別多（一個 session 44 筆） | 跟著發起者 | 發起者的分類 |
 
 這一段在兩種接入方式下完全一樣：都會進 router 的分流、都進流量記錄。
+
+「You should know」那一列是讀 Claude Code 2.1.319 的程式碼得出的（2026-11-07）：`model.fork` 用
+`runForkedAgent` 開分身，agent-id header 只在 agent context 不是主對話時才加，而分身繼承的是主對話的。
+同一天它在一個 session 裡實際檢查並彈出提示，流量記錄裡一筆 `subagent` 都沒有，跟這個結論相符。
+這個 mod 只在 [HTTPS proxy 模式](https-proxy.md#實測2026-11-07macoscli-21319)下出現。
 
 ## 其他送往 `api.anthropic.com` 的請求（不經過分流）
 

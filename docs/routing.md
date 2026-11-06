@@ -60,8 +60,8 @@ Claude Code 不會少花一個 token，只是間接拖慢下一輪；額度大�
 
 `main` 規則指向 provider（例如訂閱的週額度用完了）時，過去的不只是你打字的那一輪。所有沒帶
 agent-id 的推論請求都算 `main`，只要 model 符合那條規則的 `modelGlob`（預設 `*`）就一起過去：
-session 標題、上下文壓縮、額度探針、Claude in Chrome 的輔助請求，以及 **auto mode 的權限分類器**
-（[request-map.md](request-map.md)）。
+session 標題、上下文壓縮、額度探針、Claude in Chrome 的輔助請求、內建 mod「You should know」的檢查，
+以及 **auto mode 的權限分類器**（[request-map.md](request-map.md)）。
 
 - **auto mode 還能用，但判定的是 provider 的模型，不是 Claude。** Claude Code 以為自己在用
   Claude，照樣開放 auto mode；provider 不會回伺服器端的判定，Claude Code 就改成另外發分類器請求，

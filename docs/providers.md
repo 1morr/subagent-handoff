@@ -123,6 +123,21 @@ connector 整組失效，而且別的工具中途連上時照樣會出現這種 
 
 還沒驗的：對應的「中途拿掉工具」block 這次沒抓到，形狀未知，DeepSeek 很可能一樣不收。
 
+## advisor 工具（`advisor_20260301`）
+
+Claude Code 以為自己直連 Anthropic 時（[HTTPS proxy 模式](https-proxy.md)），主對話的 `tools` 會多一個
+`{"type": "advisor_20260301", …}` server tool。`main` 規則分到 DeepSeek 時每一筆都 422：
+
+```
+Failed to deserialize the JSON body into the target type: tools[21]: unknown variant `advisor_20260301`,
+expected `web_search_20250305` or `web_search_20260209`
+```
+
+`ANTHROPIC_BASE_URL` 模式下 Claude Code 不會帶它，所以以前沒遇過；子 agent 的請求目前也沒看到它。
+router 還沒在 provider 線上拿掉它，現在的解法是在 Claude Code 設 `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1`
+（2026-11-07，CLI 2.1.319、`deepseek-flash` 實測：不設 422、設了 200）。代價是走訂閱時也沒有 advisor。
+要在 router 拿掉，還得處理歷史訊息裡對應的 `server_tool_use` / 結果 block，這次沒有抓到它們的形狀。
+
 ## 思考檔位（effort）會不會跟著過去
 
 會。router 預設不動這幾個欄位；規則設了 `effortOverride` 才換掉 `output_config.effort`

@@ -11,6 +11,17 @@
 
 ---
 
+## 2026-11-07
+
+### 文件
+
+- **記下從 `ANTHROPIC_BASE_URL` 改到 HTTPS proxy 模式時踩到的四件事**（macOS、CLI 2.1.319）：
+  `ANTHROPIC_BASE_URL` 會讓需要 first-party 的內建 mod（`cc-plugin-you-should-know`）從 `/plugin`
+  消失；改設定要開新 session，開著的 session 熱載入 `HTTPS_PROXY` 會握手失敗；本機 `http://` 連線
+  （Orca agent-view）也被送進 router、每筆 400，要設 `NO_PROXY`；主對話分到 DeepSeek 時 advisor
+  server tool 會 422，要設 `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1`。也記下「You should know」的檢查不帶
+  agent-id、算 `main`。程式碼沒改。細節見 [docs/https-proxy.md](docs/https-proxy.md#實測2026-11-07macoscli-21319)。
+
 ## 2026-11-02
 
 ### 修正
