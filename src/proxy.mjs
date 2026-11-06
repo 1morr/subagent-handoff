@@ -552,15 +552,25 @@ export function createProxyServer(getConfig, log, options = {}) {
 
       const started = Date.now()
 
-      // 請求行是完整網址（`POST http://127.0.0.1:8787/v1/messages`）：Claude Code 把 router 當成
-      // 一般的 HTTP proxy 用了。實測（2.1.282）是 HTTPS_PROXY 指向 router、同時又設了 http:// 的
-      // ANTHROPIC_BASE_URL（例如全域 settings.json 留著、專案層級才加 HTTPS_PROXY）。照樣轉發會把
-      // 網址接在上游後面、組出壞掉的 URL，最後只回一個看不出原因的 fetch failed，還被重試十次。
+      // 請求行是完整網址：Claude Code 把 router 當成一般的 HTTP proxy 用了。router 只收 CONNECT，
+      // 照樣轉發會把網址接在上游後面、組出壞掉的 URL，最後只回一個看不出原因的 fetch failed，還被重試十次。
+      // 兩種來源，訊息要指向不同的設定：
+      // - 目的地是推論路徑（`POST http://127.0.0.1:8787/v1/messages`）：HTTPS_PROXY 指向 router、同時又設了
+      //   http:// 的 ANTHROPIC_BASE_URL（例如全域 settings.json 留著、專案層級才加 HTTPS_PROXY；實測 2.1.282）。
+      // - 目的地是別的本機 http:// 服務（例如 Orca agent-view 的 `/claude/agent-view`）：只設了 HTTPS_PROXY，
+      //   Claude Code 連本機也走它（實測 2.1.319）。要的是 NO_PROXY，跟 ANTHROPIC_BASE_URL 無關。
       if (!req.url.startsWith('/')) {
         const ctx = describeRequest(req.headers, null)
-        const error = `got a proxy-style request for ${req.url.slice(0, 200)}: Claude Code has HTTPS_PROXY (or HTTP_PROXY) `
-          + 'pointing at the router and ANTHROPIC_BASE_URL set to an http:// address at the same time. Keep one: '
-          + 'in HTTPS proxy mode remove ANTHROPIC_BASE_URL (check the global settings.json too), otherwise remove HTTPS_PROXY.'
+        const target = req.url.slice(0, 200)
+        let pathname = ''
+        try { pathname = new URL(req.url).pathname } catch {}
+        const error = pathname.startsWith('/v1/messages')
+          ? `got a proxy-style request for ${target}: Claude Code has HTTPS_PROXY (or HTTP_PROXY) `
+            + 'pointing at the router and ANTHROPIC_BASE_URL set to an http:// address at the same time. Keep one: '
+            + 'in HTTPS proxy mode remove ANTHROPIC_BASE_URL (check the global settings.json too), otherwise remove HTTPS_PROXY.'
+          : `got a plain-HTTP proxy request for ${target}: Claude Code sends http:// requests through HTTPS_PROXY too, `
+            + 'and the router only tunnels CONNECT. Add local hosts to NO_PROXY in the same settings, '
+            + 'e.g. "NO_PROXY": "localhost,127.0.0.1,::1".'
         log.finish(log.start(baseEntry(req, ctx, { cwd: sessionCwd.lookup(ctx.sessionId), status: 400, ms: 0, error })))
         res.writeHead(400, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: `subagent-handoff: ${error}` } }))

@@ -150,6 +150,30 @@ test('請求行是完整網址（把 router 當 HTTP proxy 用）時回 400 並�
   assert.match(harness.finished.at(-1).error, /proxy-style request for http:\/\/127\.0\.0\.1:8787\/v1\/messages/)
 })
 
+test('經 router 代理的明文請求要去別的本機服務時，回 400 並指向 NO_PROXY，不怪 ANTHROPIC_BASE_URL', async () => {
+  // 只設 HTTPS_PROXY 時，Claude Code 連本機 http:// 服務也走它，例如 Orca 的 agent-view mod
+  // （實測 2026-11-07，CLI 2.1.319）。這時根本沒有 ANTHROPIC_BASE_URL，舊訊息會把人帶錯方向
+  harness.upstream.state.received.length = 0
+  const { port } = new URL(harness.proxyUrl)
+  const { status, body } = await new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1', port, method: 'POST', path: 'http://127.0.0.1:59687/claude/agent-view',
+      headers: { host: '127.0.0.1:59687', 'content-type': 'application/json' },
+    }, (res) => {
+      let data = ''
+      res.on('data', (c) => { data += c })
+      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(data) }))
+    })
+    req.on('error', reject)
+    req.end('{}')
+  })
+  assert.equal(status, 400)
+  assert.match(body.error.message, /NO_PROXY/)
+  assert.doesNotMatch(body.error.message, /ANTHROPIC_BASE_URL/)
+  assert.equal(harness.upstream.state.received.length, 0)
+  assert.match(harness.finished.at(-1).error, /plain-HTTP proxy request for http:\/\/127\.0\.0\.1:59687\/claude\/agent-view/)
+})
+
 test('連不上 provider 時回 502，流量記錄寫出 fetch failed 背後的原因', async () => {
   const saved = harness.getConfig()
   const cfg = structuredClone(saved)

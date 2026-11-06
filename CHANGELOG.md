@@ -21,6 +21,10 @@
   明文建議改成 text 留著，加密的與錯誤結果丟掉。用 `deepseek-flash` 打五種請求：改寫前四種 422，改寫後全部
   200。在 Claude Code 設 `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1` 也能過，但走訂閱時也會失去 advisor，沒選。
   細節見 [docs/providers.md](docs/providers.md#advisor-工具advisor_20260301)。
+- **本機 `http://` 服務被代理過來時，400 的訊息改成指向 `NO_PROXY`。** 只設 `HTTPS_PROXY` 時 Claude Code
+  連本機 HTTP 服務也走它（Orca agent-view mod 一小時 207 筆），舊訊息一律說是 `ANTHROPIC_BASE_URL`
+  打架，但這時根本沒設它。現在只有目的地是 `/v1/messages*` 時才講 `ANTHROPIC_BASE_URL`，其他路徑講
+  `NO_PROXY`。狀態碼不變，仍是 400、不往上游送。
 
 ### 文件
 

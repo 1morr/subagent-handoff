@@ -395,8 +395,9 @@ runtime，證明的是「runtime 說沒開時沒有例外」，不是「GUI 關�
 - **不支援代理認證**（`Proxy-Authorization`）。router 只綁 127.0.0.1，本機任何程式都能拿它當隧道
   —— 它們本來就能自己連出去，所以沒有多開放什麼。
 - **只支援 `CONNECT`。** `HTTP_PROXY` 用的明文代理請求（請求行是完整網址，`GET http://…`）不會被
-  轉發：Host 是別的主機時 guard 回 403，Host 是 router 自己時回 400（見「設定 Claude Code」）。
-  所以不要把 `HTTP_PROXY` 也指過來。
+  轉發：Host 是別的主機時 guard 回 403，Host 是本機時回 400。目的地是 `/v1/messages*` 時，訊息點名
+  `HTTPS_PROXY` 與 `http://` 的 `ANTHROPIC_BASE_URL` 打架（見「設定 Claude Code」）；其他路徑點名
+  `NO_PROXY`（見「代價與地雷」）。所以不要把 `HTTP_PROXY` 也指過來。
 - **解開的連線只講 HTTP/1.1。** router 的 TLS 沒有宣告 ALPN，Claude Code 會退回 HTTP/1.1；實測正常。
 - **原樣轉發的請求與隧道不進流量記錄**，GUI 上看不到它們。這是刻意的（見上面「原理」），但也代表
   出問題時只能靠 Claude Code 的 debug log 查。
@@ -412,8 +413,8 @@ runtime，證明的是「runtime 說沒開時沒有例外」，不是「GUI 關�
 - **本機的 `http://` 連線也會被送進 router，要設 `NO_PROXY=localhost,127.0.0.1,::1`。** Claude Code
   連本機 HTTP 服務時也走 `HTTPS_PROXY`，例如 Orca 的 agent-view mod 每隔幾秒 `POST
   http://127.0.0.1:<port>/claude/agent-view`。router 不轉發明文代理請求，每一筆都回 400，流量記錄被灌滿
-  （2026-11-07 一小時內 207 筆，記成 `main`）。錯誤訊息說是 `ANTHROPIC_BASE_URL` 打架，**在這個情況下是錯的**：
-  那句話只對目的地是 router 自己的請求成立。
+  （2026-11-07 一小時內 207 筆，記成 `main`）。router 回的 400 會直接說要加 `NO_PROXY`；在這之前它說的是
+  `ANTHROPIC_BASE_URL` 打架，把人帶錯方向。
 - **這個模式下 Claude Code 會帶 advisor 工具**（`ANTHROPIC_BASE_URL` 模式不會）。走訂閱照常可用；
   分到 provider 的請求由 router 拿掉 advisor，否則 DeepSeek 回 422
   （[providers.md](providers.md#advisor-工具advisor_20260301)）。不需要設 `CLAUDE_CODE_DISABLE_ADVISOR_TOOL`。
