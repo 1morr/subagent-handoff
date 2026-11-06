@@ -997,7 +997,8 @@ function renderModePanel(proxyMode, port) {
   const snippet = `{
   "env": {
     "HTTPS_PROXY": "http://127.0.0.1:${port}",
-    "NODE_EXTRA_CA_CERTS": ${esc(JSON.stringify(S.runtime.caCertPath ?? ''))}
+    "NODE_EXTRA_CA_CERTS": ${esc(JSON.stringify(S.runtime.caCertPath ?? ''))},
+    "NO_PROXY": "localhost,127.0.0.1,::1"
   }
 }`
   const usage = ['cliOnly', 'both', 'repo']

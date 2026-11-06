@@ -180,8 +180,10 @@ Remote Control. If you only use the CLI, you do not need it.
 
 **To turn it on:** press **Turn on and save** in the *HTTPS proxy mode* panel at the
 bottom of the **Connect** tab. The router switches on the spot, no restart. The panel
-then shows the `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` snippet for Desktop and where to
-put it:
+then shows the `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` + `NO_PROXY` snippet for Desktop
+(`NO_PROXY` keeps Claude Code's requests to local `http://` services out of the
+router) and where to put it. Start a new session after changing it: an open session
+picks up `HTTPS_PROXY` but not the CA, and fails every TLS handshake after that.
 
 | Your setup | Where the settings go |
 |---|---|

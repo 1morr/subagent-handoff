@@ -197,7 +197,8 @@ guard 沒有例外。**`src/index.mjs` 把兩者接起來的那段沒有測試**
 {
   "env": {
     "HTTPS_PROXY": "http://127.0.0.1:8787",
-    "NODE_EXTRA_CA_CERTS": "<config.json 旁邊的 https-proxy-ca.pem>"
+    "NODE_EXTRA_CA_CERTS": "<config.json 旁邊的 https-proxy-ca.pem>",
+    "NO_PROXY": "localhost,127.0.0.1,::1"
   }
 }
 ```
@@ -215,10 +216,13 @@ CA 路徑是機器專屬的）
   "env": {
     "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
     "HTTPS_PROXY": "http://127.0.0.1:8787",
-    "NODE_EXTRA_CA_CERTS": "<CA 路徑>"
+    "NODE_EXTRA_CA_CERTS": "<CA 路徑>",
+    "NO_PROXY": "localhost,127.0.0.1,::1"
   }
 }
 ```
+
+兩份片段的 `NO_PROXY` 讓本機服務直連，原因見「代價與地雷」；GUI 給的片段也有這一行。
 
 `ANTHROPIC_BASE_URL` 那行是給 CLI 的：蓋掉全域那個指向 router 的值，讓 API 請求也走 proxy。
 **少了這行、全域又留著 `http://127.0.0.1:8787`，就是上面那種打架的組合**，CLI 會收到 400。
@@ -242,18 +246,6 @@ Desktop 本來就不理它。專案層的 `env` 要在信任這個資料夾之�
 **一定要開新的 session，不要在開著的 session 裡改。** 開著的 session 會即時讀到新的 `HTTPS_PROXY`，
 但 `NODE_EXTRA_CA_CERTS` 只在啟動時讀：請求開始送進 router、卻不信任它的證書，之後每一筆都握手失敗，
 router 的 console 只看得到一行「還沒握完手就關了」（2026-11-07，CLI 2.1.319 實測）。
-
-另外建議一起設 `NO_PROXY`，原因見「代價與地雷」：
-
-```json
-{
-  "env": {
-    "HTTPS_PROXY": "http://127.0.0.1:8787",
-    "NODE_EXTRA_CA_CERTS": "<CA 路徑>",
-    "NO_PROXY": "localhost,127.0.0.1,::1"
-  }
-}
-```
 
 ## 本機 CA
 

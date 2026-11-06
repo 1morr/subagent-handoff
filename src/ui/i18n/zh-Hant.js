@@ -315,7 +315,7 @@ export default {
   'setup.explain.riskTitle': '會不會被封號？',
   'setup.explain.riskBody': '沒有人能保證不會 —— 這是非官方用法。<em>兩種模式</em>下，訂閱線請求的 token 與 body 都原樣，但都是由 router 發出：TLS 指紋是 Node 的而不是 Claude Code 的，還多了 Node <code>fetch</code> 自己加的 <code>accept-language</code> 與 <code>sec-fetch-mode</code>。開啟之後，登入、遙測、Remote Control、voice 也改由 Node 發出（header 原樣）。分到 provider 的 subagent 請求根本不會到 Anthropic。只在需要 Claude Desktop 時才打開。',
   'setup.explain.docs': '完整說明（含流程圖、實際送出了什麼、全域與單一 repo 的設定方式）：<a href="https://github.com/1morr/subagent-handoff/blob/master/docs/https-proxy.md" target="_blank" rel="noopener">docs/https-proxy.md</a>',
-  'setup.proxy.step1Body': 'Desktop 不讀 <code>ANTHROPIC_BASE_URL</code>，要在它讀得到的 settings.json 的 <code>env</code> 區塊加這兩行。CLI 也讀同一批檔案，所以要選放在哪裡：',
+  'setup.proxy.step1Body': 'Desktop 不讀 <code>ANTHROPIC_BASE_URL</code>，要在它讀得到的 settings.json 的 <code>env</code> 區塊加這幾行。<code>NO_PROXY</code> 讓本機服務直連：不加的話，Claude Code 連本機 <code>http://</code> 服務（例如 Orca）也會送進 router、每一筆都被回 400。改完要開新的 session：已經開著的 session 只會讀到 <code>HTTPS_PROXY</code>、讀不到 CA，之後每一筆都會握手失敗。CLI 也讀同一批檔案，所以要選放在哪裡：',
   'setup.proxy.inherit': 'Claude Code 啟動的每一支程式都會繼承 <code>HTTPS_PROXY</code>，包括 Bash 工具裡跑的 git、npm、curl。它們的流量經 router 原樣隧道出去，但 <strong>router 沒在跑的時候它們全部斷網</strong>，Claude Code 本身也是。不想經過 router 的主機列進 <code>NO_PROXY</code>。',
   'setup.proxy.snippetTitle': '給 Claude Desktop 的設定',
   'setup.usage.colUse': '你的用法',

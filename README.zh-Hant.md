@@ -127,7 +127,7 @@ flowchart LR
 
 **打開它不會改變 CLI 的設定。** 這個模式只是*多一個*入口（`CONNECT`）：送到 `ANTHROPIC_BASE_URL` 的請求照舊進來，用它的 CLI 不用改任何設定就照常可用。這個模式是給沒辦法用 `ANTHROPIC_BASE_URL` 指到 router 的 client 用的：Claude Desktop，以及 CLI 的 Remote Control。只用 CLI 就不需要它。
 
-**怎麼打開：** 在**接入**分頁最下面的「HTTPS proxy 模式」面板按**開啟並儲存** —— router 當場切換，不用重啟。面板接著給出 Desktop 要的 `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` 片段，以及放在哪裡：
+**怎麼打開：** 在**接入**分頁最下面的「HTTPS proxy 模式」面板按**開啟並儲存** —— router 當場切換，不用重啟。面板接著給出 Desktop 要的 `HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` + `NO_PROXY` 片段（`NO_PROXY` 讓 Claude Code 連本機 `http://` 服務時不進 router），以及放在哪裡。改完要開新的 session：已經開著的 session 讀得到 `HTTPS_PROXY`、讀不到 CA，之後每一筆都握手失敗。
 
 | 你的用法 | 設定放哪裡 |
 |---|---|

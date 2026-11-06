@@ -26,6 +26,13 @@
   打架，但這時根本沒設它。現在只有目的地是 `/v1/messages*` 時才講 `ANTHROPIC_BASE_URL`，其他路徑講
   `NO_PROXY`。狀態碼不變，仍是 400、不往上游送。
 
+### 變更
+
+- **GUI 給 Desktop 的設定片段加上 `"NO_PROXY": "localhost,127.0.0.1,::1"`，說明加一句「改完要開新的
+  session」。** 照抄舊片段的人，只要有本機 HTTP 服務（例如 Orca）就會一直收到 400；在開著的 session
+  裡改設定則會讀到 `HTTPS_PROXY`、讀不到 CA，之後每一筆都握手失敗。`docs/https-proxy.md` 的兩份片段與
+  README 一起改。
+
 ### 文件
 
 - **記下從 `ANTHROPIC_BASE_URL` 改到 HTTPS proxy 模式時踩到的四件事**（macOS、CLI 2.1.319）：
